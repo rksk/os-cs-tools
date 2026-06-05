@@ -1,0 +1,20 @@
+window.config = {
+  CSM_PORTAL_AUTH_BASE_URL: "https://api.asgardeo.io/t/wso2",
+  CSM_PORTAL_AUTH_CLIENT_ID: "Yezn9A7Jb2ROuApr4m5hXHflgAka",
+  CSM_PORTAL_AUTH_SIGN_IN_REDIRECT_URL: "http://localhost:3001",
+  CSM_PORTAL_AUTH_SIGN_OUT_REDIRECT_URL: "http://localhost:3001",
+  CSM_PORTAL_BACKEND_BASE_URL: "https://11737422-7078-8510-1074-820892631194-az-stg.prod.wdt.choreoapis.dev/llkq/csm-portal-backend/v1.0",
+  CSM_PORTAL_THEME: "acrylicOrange",
+  CSM_PORTAL_LOG_LEVEL: "ERROR",
+  CSM_PORTAL_MAINTENANCE_BANNER_VISIBLE: false,
+  // Optional maintenance banner overrides:
+  // CSM_PORTAL_MAINTENANCE_BANNER_SEVERITY: "info",
+  // CSM_PORTAL_MAINTENANCE_BANNER_TITLE: "Scheduled maintenance",
+  // CSM_PORTAL_MAINTENANCE_BANNER_MESSAGE: "Some services may be unavailable.",
+  // CSM_PORTAL_MAINTENANCE_BANNER_ACTION_LABEL: "Learn more",
+  // CSM_PORTAL_MAINTENANCE_BANNER_ACTION_URL: "https://example.com",
+  CSM_PORTAL_USE_MOCKS: true,
+  CSM_PORTAL_TOP_BANNER_ENABLED: false,
+  // Optional top banner rendered above the header (raw HTML string):
+  // CSM_PORTAL_TOP_BANNER_HTML: '<div style="background-color:#000;height:6.8rem"><a href="https://wso2.com/wso2con/" target="_blank"><img style="object-fit:cover;height:100%;width:100%" src="banner.png" role="presentation"></a></div>',
+};
