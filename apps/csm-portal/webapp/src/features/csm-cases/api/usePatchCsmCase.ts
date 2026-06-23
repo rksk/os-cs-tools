@@ -19,6 +19,7 @@ import {
   useQueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { isMockMode, useBackendApi } from "@api/backend/client";
 import type {
@@ -30,8 +31,9 @@ const MOCK_LATENCY_MS = 200;
 
 /**
  * Update a case via `PATCH /cases/{id}` — state transitions, priority changes,
- * assignee (`assigneeEmail`), or watch list (`watchList`). The backend requires
- * **exactly one** of those fields per call, so callers must not combine them.
+ * work sub-state (`workState`), assignee (`assigneeEmail`), or watch list
+ * (`watchList`). The backend requires **exactly one** of those fields per call,
+ * so callers must not combine them.
  * The response is `BeUpdateCaseResponse` ({ message, case }), but on success we
  * ignore the body and invalidate this case's detail query and the cross-project
  * list so both refetch the authoritative state (incl. fresh `nextStates`).
@@ -69,4 +71,38 @@ export function usePatchCsmCase(
       queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASES] });
     },
   });
+}
+
+/**
+ * Patch an **arbitrary** case by id (not bound to a single case like
+ * {@link usePatchCsmCase}). Used when one action must update other cases too —
+ * e.g. pausing the engineer's other ongoing case(s) when they start work on a
+ * new one. Same single-field-per-call contract; invalidates the patched case's
+ * detail and the cross-project list so both refetch.
+ */
+export function usePatchCsmCaseById(): (
+  caseId: string,
+  input: BeCaseUpdatePayload,
+) => Promise<void> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+
+  return useCallback(
+    async (caseId: string, input: BeCaseUpdatePayload): Promise<void> => {
+      if (!caseId) throw new Error("Cannot update a case without an id.");
+      if (isMockMode()) {
+        await new Promise((r) => setTimeout(r, MOCK_LATENCY_MS));
+      } else {
+        await api.patch<BeCaseUpdatePayload, BeUpdateCaseResponse>(
+          `/cases/${encodeURIComponent(caseId)}`,
+          input,
+        );
+      }
+      queryClient.invalidateQueries({
+        queryKey: [ApiQueryKeys.CSM_CASE_DETAIL, caseId],
+      });
+      queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASES] });
+    },
+    [api, queryClient],
+  );
 }

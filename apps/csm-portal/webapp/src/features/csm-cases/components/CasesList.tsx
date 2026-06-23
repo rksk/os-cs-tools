@@ -14,12 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, Skeleton, Typography, useTheme } from "@wso2/oxygen-ui";
+import { Box, Skeleton, Typography, useTheme } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import { Link as RouterLink } from "react-router";
-import { stateColor, stateLabel } from "@features/csm-dashboard/utils/abtDashboard";
 import RelativeTime from "@components/RelativeTime";
 import SeverityChip from "@components/SeverityChip";
+import StateChip from "@components/StateChip";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
 
 interface CasesListProps {
@@ -27,13 +27,14 @@ interface CasesListProps {
   isLoading: boolean;
 }
 
-const HEADER_CELLS: { label: string; align?: "left" | "right" }[] = [
-  { label: "Case ID" },
-  { label: "Subject" },
-  { label: "Product" },
-  { label: "Severity" },
-  { label: "State" },
-  { label: "Updated", align: "right" },
+// Every column is left-aligned for a consistent scan line down the table.
+const HEADER_CELLS: string[] = [
+  "Case ID",
+  "Subject",
+  "Product",
+  "Severity",
+  "State",
+  "Updated",
 ];
 
 // Subject gets the lion's share of the row; the ids sit in their own narrow
@@ -76,14 +77,14 @@ export default function CasesList({
           borderColor: "divider",
         }}
       >
-        {HEADER_CELLS.map((h) => (
+        {HEADER_CELLS.map((label) => (
           <Typography
-            key={h.label}
+            key={label}
             variant="caption"
             color="text.secondary"
-            sx={{ textAlign: h.align ?? "left", fontWeight: 600 }}
+            sx={{ fontWeight: 600 }}
           >
-            {h.label}
+            {label}
           </Typography>
         ))}
       </Box>
@@ -193,19 +194,9 @@ export default function CasesList({
               <Typography variant="body2" noWrap>
                 {c.product}
               </Typography>
-              <SeverityChip severity={c.severity} />
-              <Chip
-                size="small"
-                variant="outlined"
-                label={stateLabel(c.state)}
-                color={stateColor(c.state)}
-              />
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ textAlign: "right" }}
-                noWrap
-              >
+              <SeverityChip severity={c.severity} clickable />
+              <StateChip state={c.state} clickable />
+              <Typography variant="caption" color="text.secondary" noWrap>
                 <RelativeTime iso={c.updatedAt} />
               </Typography>
             </Box>

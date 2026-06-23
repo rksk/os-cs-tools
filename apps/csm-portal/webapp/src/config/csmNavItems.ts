@@ -51,7 +51,7 @@ export const CSM_NAV_ITEMS: CsmNavItem[] = [
   { id: "time-cards", label: "Time cards", path: "/time-cards", icon: Clock },
   { id: "accounts", label: "Accounts", path: "/accounts", icon: Building },
   { id: "projects", label: "Projects", path: "/projects", icon: FolderOpen },
-  { id: "admin", label: "Administration", path: "/admin", icon: Settings },
+  { id: "admin", label: "Settings", path: "/admin", icon: Settings },
 ];
 
 /** The nav item whose path is (a prefix of) `pathname`, if any. */

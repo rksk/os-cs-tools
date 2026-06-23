@@ -24,7 +24,7 @@ import {
 import { useMemo, useState, type JSX } from "react";
 import type * as React from "react";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
-import { useProjectSearch } from "@features/csm-cases/api/useProjectSearch";
+import { useInfiniteProjectSearch } from "@features/csm-cases/api/useProjectSearch";
 
 interface ProjectOption {
   id: string;
@@ -58,10 +58,32 @@ export default function AsyncProjectMultiSelect({
   nameSeed,
 }: AsyncProjectMultiSelectProps): JSX.Element {
   const [input, setInput] = useState("");
+  const [open, setOpen] = useState(false);
   const debounced = useDebouncedValue(input, 300);
   const query = debounced.trim();
 
-  const { data, isFetching } = useProjectSearch(query, query.length > 0);
+  // Enabled while the dropdown is open, so it loads the first page of projects
+  // on open (no typing needed) and re-pages as the user types. Closed → the
+  // query idles (cached pages stay for an instant re-open).
+  const {
+    projects,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteProjectSearch(query, open);
+
+  // Lazy-load the next page when the listbox is scrolled near its end.
+  const handleListboxScroll = (event: React.UIEvent<HTMLElement>): void => {
+    const el = event.currentTarget;
+    if (
+      hasNextPage &&
+      !isFetchingNextPage &&
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    ) {
+      fetchNextPage();
+    }
+  };
 
   // Names captured when the user picks a project, so a chip keeps its label
   // even once the search moves on to a different term.
@@ -71,12 +93,12 @@ export default function AsyncProjectMultiSelect({
 
   const nameById = useMemo(() => {
     const m = new Map<string, string>(nameSeed);
-    (data ?? []).forEach((p) => {
+    projects.forEach((p) => {
       if (p.name) m.set(p.id, p.name);
     });
     pickedNames.forEach((name, pid) => m.set(pid, name));
     return m;
-  }, [nameSeed, data, pickedNames]);
+  }, [nameSeed, projects, pickedNames]);
 
   const selectedOptions: ProjectOption[] = useMemo(
     () => values.map((v) => ({ id: v, name: nameById.get(v) ?? v })),
@@ -86,10 +108,10 @@ export default function AsyncProjectMultiSelect({
   // Pool = current selection (so the field can render its chips) + the search
   // results, de-duplicated by id.
   const options: ProjectOption[] = useMemo(() => {
-    const results = (data ?? []).map((p) => ({ id: p.id, name: p.name || p.id }));
+    const results = projects.map((p) => ({ id: p.id, name: p.name || p.id }));
     const seen = new Set(values);
     return [...selectedOptions, ...results.filter((o) => !seen.has(o.id))];
-  }, [data, values, selectedOptions]);
+  }, [projects, values, selectedOptions]);
 
   return (
     <Autocomplete<ProjectOption, true>
@@ -98,12 +120,17 @@ export default function AsyncProjectMultiSelect({
       id={id}
       options={options}
       value={selectedOptions}
-      loading={isFetching}
+      open={open}
+      onOpen={() => setOpen(true)}
+      onClose={() => setOpen(false)}
+      // Spinner only while the first page loads; later pages append on scroll.
+      loading={isFetching && projects.length === 0}
       disableCloseOnSelect
       // The backend already filtered by the typed term; don't re-filter locally.
       filterOptions={(opts) => opts}
       getOptionLabel={(opt) => opt.name}
       isOptionEqualToValue={(opt, val) => opt.id === val.id}
+      slotProps={{ listbox: { onScroll: handleListboxScroll } }}
       onChange={(_event, next) => {
         setPickedNames((prev) => {
           const m = new Map(prev);
@@ -118,13 +145,7 @@ export default function AsyncProjectMultiSelect({
         // pick several from one search; clear only on explicit input/clear.
         if (reason === "input" || reason === "clear") setInput(value);
       }}
-      noOptionsText={
-        query.length === 0
-          ? "Type to search projects…"
-          : isFetching
-            ? "Searching…"
-            : "No projects found"
-      }
+      noOptionsText={isFetching ? "Loading projects…" : "No projects found"}
       renderTags={(value, getTagProps) =>
         value.map((option, index) => {
           const { key, ...tagProps } = getTagProps({ index });

@@ -425,9 +425,10 @@ export default function CasesFilterBar({
     [],
   );
 
-  // Project filter searches the backend as you type rather than loading the
-  // whole catalogue. `availableProjects` (projects on the loaded cases) only
-  // seeds chip labels for already-selected ids before a search runs.
+  // Project filter loads the first page of projects on open and pages through
+  // the rest on scroll (and narrows as you type) rather than loading the whole
+  // catalogue at once. `availableProjects` (projects on the loaded cases) only
+  // seeds chip labels for already-selected ids before any page loads.
   const projectNameSeed = useMemo(
     () => new Map(availableProjects.map((p) => [p.id, p.name])),
     [availableProjects],

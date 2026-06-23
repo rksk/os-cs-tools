@@ -16,6 +16,7 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useLogger } from "@hooks/useLogger";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { isMockMode, useBackendApi } from "@api/backend/client";
 import { severityFromPriority, uiStateFromBe } from "@api/backend/mappers";
@@ -33,12 +34,24 @@ const MOCK_LATENCY_MS = 150;
  * watchers, tags, time logs, attachments, linked items) default to empty /
  * placeholder values.
  */
-function detailFromBeCase(c: BeCaseView): CsmCaseDetail {
+function detailFromBeCase(
+  c: BeCaseView,
+  currentUserEmail?: string,
+): CsmCaseDetail {
   const account = c.account;
   const customer = account?.name ?? "—";
   // createdBy.name can be empty for unhydrated users, so fall back to the email.
   const reporter = c.createdBy?.name?.trim() || c.createdBy?.email;
   const assignee = c.assignedEngineer?.name?.trim() || "Unassigned";
+  // "Is me" by comparing the assignee's email (the only stable identity the FE
+  // shares with the JWT) to the signed-in user's, case-insensitively. Falls back
+  // to false when either is absent — e.g. the data source doesn't return the
+  // assignee email — so the gate stays closed rather than guessing.
+  const assigneeEmail = c.assignedEngineer?.email ?? undefined;
+  const assigneeIsMe =
+    !!assigneeEmail &&
+    !!currentUserEmail &&
+    assigneeEmail.toLowerCase() === currentUserEmail.toLowerCase();
   const product = c.deployedProduct?.displayName ?? "—";
   return {
     id: c.id,
@@ -50,14 +63,12 @@ function detailFromBeCase(c: BeCaseView): CsmCaseDetail {
     projectId: c.project?.id ?? "",
     projectName: c.project?.name ?? "—",
     product,
-    severity: severityFromPriority(c.priority),
+    severity: severityFromPriority(c.severity),
     state: uiStateFromBe(c.state),
     workState: c.workState ?? null,
     nextStates: (c.nextStates ?? []).map(uiStateFromBe),
     assignee,
-    // "Is me" needs the signed-in user's entity id, which this mapper doesn't
-    // have; left false until the assignee can be compared to the current user.
-    assigneeIsMe: false,
+    assigneeIsMe,
     slaClockType: "ack",
     minutesToBreach: 0,
     createdAt: c.createdOn ?? "",
@@ -109,9 +120,12 @@ export function useGetCsmCaseDetail(
 ): UseQueryResult<CsmCaseDetail | null, Error> {
   const logger = useLogger();
   const api = useBackendApi();
+  // Signed-in user's email, used to resolve `assigneeIsMe` against the case's
+  // assigned-engineer email. In the query key so a late-arriving claim recomputes.
+  const currentUserEmail = useIdTokenClaims()?.email;
 
   return useQuery<CsmCaseDetail | null, Error>({
-    queryKey: [ApiQueryKeys.CSM_CASE_DETAIL, caseId ?? ""],
+    queryKey: [ApiQueryKeys.CSM_CASE_DETAIL, caseId ?? "", currentUserEmail ?? ""],
     queryFn: async (): Promise<CsmCaseDetail | null> => {
       if (!caseId) return null;
 
@@ -129,7 +143,7 @@ export function useGetCsmCaseDetail(
       // The CaseView embeds account / project / deployment / deployed-product /
       // reporter, so the whole detail builds from this one response — no
       // follow-up lookups.
-      return detailFromBeCase(beCase);
+      return detailFromBeCase(beCase, currentUserEmail);
     },
     enabled: !!caseId,
     staleTime: 30_000,

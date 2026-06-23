@@ -166,13 +166,14 @@ export default function CsmCaseCreatePage(): JSX.Element {
     if (!canSubmit || !severity || !issueType || descriptionOverLimit) return;
     postCase.mutate(
       {
+        typeKey: "support",
         projectId,
         deploymentId,
         deployedProductId,
         subject: subject.trim(),
         description,
-        priority: priorityFromSeverity(severity),
-        issueType,
+        severityKey: priorityFromSeverity(severity),
+        issueTypeKey: issueType,
       },
       {
         onSuccess: (created) => navigate(`/cases/${created.id}`),

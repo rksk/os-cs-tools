@@ -106,7 +106,7 @@ export function useCaseCountsMatrix(): UseQueryResult<CaseCountsMatrix, Error> {
             .post<BeCaseSearchPayload, BeCaseSearchResponse>("/cases/search", {
               pagination: { offset: 0, limit: 1 },
               filters: {
-                priorityKeys: [priorityFromSeverity(severity)],
+                severityKeys: [priorityFromSeverity(severity)],
                 stateKeys: [beStateFromUi(state)],
               },
             })

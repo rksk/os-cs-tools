@@ -24,7 +24,7 @@ import type {
   BeAttachment,
   BeCaseComment,
   BeCreatableCommentType,
-  BeCasePriority,
+  BeCaseSeverity,
   BeCaseState,
 } from "@api/backend/types";
 import type {
@@ -47,7 +47,7 @@ import type {
  * doubles as the source.
  */
 export function severityFromPriority(
-  priority: BeCasePriority | undefined,
+  priority: BeCaseSeverity | undefined,
 ): Severity {
   switch (priority) {
     case "catastrophic":
@@ -65,7 +65,7 @@ export function severityFromPriority(
   }
 }
 
-export function priorityFromSeverity(severity: Severity): BeCasePriority {
+export function priorityFromSeverity(severity: Severity): BeCaseSeverity {
   switch (severity) {
     case "S0":
       return "catastrophic";

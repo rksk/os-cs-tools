@@ -103,11 +103,11 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
         // population.
         const activeStateKeys = COMPOSITION_STATES.map(beStateFromUi);
         // The state/closed counts don't filter by severity. The backend,
-        // however, counts only catastrophic cases when `priorityKeys` is absent
+        // however, counts only catastrophic cases when `severityKeys` is absent
         // (an empty priority filter is not treated as "all"), which made the
         // state pie show the S0 row only and disagree with the matrix totals.
         // Pass every priority explicitly so these counts span all severities.
-        // BE follow-up: treat an absent/empty priorityKeys as "all priorities".
+        // BE follow-up: treat an absent/empty severityKeys as "all priorities".
         const allPriorityKeys = MATRIX_SEVERITIES.map(priorityFromSeverity);
 
         // All severity + state counts (plus the closed total) fire in one wave.
@@ -117,7 +117,7 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
               countTotal({
                 pagination: { offset: 0, limit: 1 },
                 filters: {
-                  priorityKeys: [priorityFromSeverity(sev)],
+                  severityKeys: [priorityFromSeverity(sev)],
                   stateKeys: activeStateKeys,
                 },
               }).then((n) => ({ key: sev, n })),
@@ -129,7 +129,7 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
                 pagination: { offset: 0, limit: 1 },
                 filters: {
                   stateKeys: [beStateFromUi(st)],
-                  priorityKeys: allPriorityKeys,
+                  severityKeys: allPriorityKeys,
                 },
               }).then((n) => ({ key: st, n })),
             ),
@@ -138,7 +138,7 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
             pagination: { offset: 0, limit: 1 },
             filters: {
               stateKeys: [beStateFromUi("closed")],
-              priorityKeys: allPriorityKeys,
+              severityKeys: allPriorityKeys,
             },
           }),
         ]);

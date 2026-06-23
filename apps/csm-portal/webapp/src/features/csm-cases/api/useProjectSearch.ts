@@ -16,9 +16,11 @@
 
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useQuery,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import type {
@@ -29,6 +31,9 @@ import type {
 
 /** A single page of matches is plenty for a type-ahead picker. */
 const PROJECT_SEARCH_LIMIT = 20;
+
+/** Page size for the lazy-loaded (scroll-to-load-more) project filter. */
+export const PROJECT_PAGE_SIZE = 10;
 
 /**
  * Type-ahead project search for the cases project filter. Unlike
@@ -62,4 +67,71 @@ export function useProjectSearch(
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
+}
+
+/** Flattened, paginated result for the lazy-loaded project filter. */
+export interface InfiniteProjectSearch {
+  /** All projects loaded so far, across every fetched page. */
+  projects: BeProject[];
+  isFetching: boolean;
+  isFetchingNextPage: boolean;
+  hasNextPage: boolean;
+  isError: boolean;
+  /** Fetch the next page (wired to the dropdown's scroll). */
+  fetchNextPage: () => void;
+}
+
+/**
+ * Paginated project search for the cases project filter. Loads the first
+ * {@link PROJECT_PAGE_SIZE} projects as soon as it is enabled (the dropdown
+ * opens) — no typing required — and pages through the rest on demand via
+ * {@link InfiniteProjectSearch.fetchNextPage} (wired to the listbox scroll). An
+ * empty query lists the whole catalogue a page at a time; a typed query narrows
+ * it and re-pages from the first match.
+ */
+export function useInfiniteProjectSearch(
+  query: string,
+  enabled: boolean,
+): InfiniteProjectSearch {
+  const api = useBackendApi();
+  const q = query.trim();
+
+  const result = useInfiniteQuery<BeProjectSearchResponse, Error>({
+    queryKey: [ApiQueryKeys.CSM_PROJECTS, "search-paged", q],
+    queryFn: ({ pageParam }) => {
+      const pagination = { offset: pageParam as number, limit: PROJECT_PAGE_SIZE };
+      return api.post<BeProjectSearchPayload, BeProjectSearchResponse>(
+        "/projects/search",
+        q.length > 0 ? { searchQuery: q, pagination } : { pagination },
+      );
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.hasMore) return undefined;
+      // Next offset = rows already loaded; robust even if the backend does not
+      // echo back the offset we sent.
+      return allPages.reduce((n, p) => n + (p.projects?.length ?? 0), 0);
+    },
+    enabled,
+    // Keep prior pages on screen while a new query's first page loads, so the
+    // dropdown doesn't flash empty between searches.
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  const projects = useMemo(
+    () => (result.data?.pages ?? []).flatMap((p) => p.projects ?? []),
+    [result.data],
+  );
+
+  return {
+    projects,
+    isFetching: result.isFetching,
+    isFetchingNextPage: result.isFetchingNextPage,
+    hasNextPage: result.hasNextPage,
+    isError: result.isError,
+    fetchNextPage: () => {
+      void result.fetchNextPage();
+    },
+  };
 }

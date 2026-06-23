@@ -49,7 +49,7 @@ export default function CsmAdminLayout(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Typography variant="h5">Administration</Typography>
+      <Typography variant="h5">Settings</Typography>
 
       <Tabs
         value={active}

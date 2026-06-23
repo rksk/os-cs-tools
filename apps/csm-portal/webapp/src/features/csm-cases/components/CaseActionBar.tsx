@@ -198,11 +198,30 @@ interface SecondaryItem {
  *   - Watch / unwatch  → managed via the Watchers widget in Details (ISSU-018)
  *   - Open in ServiceNow → this platform replaces ServiceNow; no back-link
  */
-function buildSecondaryItems(): SecondaryItem[] {
+function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
+  const items: SecondaryItem[] = [];
+
+  // Pause / resume the work sub-state. Offered only for an in-progress case
+  // assigned to the current user — pausing/resuming is the assignee's own
+  // workflow control, not something to do to someone else's active case.
+  if (
+    caseDetail.assigneeIsMe &&
+    caseDetail.state === "work_in_progress" &&
+    caseDetail.workState
+  ) {
+    const paused = caseDetail.workState === "paused";
+    items.push({
+      key: "toggle_work_state",
+      label: paused ? "Resume work" : "Pause work",
+      icon: paused ? <Play size={16} /> : <PauseCircle size={16} />,
+      divider: true,
+    });
+  }
+
   // Only "Copy case link" is wired up for now. The rest are disabled until
   // their backend flows land, so the menu advertises the roadmap without
   // exposing dead actions that would no-op or toast a mock message.
-  return [
+  items.push(
     { key: "reassign_engineer", label: "Assign / reassign engineer…", icon: <User size={16} /> },
     { key: "reassign_group", label: "Reassign to group…", icon: <Users size={16} />, divider: true, disabled: true },
     { key: "escalate", label: "Escalate to lead…", icon: <TriangleAlert size={16} />, disabled: true },
@@ -215,7 +234,9 @@ function buildSecondaryItems(): SecondaryItem[] {
     { key: "request_call", label: "Request a call…", icon: <Phone size={16} />, disabled: true },
     { key: "log_time", label: "Log time…", icon: <Clock size={16} />, divider: true, disabled: true },
     { key: "copy_link", label: "Copy case link", icon: <Copy size={16} /> },
-  ];
+  );
+
+  return items;
 }
 
 interface CaseActionBarProps {
@@ -251,7 +272,7 @@ export default function CaseActionBar({
     .sort((a, b) => orderRank(a) - orderRank(b))
     .map(buttonFor);
   const primary = lifecycle;
-  const secondary = buildSecondaryItems();
+  const secondary = buildSecondaryItems(caseDetail);
 
   const runPrimary = (p: PrimaryButton): void => {
     if (p.confirm) {

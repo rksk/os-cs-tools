@@ -100,7 +100,7 @@ function accountOptionsQueryOptions(api: BackendApi) {
  * cases page already mounts for its filter options.
  *
  * Search and the severity / state / project filters are pushed into the search
- * payload (searchQuery / priorityKeys / stateKeys / projectIds) and the BE
+ * payload (searchQuery / severityKeys / stateKeys / projectIds) and the BE
  * paginates the result (`pagination` → `total` / `limit` / `offset` /
  * `hasMore`). The remaining filters (assignee, SLA, product) have no BE support
  * and are disabled in LIVE; they only do anything in MOCK mode, where the whole
@@ -175,7 +175,7 @@ export function useGetCsmCases(
           filters: {
             ...(search.length > 0 && { searchQuery: search }),
             ...(filters.severities.length > 0 && {
-              priorityKeys: filters.severities.map(priorityFromSeverity),
+              severityKeys: filters.severities.map(priorityFromSeverity),
             }),
             ...(filters.states.length > 0 && {
               stateKeys: filters.states.map(beStateFromUi),
@@ -224,7 +224,7 @@ export function useGetCsmCases(
           projectId,
           projectName: c.project?.name ?? "—",
           product: c.deployedProduct?.displayName ?? "—",
-          severity: severityFromPriority(c.priority),
+          severity: severityFromPriority(c.severity),
           state: uiStateFromBe(c.state),
           workState: c.workState ?? null,
           // No assignee field on the backend yet; surfaced as "Unassigned".
