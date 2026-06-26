@@ -23,6 +23,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, Check, X } from "@wso2/oxygen-ui-icons-react";
+import DOMPurify from "dompurify";
 import { type JSX, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
@@ -36,6 +37,23 @@ import {
 import type { BeEntityRef } from "@api/backend/types";
 
 const OPERATIONS_CR_PATH = "/operations?tab=change_requests";
+
+// CR long-text fields (description, justification, plans) come back as
+// ServiceNow rich-text HTML, so they're sanitized before rendering. Allow-list
+// mirrors the case comment renderer (CsmCaseCommentBubble).
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: [
+    "p", "br", "strong", "b", "em", "i", "u", "s", "code", "pre",
+    "ul", "ol", "li", "a", "blockquote", "h1", "h2", "h3", "img", "span", "table",
+    "thead", "tbody", "tr", "th", "td",
+  ],
+  ALLOWED_ATTR: ["href", "target", "rel", "src", "alt"],
+};
+
+/** True when an HTML string has no visible content (e.g. `<p></p>`, `&nbsp;`). */
+function isBlankHtml(html: string): boolean {
+  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim().length === 0;
+}
 
 function formatDateTime(value?: string | null): string {
   return (
@@ -74,15 +92,34 @@ function YesNo({ value }: { value?: boolean }): JSX.Element {
   );
 }
 
-/** A long-form plan section; renders only when the field has content. */
-function PlanSection({ title, text }: { title: string; text?: string | null }): JSX.Element | null {
-  if (!text) return null;
+/**
+ * A long-form plan section. The value is ServiceNow rich-text HTML, so it's
+ * sanitized and rendered as HTML. Renders nothing when the field is empty or
+ * has no visible content.
+ */
+function PlanSection({ title, html }: { title: string; html?: string | null }): JSX.Element | null {
+  if (!html || isBlankHtml(html)) return null;
+  const safeHtml = DOMPurify.sanitize(html, PURIFY_CONFIG);
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
       <Typography variant="subtitle2">{title}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
-        {text}
-      </Typography>
+      <Box
+        sx={{
+          color: "text.secondary",
+          fontSize: "0.875rem",
+          lineHeight: 1.5,
+          wordBreak: "break-word",
+          "& p": { my: 0.5 },
+          "& p:first-of-type": { mt: 0 },
+          "& p:last-child": { mb: 0 },
+          "& ul, & ol": { my: 0.5, pl: 3 },
+          "& a": { color: "primary.main" },
+          "& img": { maxWidth: "100%", height: "auto" },
+          "& table": { borderCollapse: "collapse", width: "100%" },
+          "& th, & td": { border: 1, borderColor: "divider", px: 1, py: 0.5, textAlign: "left" },
+        }}
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
+      />
     </Box>
   );
 }
@@ -241,22 +278,24 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
         </Box>
       </Card>
 
-      {(cr.description ||
-        cr.justification ||
-        cr.impactDescription ||
-        cr.serviceOutage ||
-        cr.communicationPlan ||
-        cr.rollbackPlan ||
-        cr.testPlan) && (
+      {[
+        cr.description,
+        cr.justification,
+        cr.impactDescription,
+        cr.serviceOutage,
+        cr.communicationPlan,
+        cr.rollbackPlan,
+        cr.testPlan,
+      ].some((v) => v && !isBlankHtml(v)) && (
         <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2.5 }}>
           <Typography variant="subtitle2">Details &amp; plans</Typography>
-          <PlanSection title="Description" text={cr.description} />
-          <PlanSection title="Justification" text={cr.justification} />
-          <PlanSection title="Impact description" text={cr.impactDescription} />
-          <PlanSection title="Service outage" text={cr.serviceOutage} />
-          <PlanSection title="Communication plan" text={cr.communicationPlan} />
-          <PlanSection title="Rollback plan" text={cr.rollbackPlan} />
-          <PlanSection title="Test plan" text={cr.testPlan} />
+          <PlanSection title="Description" html={cr.description} />
+          <PlanSection title="Justification" html={cr.justification} />
+          <PlanSection title="Impact description" html={cr.impactDescription} />
+          <PlanSection title="Service outage" html={cr.serviceOutage} />
+          <PlanSection title="Communication plan" html={cr.communicationPlan} />
+          <PlanSection title="Rollback plan" html={cr.rollbackPlan} />
+          <PlanSection title="Test plan" html={cr.testPlan} />
         </Card>
       )}
     </Box>
