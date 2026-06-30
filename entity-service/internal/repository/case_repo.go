@@ -113,6 +113,7 @@ func (r *caseRepo) GetCaseByID(ctx context.Context, id string) (domain.CaseView,
 		rcID, rcNum                         *string
 		accountID, accountName, accountTier string
 		workState                           *string
+		severity                            *string
 		depID, depName                      string
 		dpID, dpDisplayName                 string
 		prodID, prodName                    string
@@ -144,7 +145,7 @@ func (r *caseRepo) GetCaseByID(ctx context.Context, id string) (domain.CaseView,
 		 WHERE c.id = $1`, id,
 	).Scan(
 		&cv.ID, &cv.Number, &cv.InternalID,
-		&cv.Subject, &cv.Description, &cv.Severity, &cv.IssueType, &cv.State, &workState,
+		&cv.Subject, &cv.Description, &severity, &cv.IssueType, &cv.State, &workState,
 		&cv.CreatedOn, &cv.UpdatedOn, &cv.ClosedOn,
 		&cv.CreatedByDetails.ID, &cv.CreatedByDetails.Name, &cv.CreatedByDetails.UserID, &cv.CreatedByDetails.Email,
 		&cv.ProjectDetails.ID, &cv.ProjectDetails.Name,
@@ -161,6 +162,9 @@ func (r *caseRepo) GetCaseByID(ctx context.Context, id string) (domain.CaseView,
 	}
 	if err != nil {
 		return domain.CaseView{}, fmt.Errorf("get case by id: %w", err)
+	}
+	if severity != nil {
+		cv.Severity = domain.CaseSeverity(*severity)
 	}
 	cv.DeploymentDetails = &domain.EntityRef{ID: depID, Name: depName}
 	cv.DeployedProductDetails = &domain.DeployedProductRef{ID: dpID, DisplayName: dpDisplayName}

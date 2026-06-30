@@ -1,7 +1,7 @@
 CREATE TYPE user_type_enum AS ENUM ('internal', 'customer', 'system');
 
 CREATE TABLE IF NOT EXISTS users (
-    id          TEXT        PRIMARY KEY,
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_name   TEXT        NOT NULL UNIQUE,
     first_name  TEXT        NOT NULL,
     last_name   TEXT        NOT NULL,
