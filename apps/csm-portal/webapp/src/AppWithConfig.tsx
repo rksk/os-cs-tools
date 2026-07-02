@@ -24,6 +24,7 @@ import { loggerConfig } from "@config/loggerConfig";
 import LoggerProvider from "@context/logger/LoggerProvider";
 import { ThemePreferenceProvider } from "@context/theme/ThemePreferenceContext";
 import { authConfig } from "@config/authConfig";
+import { apiConfig } from "@config/apiConfig";
 
 // React-Query devtools ship from a devDependency and must not enter the
 // production bundle. Dynamic import + DEV check accomplishes both.
@@ -74,6 +75,12 @@ export default function AppWithConfig(): JSX.Element {
       afterSignInUrl={authConfig.signInRedirectURL}
       afterSignOutUrl={authConfig.signOutRedirectURL}
       scopes={["openid", "email", "groups", "profile"]}
+      storage="webWorker"
+      // With webWorker storage the access token lives in the worker and is
+      // attached there; the SDK only attaches it to requests whose URL starts
+      // with an allowed base. Register the backend so `http.request` can reach
+      // it. Ignored for non-webWorker storage.
+      allowedExternalUrls={[apiConfig.backendUrl]}
       preferences={{
         theme: {
           inheritFromBranding: false,
