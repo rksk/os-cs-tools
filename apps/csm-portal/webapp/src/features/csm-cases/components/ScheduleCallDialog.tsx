@@ -32,6 +32,7 @@ import type { BeCallRequestView } from "@api/backend/types";
 import {
   resolveDisplayTimeZone,
   zonedInputToUtcIso,
+  normalizeBackendTimestamp,
   formatBackendTimestampForDisplay,
 } from "@utils/dateTime";
 
@@ -118,8 +119,15 @@ export function ScheduleCallDialog({
       : null;
   const customTimeValid = selectedTime !== CUSTOM_TIME_VALUE || !!customUtcIso;
 
+  // Custom input is entered in the agent's timezone → convert to UTC ISO.
+  // A selected preferred time is a backend wall-clock string (e.g. SN's
+  // "MM/DD/YYYY HH:MM:SS") → normalize it to RFC3339 UTC; the API requires ISO.
   const meetingDate =
-    selectedTime === CUSTOM_TIME_VALUE ? customUtcIso : selectedTime || null;
+    selectedTime === CUSTOM_TIME_VALUE
+      ? customUtcIso
+      : selectedTime
+        ? normalizeBackendTimestamp(selectedTime)
+        : null;
 
   const canSubmit = durationValid && customTimeValid && !!meetingDate;
 
