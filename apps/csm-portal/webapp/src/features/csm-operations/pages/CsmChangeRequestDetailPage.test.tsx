@@ -88,6 +88,7 @@ const BASE_CR: BeChangeRequestDetail = {
   createdOn: "2026-01-01T00:00:00Z",
   state: "new",
   type: "normal",
+  assignedTeam: { id: "team-1", name: "Platform" },
 };
 
 function mockQueryResult(
@@ -146,6 +147,27 @@ describe("CsmChangeRequestDetailPage — Request approval (New -> Assess)", () =
     expect(
       screen.queryByRole("button", { name: /request approval/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a disabled Request approval button when the state allows it but there is no assigned team", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, legalNextStates: ["assess"], assignedTeam: null },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    const button = screen.getByRole("button", { name: /request approval/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(patchMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves Request approval enabled when both the state and the assigned team allow it", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, legalNextStates: ["assess"], assignedTeam: { id: "team-1", name: "Platform" } },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    expect(
+      screen.getByRole("button", { name: /request approval/i }),
+    ).toBeEnabled();
   });
 
   it("PATCHes { requestApproval: true } for this CR when clicked", () => {

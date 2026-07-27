@@ -20,6 +20,7 @@ import {
   Card,
   Chip,
   Skeleton,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, Check, MessageSquarePlus, Pencil, Send, X } from "@wso2/oxygen-ui-icons-react";
@@ -237,7 +238,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   // ever modeled today (New -> Assess), but this checks membership rather
   // than hardcoding `cr.state === "new"` so a backend-added transition needs
   // no FE change to show up.
-  const canRequestApproval = !!cr.legalNextStates?.includes("assess");
+  // The state machine alone isn't sufficient: the backing data source also
+  // enforces that an assigned team is set before this transition is allowed,
+  // so require `assignedTeam` too or the request round-trips and fails there.
+  const stateAllowsRequestApproval = !!cr.legalNextStates?.includes("assess");
+  const requestApprovalBlockedReason = stateAllowsRequestApproval && !cr.assignedTeam
+    ? "Set an assigned team before requesting approval"
+    : null;
 
   const requestApproval = (): void => {
     patchCr.mutate(
@@ -277,25 +284,42 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
               label={`${changeRequestImpactLabel(cr.impact)} impact`}
             />
           )}
-          {canRequestApproval && (
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              startIcon={<Send size={14} />}
-              onClick={requestApproval}
-              loading={patchCr.isPending}
-              sx={{ ml: "auto", flexShrink: 0 }}
-            >
-              Request approval
-            </Button>
+          {stateAllowsRequestApproval && (
+            requestApprovalBlockedReason ? (
+              <Tooltip title={requestApprovalBlockedReason}>
+                <Box component="span" sx={{ ml: "auto", flexShrink: 0 }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    startIcon={<Send size={14} />}
+                    disabled
+                    sx={{ flexShrink: 0 }}
+                  >
+                    Request approval
+                  </Button>
+                </Box>
+              </Tooltip>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={<Send size={14} />}
+                onClick={requestApproval}
+                loading={patchCr.isPending}
+                sx={{ ml: "auto", flexShrink: 0 }}
+              >
+                Request approval
+              </Button>
+            )
           )}
           <Button
             variant="outlined"
             size="small"
             startIcon={<Pencil size={14} />}
             onClick={() => setEditOpen(true)}
-            sx={{ ml: canRequestApproval ? 0 : "auto", flexShrink: 0 }}
+            sx={{ ml: stateAllowsRequestApproval ? 0 : "auto", flexShrink: 0 }}
           >
             Edit
           </Button>
