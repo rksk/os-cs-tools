@@ -230,6 +230,7 @@ type SNAccountView struct {
 	Name             string     `json:"name"`
 	Classification   string     `json:"classification"`
 	Pod              *string    `json:"pod"`
+	SfID             *string    `json:"sfId"`
 	Region           *string    `json:"region"`
 	SupportTier      *string    `json:"supportTier"`
 	ArrToday         *string    `json:"arrToday"`
@@ -266,6 +267,7 @@ type SNAccountDetail struct {
 	Name             string            `json:"name"`
 	Classification   string            `json:"classification"`
 	Pod              *string           `json:"pod"`
+	SfID             *string           `json:"sfId"`
 	Region           *string           `json:"region"`
 	SupportTier      *SNSupportTierRef `json:"supportTier"`
 	ArrToday         *string           `json:"arrToday"`

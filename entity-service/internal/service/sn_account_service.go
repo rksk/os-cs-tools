@@ -50,6 +50,7 @@ type snAccount struct {
 	SupportTier      *snSupportTier `json:"supportTier"`
 	Classification   string         `json:"classification"`
 	Pod              *string        `json:"pod"`
+	SfID             *string        `json:"sfId"`
 	Region           *string        `json:"region"`
 	ArrToday         *string        `json:"arrToday"`
 	ActivationDate   string         `json:"activationDate"`
@@ -180,6 +181,7 @@ func snAccountToDomain(a snAccount) domain.SNAccountView {
 		Name:             a.Name,
 		Classification:   a.Classification,
 		Pod:              nilIfEmpty(a.Pod),
+		SfID:             nilIfEmpty(a.SfID),
 		Region:           nilIfEmpty(a.Region),
 		SupportTier:      supportTier,
 		ArrToday:         nilIfEmpty(a.ArrToday),
@@ -211,6 +213,7 @@ func snAccountToDetail(a snAccount) domain.SNAccountDetail {
 		Name:             a.Name,
 		Classification:   a.Classification,
 		Pod:              nilIfEmpty(a.Pod),
+		SfID:             nilIfEmpty(a.SfID),
 		Region:           nilIfEmpty(a.Region),
 		SupportTier:      supportTier,
 		ArrToday:         nilIfEmpty(a.ArrToday),

@@ -2852,6 +2852,10 @@ components:
         pod:
           type: string
           nullable: true
+        sfId:
+          type: string
+          nullable: true
+          description: Salesforce account ID linked to this account, if any.
         region:
           type: string
           nullable: true
@@ -2909,6 +2913,10 @@ components:
         pod:
           type: string
           nullable: true
+        sfId:
+          type: string
+          nullable: true
+          description: Salesforce account ID linked to this account, if any.
         region:
           type: string
           nullable: true
