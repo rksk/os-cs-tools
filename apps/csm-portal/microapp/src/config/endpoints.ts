@@ -36,8 +36,14 @@ export const CASE_ACTIVITIES_SEARCH_ENDPOINT = (id: string) => `/cases/${id}/act
 
 export const SLAS_SEARCH_ENDPOINT = "/slas/search";
 
+export const CHANGE_REQUESTS_ENDPOINT = "/change-requests";
 export const CHANGE_REQUESTS_SEARCH_ENDPOINT = "/change-requests/search";
 export const CHANGE_REQUEST_ENDPOINT = (id: string) => `/change-requests/${id}`;
+
+export const GROUPS_SEARCH_ENDPOINT = "/groups/search";
+export const IT_SERVICES_SEARCH_ENDPOINT = "/services/search";
+export const SERVICE_OFFERINGS_SEARCH_ENDPOINT = "/service-offerings/search";
+export const CONFIGURATION_ITEMS_SEARCH_ENDPOINT = "/configuration-items/search";
 
 export const INCIDENTS_SEARCH_ENDPOINT = "/incidents/search";
 export const INCIDENT_ENDPOINT = (id: string) => `/incidents/${id}`;

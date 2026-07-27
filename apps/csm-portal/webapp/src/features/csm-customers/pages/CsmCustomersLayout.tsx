@@ -14,54 +14,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
+import { Box, Typography } from "@wso2/oxygen-ui";
 import { type JSX, Suspense } from "react";
-import { Outlet, useLocation } from "react-router";
+import { Outlet } from "react-router";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
-import { useNavTransition } from "@hooks/useNavTransition";
+import SectionTabs from "@components/section-tabs/SectionTabs";
+import { useRouteTabs } from "@hooks/useSectionTabs";
 
-interface CustomersTab {
-  id: string;
-  label: string;
-  path: string;
-}
-
-const CUSTOMERS_TABS: CustomersTab[] = [
-  { id: "accounts", label: "Accounts", path: "/customers/accounts" },
-  { id: "projects", label: "Projects", path: "/customers/projects" },
-];
-
-function pickActiveTab(pathname: string): string {
-  for (const t of CUSTOMERS_TABS) {
-    if (pathname === t.path || pathname.startsWith(`${t.path}/`)) {
-      return t.id;
-    }
-  }
-  return CUSTOMERS_TABS[0].id;
-}
-
+/**
+ * Customers shell — Accounts and Projects under one tab strip. The tabs come
+ * from the navigation tree, so a deployment can restrict one through
+ * `CSM_PORTAL_FEATURE_OVERRIDES` without touching this layout.
+ */
 export default function CsmCustomersLayout(): JSX.Element {
-  const location = useLocation();
-  const navigate = useNavTransition();
-  const active = pickActiveTab(location.pathname);
+  const tabs = useRouteTabs("customers");
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Typography variant="h5">Customers</Typography>
 
-      <Tabs
-        value={active}
-        onChange={(_, id) => {
-          const next = CUSTOMERS_TABS.find((t) => t.id === id);
-          if (next) void navigate(next.path);
-        }}
-        variant="scrollable"
-        scrollButtons="auto"
-      >
-        {CUSTOMERS_TABS.map((t) => (
-          <Tab key={t.id} value={t.id} label={t.label} />
-        ))}
-      </Tabs>
+      <SectionTabs {...tabs} ariaLabel="Customers tabs" scrollable />
 
       <Suspense fallback={<RouteSuspenseFallback />}>
         <Outlet />

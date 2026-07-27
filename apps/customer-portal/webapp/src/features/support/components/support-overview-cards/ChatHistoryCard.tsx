@@ -25,7 +25,7 @@ import {
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Bot, ExternalLink, Play, User } from "@wso2/oxygen-ui-icons-react";
+import { Bot, ExternalLink, Play, User, X } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import { ChatAction } from "@features/support/constants/supportConstants";
 import {
@@ -34,10 +34,12 @@ import {
   getConversationStatusColor,
   formatDateTime,
 } from "@features/support/utils/support";
+import { isConversationResumable } from "@features/support/utils/conversationsList";
 
 export interface ChatHistoryCardProps {
   item: ChatHistoryItem;
   onItemAction?: (chatId: string, action: ChatAction) => void;
+  onCloseChat?: (chatId: string) => void;
 }
 
 /**
@@ -49,6 +51,7 @@ export interface ChatHistoryCardProps {
 export default function ChatHistoryCard({
   item,
   onItemAction,
+  onCloseChat,
 }: ChatHistoryCardProps): JSX.Element {
   const action = getChatStatusAction(item.status);
   const statusColorPath = getConversationStatusColor(item.status);
@@ -180,32 +183,61 @@ export default function ChatHistoryCard({
             {item.status}
           </Typography>
         </Box>
-        <Button
-          component="span"
-          size="small"
-          variant="text"
-          color={getChatActionColor(action)}
-          disableRipple
-          onClick={(e) => {
-            e.stopPropagation();
-            onItemAction?.(item.chatId, action);
-          }}
-          startIcon={
-            action === ChatAction.VIEW ? (
-              <ExternalLink size={12} />
-            ) : (
-              <Play size={12} />
-            )
-          }
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            minWidth: 0,
-            p: 0,
-          }}
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="center"
+          sx={{ flexShrink: 0 }}
         >
-          {action === ChatAction.VIEW ? "View" : "Resume"}
-        </Button>
+          {onCloseChat && isConversationResumable(item.status) && (
+            <Button
+              component="span"
+              size="small"
+              variant="text"
+              color="error"
+              disableRipple
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseChat(item.chatId);
+              }}
+              startIcon={<X size={12} />}
+              sx={{
+                textTransform: "none",
+                fontWeight: 500,
+                minWidth: 0,
+                p: 0,
+              }}
+            >
+              Close
+            </Button>
+          )}
+          <Button
+            component="span"
+            size="small"
+            variant="text"
+            color={getChatActionColor(action)}
+            disableRipple
+            onClick={(e) => {
+              e.stopPropagation();
+              onItemAction?.(item.chatId, action);
+            }}
+            startIcon={
+              action === ChatAction.VIEW ? (
+                <ExternalLink size={12} />
+              ) : (
+                <Play size={12} />
+              )
+            }
+            sx={{
+              textTransform: "none",
+              fontWeight: 500,
+              minWidth: 0,
+              p: 0,
+            }}
+          >
+            {action === ChatAction.VIEW ? "View" : "Resume"}
+          </Button>
+        </Stack>
       </CardActions>
     </Form.CardButton>
   );

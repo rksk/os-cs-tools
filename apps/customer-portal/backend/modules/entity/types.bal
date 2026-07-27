@@ -2154,6 +2154,10 @@ public type ConversationStateIds record {|
     int resolved;
     # Abandoned state ID
     int abandonded;
+    # Close state ID. Defaults to 6 so environment configs that override
+    # conversationStateIds without this newer field still resolve (rather than
+    # erroring on a missing required field in this closed record).
+    int close = 6;
 |};
 
 # Variable data for service request.
@@ -2514,7 +2518,9 @@ public type EscalationCreatePayload record {|
     # Case ID
     IdString caseId;
     # Reason for the escalation
-    string reason;
+    string reason?;
+    # Action to perform. One of "ESCALATE" or "DEESCALATE"
+    string action?;
 |};
 
 # Created escalation details.
@@ -2532,7 +2538,7 @@ public type CreatedEscalation record {|
     # Created date and time
     string createdOn;
     # Reason for the escalation
-    string reason;
+    string? reason;
     # Users notified about the escalation
     record {|
         # System ID of the user
@@ -2573,7 +2579,7 @@ public type Escalation record {|
     # Updated date and time
     string updatedOn;
     # Reason for the escalation
-    string reason;
+    string? reason;
     # Users notified about the escalation
     record {|
         # System ID of the user
@@ -2664,6 +2670,12 @@ public type GlobalSearchProject record {|
     string? closureState;
     # Associated account
     ReferenceTableItem account;
+    # Number of active chats in the project
+    int activeChatsCount;
+    # Number of cases requiring action in the project
+    int actionRequiredCount;
+    # Number of outstanding cases in the project
+    int outstandingCount;
     json...;
 |};
 

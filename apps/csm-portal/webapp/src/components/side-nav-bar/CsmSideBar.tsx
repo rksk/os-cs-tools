@@ -17,11 +17,8 @@
 import { Box, Link, Sidebar, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
 import { Link as NavigateLink, useLocation } from "react-router";
-import {
-  CSM_NAV_ITEMS,
-  isWipDisabled,
-  navItemForPath,
-} from "@config/csmNavItems";
+import { navNodePath, navSectionForPath } from "@config/csmNavItems";
+import { featureState, visibleNavSections } from "@config/featureFlags";
 import { preloadRoute } from "@utils/routePreloaders";
 
 /** Tooltip for a disabled WIP item. Includes the label so the collapsed rail
@@ -42,7 +39,9 @@ interface CsmSideBarProps {
 
 function pickActiveId(pathname: string): string {
   if (pathname === "/" || pathname === "") return "dashboard";
-  return navItemForPath(pathname)?.id ?? "dashboard";
+  // Highlight the owning *section* — a second-level tab has no rail entry of
+  // its own, so `/operations/incidents/42` still lights up Operations.
+  return navSectionForPath(pathname)?.id ?? "dashboard";
 }
 
 export default function CsmSideBar({
@@ -64,7 +63,9 @@ export default function CsmSideBar({
     >
       <Sidebar.Nav>
         <Sidebar.Category>
-          {CSM_NAV_ITEMS.map((item) => {
+          {/* `hidden` sections are filtered out entirely; `wip` ones stay
+              rendered but disabled below. */}
+          {visibleNavSections().map((item) => {
             const itemContent = (
               <Sidebar.Item id={item.id}>
                 <Sidebar.ItemIcon>
@@ -84,7 +85,7 @@ export default function CsmSideBar({
             // reach it and reveal the "work in progress" tooltip, which fires on
             // both hover and focus. Their routes render the coming-soon page
             // (see App.tsx's WipRouteGuard).
-            if (isWipDisabled(item)) {
+            if (featureState(item.id) === "wip") {
               return (
                 <Tooltip
                   key={item.id}
@@ -108,10 +109,10 @@ export default function CsmSideBar({
               <Link
                 key={item.id}
                 component={NavigateLink}
-                to={item.path}
+                to={item.href}
                 color="inherit"
                 underline="none"
-                onMouseEnter={() => preloadRoute(item.path)}
+                onMouseEnter={() => preloadRoute(navNodePath(item))}
               >
                 {itemContent}
               </Link>

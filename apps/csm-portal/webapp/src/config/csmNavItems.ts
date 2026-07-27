@@ -27,93 +27,299 @@ import {
   Shield,
 } from "@wso2/oxygen-ui-icons-react";
 import type { ComponentType } from "react";
-import { DISABLE_WIP_FEATURES } from "@config/featureFlagsConfig";
 
-export interface CsmNavItem {
+/**
+ * One entry in the navigation tree: either a top-level sidebar section or one
+ * of its second-level tabs. Pure structure — this module knows nothing about
+ * feature flags; `featureFlags.ts` resolves a {@link CsmNavNode.id} to a
+ * visibility state.
+ */
+export interface CsmNavNode {
+  /**
+   * Stable, dotted identifier: `"operations"` for a section,
+   * `"operations.incidents"` for one of its tabs. This is the key deployments
+   * use in `CSM_PORTAL_FEATURE_OVERRIDES`, so renaming one is a breaking
+   * config change — treat these as a public contract.
+   */
   id: string;
   label: string;
-  path: string;
-  icon: ComponentType<{ size?: number | string }>;
+  /** Where selecting this node navigates. May carry a `?tab=` query. */
+  href: string;
   /**
-   * Marks a still-in-progress section. When the `CSM_PORTAL_DISABLE_WIP_FEATURES`
-   * runtime flag is on, these stay visible in the sidebar but are disabled (with
-   * a "work in progress" tooltip), dropped from the quick-nav palette, and their
-   * routes render the shared "coming soon" page instead of the unfinished
-   * feature (see `isWipDisabled`, `navigableNavItems`, `isDisabledWipPath`, and
-   * `App.tsx`'s `WipRouteGuard`).
+   * For sections whose tab strip lives in a query parameter rather than in
+   * child routes (Operations, Security Center): the `?tab=` value that selects
+   * this node. Absent for route-backed tabs (Customers, Settings).
    */
-  wip?: boolean;
+  tab?: string;
+  /**
+   * Route path prefixes this node owns beyond its own `href` pathname — the
+   * detail/create routes that render outside the tab strip (for example
+   * `/operations/incidents/:id`). Used by the route guard so a disabled tab's
+   * deep links are disabled with it.
+   */
+  routes?: string[];
+  /**
+   * True when this page already renders its own, more specific unavailable
+   * message — one that names what it is blocked on, say. The route guard then
+   * lets a `wip` page render that instead of replacing it with the generic
+   * "coming soon" fallback, which would be a downgrade.
+   */
+  rendersOwnWipPage?: boolean;
+  icon?: ComponentType<{ size?: number | string }>;
+  children?: CsmNavNode[];
+}
+
+/** A top-level sidebar section. Always carries an icon. */
+export interface CsmNavSection extends CsmNavNode {
+  icon: ComponentType<{ size?: number | string }>;
 }
 
 /**
- * The CSM portal's top-level pages. Single source of truth for the sidebar nav,
- * the Quick-nav palette's "Pages" section, and "Pin this page" title/kind
- * derivation — so a new page only has to be added here once.
+ * The CSM portal's navigation tree. Single source of truth for the sidebar,
+ * every section's tab strip, the Quick-nav palette's "Pages" section, and
+ * "Pin this page" title derivation — so a new page or tab is declared here
+ * once.
  *
- * Dashboard, Support, Updates, Time cards, Engagements and Security Center are
- * the shipped sections; the rest are flagged `wip` so a deployment can disable
- * them via `CSM_PORTAL_DISABLE_WIP_FEATURES` until they are ready.
+ * Every node is enabled by default. A deployment turns one into a disabled
+ * "work in progress" entry, or removes it outright, by listing its `id` in
+ * `CSM_PORTAL_FEATURE_OVERRIDES` (see `featureFlags.ts`); nothing here encodes
+ * per-environment readiness.
  */
-export const CSM_NAV_ITEMS: CsmNavItem[] = [
-  { id: "dashboard", label: "Dashboard", path: "/dashboard", icon: ChartColumn },
-  { id: "support", label: "Support", path: "/cases", icon: Headset },
-  { id: "operations", label: "Operations", path: "/operations", icon: Cog, wip: true },
-  { id: "engagements", label: "Engagements", path: "/engagements", icon: Briefcase },
-  { id: "security-center", label: "Security Center", path: "/security-center", icon: Shield },
-  { id: "updates", label: "Updates", path: "/updates", icon: RefreshCw },
-  { id: "time-cards", label: "Time cards", path: "/time-cards", icon: Clock },
-  { id: "announcements", label: "Announcements", path: "/announcements", icon: Megaphone },
-  { id: "customers", label: "Customers", path: "/customers", icon: Building2, wip: true },
-  { id: "admin", label: "Settings", path: "/admin", icon: Settings, wip: true },
+export const CSM_NAV_ITEMS: CsmNavSection[] = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    href: "/dashboard",
+    icon: ChartColumn,
+  },
+  {
+    id: "support",
+    label: "Support",
+    href: "/cases",
+    icon: Headset,
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    href: "/operations",
+    icon: Cog,
+    children: [
+      {
+        id: "operations.service-requests",
+        label: "Service requests",
+        href: "/operations?tab=service_requests",
+        tab: "service_requests",
+        routes: ["/operations/service-requests"],
+      },
+      {
+        id: "operations.change-requests",
+        label: "Change requests",
+        href: "/operations?tab=change_requests",
+        tab: "change_requests",
+        routes: ["/operations/change-requests"],
+      },
+      {
+        id: "operations.incidents",
+        label: "Incidents",
+        href: "/operations?tab=incidents",
+        tab: "incidents",
+        routes: ["/operations/incidents"],
+      },
+      {
+        id: "operations.problems",
+        label: "Problem management",
+        href: "/operations?tab=problems",
+        tab: "problems",
+        routes: ["/operations/problems"],
+      },
+    ],
+  },
+  {
+    id: "engagements",
+    label: "Engagements",
+    href: "/engagements",
+    icon: Briefcase,
+  },
+  {
+    id: "security-center",
+    label: "Security Center",
+    href: "/security-center",
+    icon: Shield,
+    children: [
+      {
+        id: "security-center.reports",
+        label: "Security reports",
+        href: "/security-center?tab=security_reports",
+        tab: "security_reports",
+        routes: ["/security-center/reports"],
+      },
+      {
+        id: "security-center.vulnerabilities",
+        label: "Vulnerabilities",
+        href: "/security-center?tab=vulnerabilities",
+        tab: "vulnerabilities",
+        routes: ["/security-center/vulnerabilities"],
+      },
+    ],
+  },
+  {
+    id: "updates",
+    label: "Updates",
+    href: "/updates",
+    icon: RefreshCw,
+  },
+  {
+    id: "time-cards",
+    label: "Time cards",
+    href: "/time-cards",
+    icon: Clock,
+  },
+  {
+    id: "announcements",
+    label: "Announcements",
+    href: "/announcements",
+    icon: Megaphone,
+  },
+  {
+    id: "customers",
+    label: "Customers",
+    href: "/customers",
+    icon: Building2,
+    children: [
+      {
+        id: "customers.accounts",
+        label: "Accounts",
+        href: "/customers/accounts",
+      },
+      {
+        id: "customers.projects",
+        label: "Projects",
+        href: "/customers/projects",
+      },
+    ],
+  },
+  {
+    id: "admin",
+    label: "Settings",
+    href: "/admin",
+    icon: Settings,
+    children: [
+      { id: "admin.users", label: "Users", href: "/admin/users" },
+      // These three route to placeholders that already name their backend
+      // blocker, so they render themselves rather than the generic WIP page.
+      {
+        id: "admin.roles",
+        label: "Roles",
+        href: "/admin/roles",
+        rendersOwnWipPage: true,
+      },
+      {
+        id: "admin.groups",
+        label: "Groups",
+        href: "/admin/groups",
+        rendersOwnWipPage: true,
+      },
+      {
+        id: "admin.permissions",
+        label: "Permissions",
+        href: "/admin/permissions",
+        rendersOwnWipPage: true,
+      },
+    ],
+  },
 ];
 
-/** True when `item` is a WIP section the current config disables. */
-export function isWipDisabled(item: CsmNavItem): boolean {
-  return DISABLE_WIP_FEATURES && item.wip === true;
+/** The pathname part of `href`, dropping any query string or hash. */
+export function navNodePath(node: CsmNavNode): string {
+  return node.href.split(/[?#]/)[0];
 }
 
 /**
- * Nav items that can actually be navigated to — the full list minus any WIP
- * section the current config disables. Used by the quick-nav palette so it only
- * offers reachable destinations. The sidebar still renders the full
- * {@link CSM_NAV_ITEMS} (disabling WIP items in place), and title/kind
- * derivation keeps using the full list so a directly-navigated page still
- * resolves its title.
+ * Route path prefixes a node owns. A query-param tab (`tab` set) owns only its
+ * explicit {@link CsmNavNode.routes}: its `href` pathname is the *parent's*
+ * landing route, which every sibling tab shares, so claiming it would make the
+ * longest-prefix match in {@link navNodeForPath} ambiguous.
  */
-export function navigableNavItems(): CsmNavItem[] {
-  return DISABLE_WIP_FEATURES
-    ? CSM_NAV_ITEMS.filter((item) => !item.wip)
-    : CSM_NAV_ITEMS;
+export function navNodeRoutes(node: CsmNavNode): string[] {
+  const extra = node.routes ?? [];
+  return node.tab ? extra : [navNodePath(node), ...extra];
 }
 
-/** The nav item whose path is (a prefix of) `pathname`, if any. */
-export function navItemForPath(pathname: string): CsmNavItem | undefined {
-  return CSM_NAV_ITEMS.find(
-    (item) => pathname === item.path || pathname.startsWith(`${item.path}/`),
+/** Depth-first walk of the tree, parents before their children. */
+export function flattenNavNodes(
+  nodes: readonly CsmNavNode[] = CSM_NAV_ITEMS,
+): CsmNavNode[] {
+  return nodes.flatMap((node) => [
+    node,
+    ...(node.children ? flattenNavNodes(node.children) : []),
+  ]);
+}
+
+/** The node with this id, anywhere in the tree. */
+export function navNodeById(id: string): CsmNavNode | undefined {
+  return flattenNavNodes().find((node) => node.id === id);
+}
+
+function matchesPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+/** A nav node together with the route prefix of its that `pathname` matched. */
+export interface CsmNavMatch {
+  node: CsmNavNode;
+  /**
+   * The matched prefix — the node's canonical path for this URL. Prefer it over
+   * {@link navNodePath} for a query-param tab, whose `href` pathname is the
+   * parent's landing route rather than the tab's own routes.
+   */
+  prefix: string;
+}
+
+/**
+ * The most specific nav node owning `pathname`, by longest matching route
+ * prefix. `/operations/incidents/42` resolves to the Incidents tab rather than
+ * to Operations, which is what lets a single finished tab stay reachable inside
+ * an otherwise-unfinished section.
+ */
+export function navNodeMatchForPath(pathname: string): CsmNavMatch | undefined {
+  let best: CsmNavMatch | undefined;
+
+  for (const node of flattenNavNodes()) {
+    for (const prefix of navNodeRoutes(node)) {
+      if (
+        matchesPrefix(pathname, prefix) &&
+        prefix.length > (best?.prefix.length ?? -1)
+      ) {
+        best = { node, prefix };
+      }
+    }
+  }
+
+  return best;
+}
+
+/** {@link navNodeMatchForPath}, when only the node matters. */
+export function navNodeForPath(pathname: string): CsmNavNode | undefined {
+  return navNodeMatchForPath(pathname)?.node;
+}
+
+/**
+ * The child selected by a `?tab=` value in `search`, for sections that keep
+ * their tab in the query rather than in child routes. Path matching alone can't
+ * find these: every such tab shares its section's pathname.
+ */
+export function navTabForSearch(
+  node: CsmNavNode,
+  search: string,
+): CsmNavNode | undefined {
+  const tab = new URLSearchParams(search).get("tab");
+  if (!tab) return undefined;
+  return node.children?.find((child) => child.tab === tab);
+}
+
+/** The top-level section owning `pathname`, ignoring its tabs. */
+export function navSectionForPath(pathname: string): CsmNavSection | undefined {
+  return CSM_NAV_ITEMS.find((section) =>
+    navNodeRoutes(section).some((prefix) => matchesPrefix(pathname, prefix)),
   );
-}
-
-/**
- * Sub-paths under a `wip` nav item that are actually finished and shouldn't
- * be redirected by {@link isDisabledWipPath} — Incidents is done (search,
- * create, detail) even though the rest of Operations (Service Requests,
- * Change Requests) isn't, and the `operations` nav item's single `wip` flag
- * has no per-sub-route granularity of its own.
- */
-const WIP_EXEMPT_PATH_PREFIXES = ["/operations/incidents"];
-
-function isWipExemptPath(pathname: string): boolean {
-  return WIP_EXEMPT_PATH_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
-}
-
-/**
- * True when `pathname` belongs to a WIP section the current config disables.
- * Used to redirect direct/deep links to disabled sections back to the dashboard.
- */
-export function isDisabledWipPath(pathname: string): boolean {
-  if (!DISABLE_WIP_FEATURES) return false;
-  if (isWipExemptPath(pathname)) return false;
-  return navItemForPath(pathname)?.wip === true;
 }

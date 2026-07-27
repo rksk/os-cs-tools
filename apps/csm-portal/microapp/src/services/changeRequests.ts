@@ -15,8 +15,10 @@
 // under the License.
 
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
-import { CHANGE_REQUESTS_SEARCH_ENDPOINT, CHANGE_REQUEST_ENDPOINT } from "@config/endpoints";
+import { CHANGE_REQUESTS_ENDPOINT, CHANGE_REQUESTS_SEARCH_ENDPOINT, CHANGE_REQUEST_ENDPOINT } from "@config/endpoints";
 import type {
+  ChangeRequestCreatePayloadDto,
+  ChangeRequestCreateResponseDto,
   ChangeRequestDetailDto,
   ChangeRequestSearchPayloadDto,
   ChangeRequestSearchResponseDto,
@@ -62,6 +64,11 @@ const patchChangeRequest = async (id: string, payload: PatchChangeRequestPayload
   return data;
 };
 
+const createChangeRequest = async (payload: ChangeRequestCreatePayloadDto): Promise<ChangeRequestCreateResponseDto> => {
+  const { data } = await apiClient.post<ChangeRequestCreateResponseDto>(CHANGE_REQUESTS_ENDPOINT, payload);
+  return data;
+};
+
 const CHANGE_REQUEST_PAGE_LIMIT = 20;
 
 export const changeRequests = {
@@ -81,4 +88,5 @@ export const changeRequests = {
     }),
 
   patch: patchChangeRequest,
+  create: createChangeRequest,
 };

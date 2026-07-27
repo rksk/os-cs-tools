@@ -527,6 +527,9 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 			}
 		}
 	}
+	if err := validateUUIDs("watchList", req.WatchList); err != nil {
+		return domain.CreateIncidentResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -537,7 +540,7 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 		ImpactKey:          snIncidentImpactKeyMap[req.Impact],
 		UrgencyKey:         snIncidentUrgencyKeyMap[req.Urgency],
 		Subject:            req.Subject,
-		WatchList:          req.WatchList,
+		WatchList:          uuidsToSysids(req.WatchList),
 		AdditionalComments: req.AdditionalComments,
 		WorkNotes:          req.WorkNotes,
 	}
@@ -949,6 +952,11 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 			}
 		}
 	}
+	if req.WatchList != nil {
+		if err := validateUUIDs("watchList", *req.WatchList); err != nil {
+			return domain.UpdateIncidentResponse{}, err
+		}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -958,7 +966,10 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 		IncidentReport:     req.IncidentReport,
 		AdditionalComments: req.AdditionalComments,
 		WorkNotes:          req.WorkNotes,
-		WatchList:          req.WatchList,
+	}
+	if req.WatchList != nil {
+		v := uuidsToSysids(*req.WatchList)
+		payload.WatchList = &v
 	}
 	if req.Priority != nil {
 		v := snIncidentPriorityKeyMap[*req.Priority]

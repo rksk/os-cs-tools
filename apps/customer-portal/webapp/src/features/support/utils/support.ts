@@ -746,6 +746,8 @@ export function getConversationStatusColor(status: string): string {
   switch (true) {
     case normalized.includes(ConversationStatus.ABANDONED.toLowerCase()):
       return colors.grey[500];
+    case normalized.includes(ConversationStatus.CLOSE.toLowerCase()):
+      return colors.grey[600];
     case normalized.includes(ConversationStatus.ACTIVE.toLowerCase()):
       return colors.green[500];
     case normalized.includes(ConversationStatus.CONVERTED.toLowerCase()):
@@ -773,6 +775,8 @@ export function getConversationStatusIcon(status?: string): ComponentType<{
 
   switch (true) {
     case normalized.includes(ConversationStatus.ABANDONED.toLowerCase()):
+      return XCircle;
+    case normalized.includes(ConversationStatus.CLOSE.toLowerCase()):
       return XCircle;
     case normalized.includes(ConversationStatus.ACTIVE.toLowerCase()):
       return Activity;

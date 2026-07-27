@@ -25,7 +25,15 @@ declare global {
       CSM_PORTAL_BACKEND_BASE_URL: string;
       CSM_PORTAL_THEME: string;
       CSM_PORTAL_LOG_LEVEL: string;
-      CSM_PORTAL_DISABLE_WIP_FEATURES?: boolean;
+      /**
+       * Per-page visibility overrides keyed by nav-node id (see
+       * `csmNavItems.ts`). Object literal, or the same object as a JSON string
+       * for platforms that inject config as strings. Pages left out are
+       * enabled. See `featureFlags.ts`.
+       */
+      CSM_PORTAL_FEATURE_OVERRIDES?:
+        | Record<string, "enabled" | "wip" | "hidden">
+        | string;
       CSM_PORTAL_MAINTENANCE_BANNER_VISIBLE: boolean;
       CSM_PORTAL_MAINTENANCE_BANNER_SEVERITY?: string;
       CSM_PORTAL_MAINTENANCE_BANNER_TITLE?: string;

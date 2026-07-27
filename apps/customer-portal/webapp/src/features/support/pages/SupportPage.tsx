@@ -25,6 +25,8 @@ import SupportOverviewCard from "@features/support/components/support-overview-c
 import { SupportOverviewIconVariant } from "@features/support/types/supportOverview";
 import OutstandingCasesList from "@features/support/components/support-overview-cards/OutstandingCasesList";
 import ChatHistoryList from "@features/support/components/support-overview-cards/ChatHistoryList";
+import CloseChatConfirmDialog from "@features/support/components/close-chat/CloseChatConfirmDialog";
+import { useCloseConversationFlow } from "@features/support/hooks/useCloseConversationFlow";
 import { useGetProjectSupportStats } from "@features/support/api/useGetProjectSupportStats";
 import useGetProjectDetails from "@api/useGetProjectDetails";
 import useGetProjectFeatures from "@api/useGetProjectFeatures";
@@ -52,6 +54,7 @@ export default function SupportPage(): JSX.Element {
   const logger = useLogger();
   const navigate = useModifierAwareNavigate();
   const { projectId } = useParams<{ projectId: string }>();
+  const closeFlow = useCloseConversationFlow(projectId || "");
   const supportPath = `/projects/${projectId}/support`;
 
   const { data: project } = useGetProjectDetails(projectId || "");
@@ -289,10 +292,18 @@ export default function SupportPage(): JSX.Element {
                     }
                   : undefined
               }
+              onCloseChat={projectId ? closeFlow.requestClose : undefined}
             />
           </SupportOverviewCard>
         </Grid>
       </Grid>
+
+      <CloseChatConfirmDialog
+        open={closeFlow.isConfirmOpen}
+        isClosing={closeFlow.isClosing}
+        onCancel={closeFlow.cancelClose}
+        onConfirm={closeFlow.confirmClose}
+      />
     </Stack>
   );
 }

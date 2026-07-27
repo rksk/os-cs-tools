@@ -38,6 +38,7 @@ import {
   usePostDeploymentProductsSearchInfinite,
 } from "@features/project-details/api/usePostDeploymentProductsSearch";
 import { usePostCase } from "@features/operations/api/usePostCase";
+import { usePostAttachments } from "@features/support/api/usePostAttachments";
 import { useLoader } from "@context/linear-loader/LoaderContext";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
@@ -95,6 +96,7 @@ import type { RelatedCaseState } from "@features/support/types/createCasePage";
 
 const DEFAULT_CASE_TITLE = "Support case";
 const DEFAULT_CASE_DESCRIPTION = "Please describe your issue here.";
+const ATTACHMENT_UPLOAD_WAIT_MS = 5_000;
 
 const RELATED_DESCRIPTION_PREFIX_HTML =
   "<p>-- This is the previous description (Edit or Delete if you want to alter) --</p>";
@@ -240,9 +242,10 @@ export default function CreateCasePage(): JSX.Element {
   }, [baseProductOptions]);
 
   const { showError } = useErrorBanner();
-  const piiGuard = usePiiGuard();
   const { showSuccess } = useSuccessBanner();
+  const piiGuard = usePiiGuard();
   const { mutate: postCase, isPending: isCreatePending } = usePostCase();
+  const postAttachments = usePostAttachments();
   const [isNavigatingAfterCreate, setIsNavigatingAfterCreate] = useState(false);
   const authFetch = useAuthApiClient();
   const logger = useLogger();
@@ -947,33 +950,7 @@ export default function CreateCasePage(): JSX.Element {
       severityKey = parsedSeverity;
     }
 
-    const encodedAttachments: Array<{ file: string; name: string }> = [];
-    if (attachments.length > 0) {
-      setIsPreparingAttachments(true);
-      try {
-        for (const item of attachments) {
-          const encodedAttachment = await fileToBase64Content(item.file);
-          const attachmentName =
-            attachmentNamesRef.current.get(item.id) || item.file.name;
-          encodedAttachments.push({
-            file: encodedAttachment,
-            name: attachmentName,
-          });
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message
-            ? error.message
-            : "Failed to process attachments. Please try again.";
-        showError(message);
-        return;
-      } finally {
-        setIsPreparingAttachments(false);
-      }
-    }
-
     const payload: CreateCaseRequest = {
-      ...(encodedAttachments.length > 0 && { attachments: encodedAttachments }),
       type: isSecurityReport
         ? CaseType.SECURITY_REPORT_ANALYSIS
         : CaseType.DEFAULT_CASE,
@@ -997,6 +974,7 @@ export default function CreateCasePage(): JSX.Element {
       onSuccess: async (data) => {
         setIsNavigatingAfterCreate(true);
         const caseId = data.id;
+        showSuccess("Case created successfully");
         const createdCase = data as {
           isSecurityReport?: boolean;
           reportType?: string;
@@ -1007,17 +985,78 @@ export default function CreateCasePage(): JSX.Element {
           isSecurityReport,
         );
 
+        const uploadAttachments = async (): Promise<string[]> => {
+          const failed: string[] = [];
+          for (const item of attachments) {
+            const attachmentName =
+              attachmentNamesRef.current.get(item.id) || item.file.name;
+            try {
+              const content = await fileToBase64Content(item.file);
+              await postAttachments.mutateAsync({
+                caseId,
+                body: {
+                  name: attachmentName,
+                  type: item.file.type || "application/octet-stream",
+                  content,
+                },
+              });
+            } catch (error) {
+              logger.error(
+                `Failed to upload attachment ${attachmentName}`,
+                error,
+              );
+              failed.push(attachmentName);
+            }
+          }
+          return failed;
+        };
+
+        let failedAttachmentNames: string[] = [];
+        let attachmentsStillUploading = false;
+        if (attachments.length > 0) {
+          setIsPreparingAttachments(true);
+          const uploadPromise = uploadAttachments();
+          const timedOut = await Promise.race([
+            uploadPromise.then(() => false),
+            new Promise<boolean>((resolve) =>
+              setTimeout(() => resolve(true), ATTACHMENT_UPLOAD_WAIT_MS),
+            ),
+          ]);
+          if (timedOut) {
+            attachmentsStillUploading = true;
+            void uploadPromise.then((failed) => {
+              if (failed.length > 0) {
+                showError(
+                  `Failed to upload: ${failed.join(", ")}. You can retry from the Attachments tab.`,
+                );
+              }
+              // no-op on success: the case-created confirmation was already shown above
+            });
+          } else {
+            setIsPreparingAttachments(false);
+            failedAttachmentNames = await uploadPromise;
+          }
+        }
+
+        // Fire-and-forget: these hit the same backend origin as the (possibly
+        // still in-flight) attachment upload, so awaiting them here could queue
+        // behind it under the browser's per-origin connection limit and delay
+        // navigation well past the attachment wait window above.
         if (projectId) {
-          await triggerPostCreationApiCalls(
+          triggerPostCreationApiCalls(
             authFetch,
             projectId,
             CaseType.DEFAULT_CASE,
-          );
-          await refreshCaseQueriesAfterCreation(
+          ).catch((error) => {
+            logger.error("Failed to trigger post-creation API calls", error);
+          });
+          refreshCaseQueriesAfterCreation(
             queryClient,
             projectId,
             CaseType.DEFAULT_CASE,
-          );
+          ).catch((error) => {
+            logger.error("Failed to refresh case queries after creation", error);
+          });
         }
 
         // Clean up sessionStorage safely
@@ -1033,15 +1072,18 @@ export default function CreateCasePage(): JSX.Element {
 
         // Refetch security vulnerabilities if this was a security report
         if (isCreatedSecurityReport) {
-          window.location.assign(
+          navigate(
             `/projects/${projectId}/security-center/security-report-analysis/${caseId}?tab=${SecurityTabId.VULNERABILITIES}`,
           );
         } else {
-          window.location.assign(
-            `/projects/${projectId}/support/cases/${caseId}`,
+          navigate(`/projects/${projectId}/support/cases/${caseId}`);
+        }
+
+        if (!attachmentsStillUploading && failedAttachmentNames.length > 0) {
+          showError(
+            `Failed to upload: ${failedAttachmentNames.join(", ")}. You can retry from the Attachments tab.`,
           );
         }
-        showSuccess("Case created successfully");
       },
       onError: (error) => {
         setIsNavigatingAfterCreate(false);
@@ -1228,7 +1270,7 @@ export default function CreateCasePage(): JSX.Element {
               }
             >
               {isPreparingAttachments
-                ? "Preparing Attachments..."
+                ? "Uploading attachments..."
                 : isCreatePending
                   ? isSecurityReport
                     ? "Submitting..."

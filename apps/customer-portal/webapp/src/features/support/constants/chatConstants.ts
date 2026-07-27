@@ -22,6 +22,9 @@ export const NOVERA_ANALYZING_PLACEHOLDER_TEXT =
   "Novera is analyzing your request...";
 export const NOVERA_INITIAL_WELCOME_TEXT =
   "Hi! I'm Novera, your AI support assistant. I'm here to help you resolve your issue quickly. Can you describe the problem you're experiencing?";
+// Id of the static welcome message; real bot replies have other ids. Used to
+// distinguish "the assistant has actually responded" from the seeded greeting.
+export const NOVERA_WELCOME_MESSAGE_ID = "1";
 
 export const CHAT_TYPING_INTERVAL_MS = 20;
 export const CHAT_TYPING_CHARS_PER_TICK = 6;

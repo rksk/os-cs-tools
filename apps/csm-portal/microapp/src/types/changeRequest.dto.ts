@@ -109,3 +109,70 @@ export interface PatchChangeRequestResponseDto {
   updatedOn?: string;
   updatedBy?: string;
 }
+
+// Create-only enums (not part of the search/detail response's looser `type`/`state` strings) —
+// mirrors the webapp's BeChangeRequestType/Priority/Risk/Category.
+export type ChangeRequestType = "standard" | "normal" | "emergency" | "model" | "site_reliability_ops" | "azure";
+
+export type ChangeRequestPriority = "critical" | "high" | "moderate" | "low";
+
+export type ChangeRequestRisk = "high" | "moderate" | "low";
+
+export type ChangeRequestCategory =
+  | "hardware"
+  | "software"
+  | "service"
+  | "system_software"
+  | "applications_software"
+  | "network"
+  | "telecom"
+  | "documentation"
+  | "other"
+  | "regular_release_cloud"
+  | "hotfix_release_cloud"
+  | "devops"
+  | "cloud_computing";
+
+/**
+ * `POST /change-requests` body (ServiceNow data source only). Mirrors the webapp's
+ * BeCreateChangeRequestPayload: `subject` is the only required field; every ID field
+ * (serviceId/serviceOfferingId/configurationItemId/groupId/assignedEngineerId/requestedById) is a
+ * portal UUID resolved server-side, via the matching search endpoint (see
+ * services/changeRequestLookups.ts). `plannedStartDate`/`plannedEndDate` are
+ * "YYYY-MM-DD HH:MM:SS" strings.
+ */
+export interface ChangeRequestCreatePayloadDto {
+  subject: string;
+  category?: ChangeRequestCategory;
+  serviceId?: string;
+  serviceOfferingId?: string;
+  configurationItemId?: string;
+  priority?: ChangeRequestPriority;
+  impact?: ChangeRequestImpact;
+  type?: ChangeRequestType;
+  state?: ChangeRequestState;
+  groupId?: string;
+  assignedEngineerId?: string;
+  risk?: ChangeRequestRisk;
+  requestedById?: string;
+  description?: string;
+  justification?: string;
+  implementationPlan?: string;
+  riskImpactAnalysis?: string;
+  backoutPlan?: string;
+  testPlan?: string;
+  plannedStartDate?: string;
+  plannedEndDate?: string;
+  comment?: string;
+  workNote?: string;
+}
+
+export interface ChangeRequestCreateResponseDto {
+  message: string;
+  changeRequest: {
+    id: string;
+    number: string;
+    createdOn: string;
+    createdBy: string;
+  };
+}

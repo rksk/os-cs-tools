@@ -19,13 +19,33 @@ window.config = {
   CSM_PORTAL_THEME: "acrylicOrange",
   CSM_PORTAL_LOG_LEVEL: "ERROR",
 
-  // Disable work-in-progress sections. When true, every nav item flagged `wip`
-  // in src/config/csmNavItems.ts (currently Operations, Engagements, Security
-  // Center, Customers, Settings) stays visible in the sidebar but is disabled
-  // (greyed out, with a "work in progress" tooltip), dropped from the quick-nav
-  // palette, and its routes render a "coming soon" page instead of the
-  // unfinished feature. Leave false to enable everything.
-  CSM_PORTAL_DISABLE_WIP_FEATURES: false,
+  // Per-page visibility. Keys are nav-node ids from src/config/csmNavItems.ts:
+  // a section id ("operations") or one of its tabs ("operations.incidents").
+  // Values:
+  //   "enabled" - normal. Also what any page NOT listed here gets, so only
+  //               list a page when you want to restrict it.
+  //   "wip"     - visible but greyed out with a "work in progress" tooltip,
+  //               dropped from the quick-nav palette, routes render the shared
+  //               "coming soon" page.
+  //   "hidden"  - no nav entry at all, routes redirect to the dashboard.
+  //
+  // A section's setting cascades to its tabs, and a tab can override it: the
+  // block below marks Operations as WIP while keeping the finished Incidents
+  // tab usable (which also keeps Operations itself clickable). A "hidden"
+  // section hides its tabs unconditionally.
+  //
+  // Available ids: dashboard, support, operations{.service-requests,
+  // .change-requests, .incidents, .problems}, engagements, security-center
+  // {.reports, .vulnerabilities}, updates, time-cards, announcements,
+  // customers{.accounts, .projects}, admin{.users, .roles, .groups,
+  // .permissions}. Unknown ids are ignored with a console warning.
+  CSM_PORTAL_FEATURE_OVERRIDES: {
+    "operations": "wip",
+    "operations.incidents": "enabled",
+    "customers": "wip",
+    "admin": "wip",
+    "admin.users": "enabled",
+  },
 
   // Mock data: when true, data hooks short-circuit to seeded fixtures instead
   // of calling the backend. Leave false (or unset) to use the live backend.

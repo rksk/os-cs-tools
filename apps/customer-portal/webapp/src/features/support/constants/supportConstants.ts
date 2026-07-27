@@ -87,6 +87,7 @@ export type ChatStatus = (typeof ChatStatus)[keyof typeof ChatStatus];
 export const ConversationStatus = {
   ABANDONED: "Abandoned",
   ACTIVE: "Active",
+  CLOSE: "Close",
   CONVERTED: "Converted",
   OPEN: "Open",
   RESOLVED: "Resolved",

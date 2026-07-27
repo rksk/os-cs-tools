@@ -28,10 +28,15 @@ import {
   type ChangeEvent,
 } from "react";
 import { useSessionState } from "@hooks/useSessionState";
-import { Divider, Stack } from "@wso2/oxygen-ui";
+import {
+  Divider,
+  Stack,
+} from "@wso2/oxygen-ui";
 import { useLoader } from "@context/linear-loader/LoaderContext";
 import useGetProjectFilters from "@api/useGetProjectFilters";
 import { useSearchConversations } from "@features/support/api/useSearchConversations";
+import { useCloseConversationFlow } from "@features/support/hooks/useCloseConversationFlow";
+import CloseChatConfirmDialog from "@features/support/components/close-chat/CloseChatConfirmDialog";
 import type {
   AllConversationsFilterValues,
   Conversation,
@@ -180,6 +185,8 @@ export default function AllConversationsPage(): JSX.Element {
   const conversations = data?.conversations ?? [];
   const totalRecords = data?.totalRecords ?? 0;
 
+  const closeFlow = useCloseConversationFlow(projectId || "");
+
   const handleConversationClick = (conv: Conversation) => {
     if (!projectId) return;
 
@@ -318,6 +325,7 @@ export default function AllConversationsPage(): JSX.Element {
         isError={isConversationsError}
         hasListRefinement={listHasRefinement}
         onConversationClick={handleConversationClick}
+        onCloseConversation={(conv) => closeFlow.requestClose(conv.id)}
       />
 
       <ListPagination
@@ -326,6 +334,13 @@ export default function AllConversationsPage(): JSX.Element {
         rowsPerPage={rowsPerPage}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
+      />
+
+      <CloseChatConfirmDialog
+        open={closeFlow.isConfirmOpen}
+        isClosing={closeFlow.isClosing}
+        onCancel={closeFlow.cancelClose}
+        onConfirm={closeFlow.confirmClose}
       />
     </Stack>
   );

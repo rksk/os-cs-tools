@@ -14,37 +14,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
-import {  useSearchParams } from "react-router";
+import SectionTabs from "@components/section-tabs/SectionTabs";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ProductVulnerabilitiesTab from "@features/csm-security-center/components/ProductVulnerabilitiesTab";
 import { useNavTransition } from "@hooks/useNavTransition";
-
-type SecurityCenterTabId = "security_reports" | "vulnerabilities";
-
-const TAB_IDS: SecurityCenterTabId[] = ["security_reports", "vulnerabilities"];
+import { useQueryTabs } from "@hooks/useSectionTabs";
 
 /**
  * Security Center landing — the home for the customer-security entities, split
  * into Security Reports (SRA) / Vulnerabilities tabs. The active tab lives in
  * the URL (`?tab=`) so the vulnerability detail page can link back to the right
  * tab, and the selection survives a refresh or share.
+ *
+ * Which tabs exist comes from the navigation tree, so a deployment can restrict
+ * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
  */
 export default function CsmSecurityCenterPage(): JSX.Element {
   const navigate = useNavTransition();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get("tab") as SecurityCenterTabId | null;
-  const activeTab: SecurityCenterTabId =
-    tabParam && TAB_IDS.includes(tabParam) ? tabParam : "security_reports";
-
-  const handleTabChange = (_: unknown, next: SecurityCenterTabId): void => {
-    setSearchParams((prev) => {
-      prev.set("tab", next);
-      return prev;
-    });
-  };
+  const tabs = useQueryTabs("security-center");
+  const activeTab = tabs.activeKey;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -55,15 +46,7 @@ export default function CsmSecurityCenterPage(): JSX.Element {
         </Typography>
       </Box>
 
-      <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs
-          value={activeTab}
-          onChange={handleTabChange}
-        >
-          <Tab value="security_reports" label="Security reports" />
-          <Tab value="vulnerabilities" label="Vulnerabilities" />
-        </Tabs>
-      </Box>
+      <SectionTabs {...tabs} ariaLabel="Security Center tabs" />
 
       {activeTab === "security_reports" && (
         <CsmIssuesView

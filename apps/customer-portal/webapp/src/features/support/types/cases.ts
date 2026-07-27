@@ -225,13 +225,14 @@ export type EscalationRecord = {
   createdBy: string;
   createdOn: string;
   updatedOn?: string;
-  reason: string;
+  reason: string | null;
   notificationSentTo?: EscalationNotifiedUser[] | null;
 };
 
 // Request type for creating an escalation.
 export type CreateEscalationRequest = {
-  reason: string;
+  reason?: string;
+  action?: "ESCALATE" | "DEESCALATE";
 };
 
 // Response type for creating an escalation.

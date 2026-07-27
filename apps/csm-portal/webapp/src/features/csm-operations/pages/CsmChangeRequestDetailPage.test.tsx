@@ -19,11 +19,26 @@ import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeChangeRequestDetail } from "@api/backend/types";
+import { BackendApiError } from "@api/backend/client";
 
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
 const patchMutateMock = vi.fn();
 const showErrorMock = vi.fn();
+
+// The backend client reads runtime config (`CSM_PORTAL_BACKEND_BASE_URL`) at
+// module load, which isn't present under vitest. The page imports
+// `BackendApiError` from it directly, so stub the module with a real class
+// (so `instanceof` still works) — same approach as CsmIncidentDetailPage.test.tsx.
+vi.mock("@api/backend/client", () => ({
+  BackendApiError: class BackendApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+}));
 
 vi.mock("react-router", () => ({
   useParams: () => ({ id: "chg-1" }),
@@ -149,6 +164,32 @@ describe("CsmChangeRequestDetailPage — Request approval (New -> Assess)", () =
     fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
     const [, options] = patchMutateMock.mock.calls[0];
     const err = new Error("boom");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      "Could not request approval for this change request.",
+      err,
+    );
+  });
+
+  it("surfaces the backend's real rejection reason for a 4xx state-transition error", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(409, "State transition rejected: approver required");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      "State transition rejected: approver required",
+      err,
+    );
+  });
+
+  it("falls back to the generic message for a 5xx error even with a body message", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(500, "internal error detail");
     options.onError(err);
     expect(showErrorMock).toHaveBeenCalledWith(
       "Could not request approval for this change request.",

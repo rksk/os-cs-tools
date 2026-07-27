@@ -31,6 +31,7 @@ import { buildRecommendationRequestFromCase } from "@features/support/utils/reco
 import { usePostCaseEscalationsSearch } from "@features/support/api/usePostCaseEscalationsSearch";
 import useGetProjectContacts from "@features/settings/api/useGetProjectContacts";
 import useGetUserDetails from "@features/settings/api/useGetUserDetails";
+import { SETTINGS_CUSTOMER_ADMIN_ROLE } from "@features/settings/constants/settingsConstants";
 import {
   getStatusColor,
   resolveColorFromTheme,
@@ -211,6 +212,22 @@ export default function CaseDetailsContent({
         )?.isLead
       : undefined;
 
+  // De-escalation is allowed for customer admins, leads, and users who created
+  // at least one escalation on this case (matched by email against the
+  // escalation history's createdBy).
+  const isCurrentUserCsAdmin: boolean | undefined = isUserDetailsLoading
+    ? undefined
+    : (userDetails?.roles ?? []).includes(SETTINGS_CUSTOMER_ADMIN_ROLE);
+  const hasCreatedEscalation =
+    !!userDetails?.email &&
+    !!escalationData?.escalations?.some(
+      (e) => e.createdBy.toLowerCase() === userDetails.email!.toLowerCase(),
+    );
+  const canDeescalate =
+    isCurrentUserCsAdmin === true ||
+    isCurrentUserLead === true ||
+    hasCreatedEscalation;
+
   const visibleTabs = useMemo(
     () => [
       0,
@@ -380,6 +397,9 @@ export default function CaseDetailsContent({
                     escalationLevelId={hideEscalationTab ? null : escalationLevelId}
                     onEscalateSuccess={() => void refetchEscalations()}
                     isCurrentUserLead={isCurrentUserLead}
+                    isEscalated={!hideEscalationTab && isEscalated}
+                    canDeescalate={!hideEscalationTab && canDeescalate}
+                    onDeescalateSuccess={() => void refetchEscalations()}
                   />
                 )}
               </Box>

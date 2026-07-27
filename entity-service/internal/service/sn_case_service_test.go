@@ -309,9 +309,11 @@ func TestSNCaseService_UpdateCase_NewSingleFieldVariants(t *testing.T) {
 		wantPayload map[string]any
 	}{
 		{
-			name:        "autocloseHoldUntil",
-			req:         domain.UpdateCaseRequest{ID: testDeploymentUUID, AutocloseHoldUntil: timePtr(testAutocloseHoldUntil)},
-			wantPayload: map[string]any{"autocloseHoldUntil": testAutocloseHoldUntil.Format(snCreatedOnLayout)},
+			name: "autocloseHoldUntil",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, AutocloseHoldUntil: timePtr(testAutocloseHoldUntil)},
+			// Date only: the integration service constrains autocloseHoldUntil to
+			// YYYY-MM-DD, so a datetime fails payload binding upstream.
+			wantPayload: map[string]any{"autocloseHoldUntil": testAutocloseHoldUntil.UTC().Format(snDateOnlyLayout)},
 		},
 		{
 			name:        "subject",

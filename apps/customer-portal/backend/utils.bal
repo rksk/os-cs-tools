@@ -1307,13 +1307,18 @@ public isolated function mapEscalationsResponse(entity:EscalationsResponse respo
 public isolated function globalSearch(string idToken, types:GlobalSearchPayload payload)
     returns types:GlobalSearchResponse|error {
 
+    entity:Pagination? projectsPagination = payload.projectsPagination;
+    if projectsPagination is entity:Pagination && projectsPagination.'limit > GLOBAL_SEARCH_PROJECTS_MAX_LIMIT {
+        projectsPagination.'limit = GLOBAL_SEARCH_PROJECTS_MAX_LIMIT;
+    }
+
     entity:GlobalSearchPayload searchPayload = {
         filters: {
             searchQuery: payload.filters?.searchQuery,
             tables: payload.filters?.types
         },
         sortBy: payload.sortBy,
-        projectsPagination: payload.projectsPagination,
+        projectsPagination,
         casesPagination: payload.casesPagination
     };
 
@@ -1333,7 +1338,10 @@ public isolated function globalSearch(string idToken, types:GlobalSearchPayload 
             endDate: project.endDate,
             hasPdpSubscription: project.hasPdpSubscription,
             closureState: project.closureState,
-            account: {id: account.id, label: account.name}
+            account: {id: account.id, label: account.name},
+            activeChatsCount: project.activeChatsCount,
+            actionRequiredCount: project.actionRequiredCount,
+            outstandingCount: project.outstandingCount
         };
 
     types:GlobalSearchCase[] cases = from entity:GlobalSearchCase entityCase in response.cases

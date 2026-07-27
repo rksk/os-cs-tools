@@ -27,7 +27,7 @@ import { Search } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 
-import { navigableNavItems } from "@config/csmNavItems";
+import { navigableNavNodes } from "@config/featureFlags";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import {
   useRecentViews,
@@ -188,15 +188,18 @@ export default function QuickNav(): JSX.Element | null {
     // Pages are worth surfacing when someone types a page name to jump
     // straight there, but listing every sidebar page on the empty-query
     // default view just duplicates the sidebar itself — so only show this
-    // section once there's something to match against.
+    // section once there's something to match against. Second-level tabs are
+    // offered too (matching on either the tab or its section name), so
+    // "incidents" jumps straight into the tab rather than to Operations.
     const pages: Result[] = q
-      ? navigableNavItems()
-          .filter((i) => match(i.label))
+      ? navigableNavNodes()
+          .filter((i) => match(i.label, i.sublabel))
           .map((i) => ({
             key: `page-${i.id}`,
             icon: <i.icon size={16} />,
             label: i.label,
-            href: i.path,
+            sublabel: i.sublabel,
+            href: i.href,
             section: "Pages" as const,
           }))
       : [];

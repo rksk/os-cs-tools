@@ -19,12 +19,14 @@ import { Box, Button, Stack, Typography } from "@wso2/oxygen-ui";
 import ListPagination from "@components/list-view/ListPagination";
 import { Paperclip } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useMutationState } from "@tanstack/react-query";
 import { setPendingCaseDetailsTab } from "@features/settings/utils/settingsStorage";
 import {
   useGetCaseAttachments,
   flattenCaseAttachments,
 } from "@features/support/api/useGetCaseAttachments";
 import type { CaseAttachment } from "@features/support/types/cases";
+import type { PostAttachmentsVariables } from "@features/support/types/supportApi";
 import { useDeleteAttachment } from "@features/support/api/useDeleteAttachment";
 import { useGetAttachmentContent } from "@api/useGetAttachmentContent";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -33,6 +35,7 @@ import useGetUserDetails from "@features/settings/api/useGetUserDetails";
 import UploadAttachmentModal from "@case-details-attachments/UploadAttachmentModal";
 import AttachmentListItem from "@case-details-attachments/AttachmentListItem";
 import AttachmentsListSkeleton from "@case-details-attachments/AttachmentsListSkeleton";
+import UploadingAttachmentPlaceholder from "@case-details-attachments/UploadingAttachmentPlaceholder";
 import DeleteAttachmentModal from "@case-details-attachments/DeleteAttachmentModal";
 import EditCaseAttachmentModal from "@case-details-attachments/EditCaseAttachmentModal";
 import EmptyIcon from "@components/empty-state/EmptyIcon";
@@ -91,6 +94,14 @@ export default function CaseDetailsAttachmentsPanel({
   } = useGetCaseAttachments(caseId);
 
   const deleteAttachment = useDeleteAttachment();
+
+  const pendingUploads = useMutationState({
+    filters: { mutationKey: ["postCaseAttachment"], status: "pending" },
+    select: (mutation) =>
+      mutation.state.variables as PostAttachmentsVariables | undefined,
+  }).filter(
+    (vars): vars is PostAttachmentsVariables => vars?.caseId === caseId,
+  );
 
   const allAttachments = useMemo(() => flattenCaseAttachments(data), [data]);
 
@@ -205,9 +216,13 @@ export default function CaseDetailsAttachmentsPanel({
   return (
     <>
       <Stack spacing={3}>
-        {!(allAttachments.length === 0 && !isLoading && minTimeElapsed && !isError) && (
-          <Box sx={{ alignSelf: "flex-start" }}>{uploadButton}</Box>
-        )}
+        {!(
+          allAttachments.length === 0 &&
+          pendingUploads.length === 0 &&
+          !isLoading &&
+          minTimeElapsed &&
+          !isError
+        ) && <Box sx={{ alignSelf: "flex-start" }}>{uploadButton}</Box>}
 
         {isLoading || !minTimeElapsed ? (
           <AttachmentsListSkeleton />
@@ -216,7 +231,7 @@ export default function CaseDetailsAttachmentsPanel({
             error={error}
             fallbackMessage="Failed to load attachments."
           />
-        ) : allAttachments.length === 0 ? (
+        ) : allAttachments.length === 0 && pendingUploads.length === 0 ? (
           <Stack
             spacing={2}
             alignItems="center"
@@ -242,6 +257,12 @@ export default function CaseDetailsAttachmentsPanel({
           </Stack>
         ) : (
           <Stack spacing={2}>
+            {pendingUploads.map((vars, index) => (
+              <UploadingAttachmentPlaceholder
+                key={`pending-upload-${index}`}
+                name={vars.body.name}
+              />
+            ))}
             {isFetchingNextPage && paginatedAttachments.length === 0 ? (
               <AttachmentsListSkeleton />
             ) : (

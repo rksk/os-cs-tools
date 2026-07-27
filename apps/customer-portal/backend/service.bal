@@ -1315,6 +1315,21 @@ service http:InterceptableService / on new http:Listener(9090, listenerConf) {
                 }
             };
         }
+
+        // If the case was created from a Novera chat, mark that conversation
+        // Converted so it no longer counts as an active chat. Non-blocking: the
+        // case is already created, so a conversion failure must not fail it.
+        entity:IdString? chatConversationId = payload.conversationId;
+        if chatConversationId is entity:IdString {
+            entity:ConversationUpdateResponse|error conversationUpdate =
+                    entity:updateConversation(userInfo.idToken, chatConversationId,
+                    {stateKey: entity:conversationStateIds.converted});
+            if conversationUpdate is error {
+                log:printError(string `Failed to mark conversation ${chatConversationId} as ` +
+                        string `Converted after creating a case from it.`, conversationUpdate);
+            }
+        }
+
         return <http:Created>{
             body: mapCreatedCase(createdCaseResponse.case)
         };
@@ -2064,6 +2079,75 @@ service http:InterceptableService / on new http:Listener(9090, listenerConf) {
             };
         }
         return mapConversationResponse(conversationResponse);
+    }
+
+    # Update a conversation's status, moving it to a terminal state so it can no
+    # longer be resumed. "closed" is a user-initiated close from the chat list;
+    # "abandoned" is set automatically when a case is created from a chat before
+    # the assistant has responded.
+    #
+    # + id - ID of the conversation to update
+    # + payload - Target status ("closed" or "abandoned")
+    # + return - Ok on success or error
+    resource function patch conversations/[entity:IdString id](http:RequestContext ctx,
+            types:ConversationStatusUpdate payload)
+        returns http:Ok|http:BadRequest|http:Unauthorized|http:Forbidden|http:InternalServerError {
+
+        authorization:UserInfoPayload|error userInfo = ctx.getWithType(authorization:HEADER_USER_INFO);
+        if userInfo is error {
+            return <http:InternalServerError>{
+                body: {
+                    message: ERR_MSG_USER_INFO_HEADER_NOT_FOUND
+                }
+            };
+        }
+
+        int stateKey;
+        if payload.status == CONVERSATION_STATUS_CLOSED {
+            stateKey = entity:conversationStateIds.close;
+        } else if payload.status == CONVERSATION_STATUS_ABANDONED {
+            stateKey = entity:conversationStateIds.abandonded;
+        } else if payload.status == CONVERSATION_STATUS_CONVERTED {
+            stateKey = entity:conversationStateIds.converted;
+        } else {
+            return <http:BadRequest>{
+                body: {
+                    message: string `Invalid conversation status: '${payload.status}'. ` +
+                        string `Allowed values: ${CONVERSATION_STATUS_CLOSED}, ${CONVERSATION_STATUS_ABANDONED}, ${CONVERSATION_STATUS_CONVERTED}.`
+                }
+            };
+        }
+
+        entity:ConversationUpdateResponse|error response =
+                entity:updateConversation(userInfo.idToken, id, {stateKey});
+        if response is error {
+            if getStatusCode(response) == http:STATUS_UNAUTHORIZED {
+                log:printWarn(string `User: ${userInfo.userId} is not authorized to access the customer portal!`);
+                return <http:Unauthorized>{
+                    body: {
+                        message: ERR_MSG_UNAUTHORIZED_ACCESS
+                    }
+                };
+            }
+
+            if getStatusCode(response) == http:STATUS_FORBIDDEN {
+                log:printWarn(string `User: ${userInfo.userId} is forbidden to update conversation with ID: ${id}!`);
+                return <http:Forbidden>{
+                    body: {
+                        message: "You're not authorized to update the requested conversation."
+                    }
+                };
+            }
+
+            string customError = string `Failed to update conversation with ID: ${id}.`;
+            log:printError(customError, response);
+            return <http:InternalServerError>{
+                body: {
+                    message: customError
+                }
+            };
+        }
+        return http:OK;
     }
 
     # Get comments for a specific case.
@@ -6583,7 +6667,8 @@ service http:InterceptableService / on new http:Listener(9090, listenerConf) {
     # + return - Created escalation details or error response
     resource function post cases/[entity:IdString caseId]/escalations(
             http:RequestContext ctx, types:EscalationCreatePayload payload)
-        returns http:Created|http:BadRequest|http:Unauthorized|http:Forbidden|http:InternalServerError {
+        returns http:Created|http:BadRequest|http:Unauthorized|http:Forbidden|http:NotFound|http:Conflict|
+            http:InternalServerError {
 
         authorization:UserInfoPayload|error userInfo = ctx.getWithType(authorization:HEADER_USER_INFO);
         if userInfo is error {
@@ -6594,10 +6679,27 @@ service http:InterceptableService / on new http:Listener(9090, listenerConf) {
             };
         }
 
+        string action = (payload.action ?: ESCALATION_ACTION_ESCALATE).toUpperAscii();
+        if action != ESCALATION_ACTION_ESCALATE && action != ESCALATION_ACTION_DEESCALATE {
+            return <http:BadRequest>{
+                body: {
+                    message: ERR_MSG_ESCALATION_INVALID_ACTION
+                }
+            };
+        }
+        if action == ESCALATION_ACTION_ESCALATE && (payload.reason ?: "").trim().length() == 0 {
+            return <http:BadRequest>{
+                body: {
+                    message: ERR_MSG_ESCALATION_REASON_REQUIRED
+                }
+            };
+        }
+
         entity:EscalationCreateResponse|error response = entity:createEscalation(userInfo.idToken,
                 {
                     caseId: caseId,
-                    reason: payload.reason
+                    reason: payload.reason,
+                    action: action
                 });
         if response is error {
             if getStatusCode(response) == http:STATUS_UNAUTHORIZED {
@@ -6613,6 +6715,20 @@ service http:InterceptableService / on new http:Listener(9090, listenerConf) {
                 return <http:Forbidden>{
                     body: {
                         message: ERR_MSG_CASE_ACCESS_FORBIDDEN
+                    }
+                };
+            }
+            if getStatusCode(response) == http:STATUS_NOT_FOUND {
+                return <http:NotFound>{
+                    body: {
+                        message: ERR_MSG_CASE_NOT_FOUND_FOR_ESCALATION
+                    }
+                };
+            }
+            if getStatusCode(response) == http:STATUS_CONFLICT {
+                return <http:Conflict>{
+                    body: {
+                        message: ERR_MSG_CASE_CLOSED_FOR_ESCALATION
                     }
                 };
             }
@@ -6889,19 +7005,30 @@ isolated service class WsProxyService {
             }
         }
 
-        // Update conversation state if issue is resolved
+        // Update conversation state if issue is resolved. Do not downgrade a
+        // conversation that has already been Converted (a case was created from
+        // it) — Converted takes precedence over Resolved.
         json resolvedVal = result["resolved"] ?: ();
         if resolvedVal is boolean && resolvedVal {
-            log:printInfo(string `Issue resolved for conversation ID: ${conversationId}, updating state`);
-            entity:ConversationUpdateResponse|error conversationUpdateResponse =
-                    entity:updateConversation(self.idToken, conversationId,
-                    {stateKey: entity:RESOLVED});
-            if conversationUpdateResponse is error {
-                string customError = "Failed to update conversation state to resolved.";
-                log:printError(customError, conversationUpdateResponse);
+            entity:ConversationResponse|error currentConversation =
+                    entity:getConversation(self.idToken, conversationId);
+            boolean alreadyConverted = currentConversation is entity:ConversationResponse &&
+                    currentConversation.state?.id == entity:conversationStateIds.converted;
+            if alreadyConverted {
+                log:printDebug(string `Conversation ID: ${conversationId} is already Converted; ` +
+                        string `skipping Resolved transition.`);
             } else {
-                log:printDebug(string `Updated conversation state to resolved for conversation ID: ${
-                        conversationId}`);
+                log:printInfo(string `Issue resolved for conversation ID: ${conversationId}, updating state`);
+                entity:ConversationUpdateResponse|error conversationUpdateResponse =
+                        entity:updateConversation(self.idToken, conversationId,
+                        {stateKey: entity:RESOLVED});
+                if conversationUpdateResponse is error {
+                    string customError = "Failed to update conversation state to resolved.";
+                    log:printError(customError, conversationUpdateResponse);
+                } else {
+                    log:printDebug(string `Updated conversation state to resolved for conversation ID: ${
+                            conversationId}`);
+                }
             }
         }
     }

@@ -24,10 +24,28 @@ enum ConversationStateCategory {
 function normalizeConversationStateCategory(
   stateLabel?: string | null,
 ): ConversationStateCategory {
-  const label = stateLabel?.toLowerCase() ?? "";
-  return label.includes("open") || label.includes("active") || label.includes("abandoned")
+  const label = stateLabel?.trim().toLowerCase() ?? "";
+  // Exact match only: substring matching would mis-classify terminal states
+  // like "Reopened" (contains "open") or "Inactive" (contains "active").
+  // Abandoned, Resolved and Converted are terminal and stay View-only.
+  return label === "open" || label === "active"
     ? ConversationStateCategory.OpenLike
     : ConversationStateCategory.Other;
+}
+
+/**
+ * Whether a conversation in the given state can be resumed (i.e. the user can
+ * send further messages). Terminal states such as Abandoned, Resolved and
+ * Converted are not resumable.
+ *
+ * @param stateLabel - Status label from the API.
+ * @returns {boolean} True if the chat can be resumed.
+ */
+export function isConversationResumable(stateLabel?: string | null): boolean {
+  return (
+    normalizeConversationStateCategory(stateLabel) ===
+    ConversationStateCategory.OpenLike
+  );
 }
 
 /**

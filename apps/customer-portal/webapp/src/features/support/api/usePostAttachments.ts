@@ -45,6 +45,7 @@ export function usePostAttachments(): UseMutationResult<
   const authFetch = useAuthApiClient();
 
   return useMutation<void, Error, PostAttachmentsVariables>({
+    mutationKey: ["postCaseAttachment"],
     mutationFn: async ({
       caseId,
       body,

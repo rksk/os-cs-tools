@@ -17,29 +17,32 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@/hooks/useAuthApiClient";
 import { ApiQueryKeys } from "@constants/apiConstants";
-import type { CreateEscalationResponse } from "@features/support/types/cases";
+import type {
+  CreateEscalationRequest,
+  CreateEscalationResponse,
+} from "@features/support/types/cases";
 
 export type EscalationApiError = Error & { status: number };
 
 /**
- * Creates a new escalation for a case.
+ * Creates a new escalation, or de-escalates an existing one, for a case.
  *
- * @param {string} caseId - The case ID to escalate.
+ * @param {string} caseId - The case ID to escalate/de-escalate.
  * @returns Mutation result for POST /cases/{caseId}/escalations.
  */
 export function usePostCaseEscalation(caseId: string) {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
 
-  return useMutation<CreateEscalationResponse, EscalationApiError, { reason: string }>({
-    mutationFn: async ({ reason }) => {
+  return useMutation<CreateEscalationResponse, EscalationApiError, CreateEscalationRequest>({
+    mutationFn: async (payload) => {
       const baseUrl = window.config?.CUSTOMER_PORTAL_BACKEND_BASE_URL ?? "";
       const response = await authFetch(
         `${baseUrl}/cases/${caseId}/escalations`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason }),
+          body: JSON.stringify(payload),
         },
       );
       if (!response.ok) {

@@ -14,49 +14,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
-import {  useSearchParams } from "react-router";
+import SectionTabs from "@components/section-tabs/SectionTabs";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ChangeRequestsTab from "@features/csm-operations/components/ChangeRequestsTab";
 import IncidentsTab from "@features/csm-operations/components/IncidentsTab";
 import ProblemsTab from "@features/csm-operations/components/ProblemsTab";
 import { useNavTransition } from "@hooks/useNavTransition";
-
-type OperationsTabId =
-  | "service_requests"
-  | "change_requests"
-  | "incidents"
-  | "problems";
-
-const TAB_IDS: readonly OperationsTabId[] = [
-  "service_requests",
-  "change_requests",
-  "incidents",
-  "problems",
-];
+import { useQueryTabs } from "@hooks/useSectionTabs";
 
 /**
  * Operations landing — the home for the managed-cloud operational entities,
- * split into Service Requests / Change Requests / Incidents tabs. Service
- * requests are case-typed, so they list through the shared issues view;
- * change requests and incidents each have their own search endpoint and
- * listing.
+ * split into Service Requests / Change Requests / Incidents / Problems tabs.
+ * Service requests are case-typed, so they list through the shared issues view;
+ * the others each have their own search endpoint and listing.
+ *
+ * Which tabs exist comes from the navigation tree, so a deployment can restrict
+ * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
  */
 export default function OperationsPage(): JSX.Element {
   const navigate = useNavTransition();
   // Active tab lives in the URL (`?tab=`) so the change-request detail page can
   // link back to the right tab, and the tab survives a refresh / share.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get("tab") as OperationsTabId | null;
-  const activeTab: OperationsTabId =
-    tabParam && TAB_IDS.includes(tabParam) ? tabParam : "service_requests";
-  const setActiveTab = (next: OperationsTabId): void =>
-    setSearchParams((prev) => {
-      prev.set("tab", next);
-      return prev;
-    });
+  const tabs = useQueryTabs("operations");
+  const activeTab = tabs.activeKey;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -67,17 +50,7 @@ export default function OperationsPage(): JSX.Element {
         </Typography>
       </Box>
 
-      <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs
-          value={activeTab}
-          onChange={(_, v) => setActiveTab(v as OperationsTabId)}
-        >
-          <Tab value="service_requests" label="Service requests" />
-          <Tab value="change_requests" label="Change requests" />
-          <Tab value="incidents" label="Incidents" />
-          <Tab value="problems" label="Problem management" />
-        </Tabs>
-      </Box>
+      <SectionTabs {...tabs} ariaLabel="Operations tabs" />
 
       {activeTab === "service_requests" && (
         <CsmIssuesView

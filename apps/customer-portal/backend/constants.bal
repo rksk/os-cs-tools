@@ -28,9 +28,25 @@ const ERR_MSG_UNAUTHORIZED_ACCESS = "You are not authorized to perform this acti
 const ERR_MSG_CASES_STATISTICS = "Failed to retrieve project case statistics.";
 const ERR_MSG_CONVERSATION_STATISTICS = "Failed to retrieve project conversation statistics.";
 
+// Conversation status update actions (PATCH /conversations/{id}).
+const CONVERSATION_STATUS_CLOSED = "closed";
+const CONVERSATION_STATUS_ABANDONED = "abandoned";
+const CONVERSATION_STATUS_CONVERTED = "converted";
+
+// Escalation actions (POST /cases/{caseId}/escalations).
+const ESCALATION_ACTION_ESCALATE = "ESCALATE";
+const ESCALATION_ACTION_DEESCALATE = "DEESCALATE";
+const ERR_MSG_ESCALATION_REASON_REQUIRED = "Reason is required when escalating a case.";
+const ERR_MSG_ESCALATION_INVALID_ACTION = "Invalid action. Allowed values are ESCALATE or DEESCALATE.";
+const ERR_MSG_CASE_NOT_FOUND_FOR_ESCALATION = "The case for which you're trying to create an escalation does not exist.";
+const ERR_MSG_CASE_CLOSED_FOR_ESCALATION = "Cannot create an escalation for a closed case.";
+
 // Default Pagination Values
 public const int DEFAULT_OFFSET = 0;
 public const int DEFAULT_LIMIT = 10;
+
+// Maximum allowed limit for projects pagination in global search
+public const int GLOBAL_SEARCH_PROJECTS_MAX_LIMIT = 50;
 
 public const ERR_STATUS_CODE = "statusCode";
 public const ERR_BODY = "body";

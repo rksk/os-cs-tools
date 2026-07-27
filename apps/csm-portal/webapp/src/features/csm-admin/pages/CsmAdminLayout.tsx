@@ -14,68 +14,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
+import { Box, Typography } from "@wso2/oxygen-ui";
 import { type JSX, Suspense } from "react";
-import { Outlet, useLocation } from "react-router";
+import { Outlet } from "react-router";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
-import { useNavTransition } from "@hooks/useNavTransition";
+import SectionTabs from "@components/section-tabs/SectionTabs";
+import { useRouteTabs } from "@hooks/useSectionTabs";
 
-interface AdminTab {
-  id: string;
-  label: string;
-  path: string;
-  wip?: boolean;
-}
-
-const ADMIN_TABS: AdminTab[] = [
-  { id: "users", label: "Users", path: "/admin/users" },
-  { id: "roles", label: "Roles", path: "/admin/roles", wip: true },
-  { id: "groups", label: "Groups", path: "/admin/groups", wip: true },
-  { id: "permissions", label: "Permissions", path: "/admin/permissions", wip: true },
-];
-
-function pickActiveTab(pathname: string): string {
-  for (const t of ADMIN_TABS) {
-    if (pathname === t.path || pathname.startsWith(`${t.path}/`)) {
-      return t.id;
-    }
-  }
-  return ADMIN_TABS[0].id;
-}
-
+/**
+ * Settings shell. The tabs come from the navigation tree, so which of Users /
+ * Roles / Groups / Permissions this deployment offers (and which are chipped as
+ * work in progress) is decided by `CSM_PORTAL_FEATURE_OVERRIDES` rather than
+ * hardcoded here.
+ */
 export default function CsmAdminLayout(): JSX.Element {
-  const location = useLocation();
-  const navigate = useNavTransition();
-  const active = pickActiveTab(location.pathname);
+  const tabs = useRouteTabs("admin");
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Typography variant="h5">Settings</Typography>
 
-      <Tabs
-        value={active}
-        onChange={(_, id) => {
-          const next = ADMIN_TABS.find((t) => t.id === id);
-          if (next) void navigate(next.path);
-        }}
-        variant="scrollable"
-        scrollButtons="auto"
-      >
-        {ADMIN_TABS.map((t) => (
-          <Tab
-            key={t.id}
-            value={t.id}
-            label={
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                {t.label}
-                {t.wip && (
-                  <Chip size="small" label="WIP" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
-                )}
-              </Box>
-            }
-          />
-        ))}
-      </Tabs>
+      <SectionTabs {...tabs} ariaLabel="Settings tabs" scrollable />
 
       <Suspense fallback={<RouteSuspenseFallback />}>
         <Outlet />

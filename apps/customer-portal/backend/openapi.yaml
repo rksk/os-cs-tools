@@ -1072,6 +1072,38 @@ paths:
           description: InternalServerError
         "403":
           description: Forbidden
+    patch:
+      summary: Update a conversation's status (close or abandon).
+      operationId: patchConversationsId
+      parameters:
+      - name: id
+        in: path
+        description: ID of the conversation to update
+        required: true
+        schema:
+          $ref: '#/components/schemas/IdString'
+      requestBody:
+        description: Target status for the conversation
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationStatusUpdate'
+        required: true
+      responses:
+        "200":
+          description: Ok
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+        "500":
+          description: InternalServerError
+        "403":
+          description: Forbidden
   /cases/{id}/comments:
     get:
       summary: Get comments for a specific case.
@@ -2141,6 +2173,18 @@ paths:
           description: Unauthorized
         "403":
           description: Forbidden
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "500":
           description: InternalServerError
   /cases/{caseId}/escalations/search:
@@ -4809,6 +4853,18 @@ components:
           format: int64
       additionalProperties: false
       description: Conversation statistics by state for a project.
+    ConversationStatusUpdate:
+      required:
+      - status
+      type: object
+      properties:
+        status:
+          type: string
+          description: |-
+            Target status: "closed" (user-initiated) or "abandoned" (set
+            automatically when a case is created before the assistant responds).
+      additionalProperties: false
+      description: Payload to update a conversation's status via PATCH /conversations/{id}.
     ConversationSummaryResponse:
       required:
       - accountId
@@ -7196,15 +7252,36 @@ components:
       additionalProperties: false
       description: Watch list information.
     EscalationCreatePayload:
-      required:
-      - reason
-      type: object
-      properties:
-        reason:
-          type: string
-          description: Reason for the escalation
-      additionalProperties: false
       description: Request payload for creating an escalation.
+      oneOf:
+      - type: object
+        title: Escalate
+        required:
+        - reason
+        properties:
+          reason:
+            type: string
+            minLength: 1
+            description: Reason for the escalation. Mandatory when action is ESCALATE
+          action:
+            type: string
+            pattern: (?i)^ESCALATE$
+            default: ESCALATE
+            description: Action to perform. Defaults to ESCALATE, case-insensitive
+        additionalProperties: false
+      - type: object
+        title: Deescalate
+        required:
+        - action
+        properties:
+          reason:
+            type: string
+            description: Reason for the escalation. Mandatory when action is ESCALATE
+          action:
+            type: string
+            pattern: (?i)^DEESCALATE$
+            description: Action to perform. Defaults to ESCALATE, case-insensitive
+        additionalProperties: false
     EscalationSortField:
       type: string
       description: Valid escalation sort field values.
@@ -7262,6 +7339,7 @@ components:
           description: Created date and time
         reason:
           type: string
+          nullable: true
           description: Reason for the escalation
         notificationSentTo:
           type: array
@@ -7333,6 +7411,7 @@ components:
           description: Updated date and time
         reason:
           type: string
+          nullable: true
           description: Reason for the escalation
         notificationSentTo:
           type: array
@@ -7433,6 +7512,9 @@ components:
         - createdOn
         - hasPdpSubscription
         - account
+        - activeChatsCount
+        - actionRequiredCount
+        - outstandingCount
       properties:
         id:
           $ref: '#/components/schemas/IdString'
@@ -7468,6 +7550,18 @@ components:
           nullable: true
         account:
           $ref: '#/components/schemas/ReferenceItem'
+        activeChatsCount:
+          type: integer
+          description: Number of active chats in the project
+          format: int64
+        actionRequiredCount:
+          type: integer
+          description: Number of cases requiring action in the project
+          format: int64
+        outstandingCount:
+          type: integer
+          description: Number of outstanding cases in the project
+          format: int64
       additionalProperties: false
       description: Project item in a global search response.
     GlobalSearchCase:

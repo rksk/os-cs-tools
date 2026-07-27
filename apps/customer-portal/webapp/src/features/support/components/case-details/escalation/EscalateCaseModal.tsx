@@ -86,7 +86,7 @@ export default function EscalateCaseModal({
     if (!reason.trim() || isPending || !nextLevel) return;
     setInlineError(null);
     mutate(
-      { reason: reason.trim() },
+      { reason: reason.trim(), action: "ESCALATE" },
       {
         onSuccess: () => {
           resetAndClose();

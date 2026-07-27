@@ -71,6 +71,16 @@ vi.mock("@features/support/api/useSearchConversations", () => ({
   useSearchConversations: () => mockUseSearchConversations(),
 }));
 
+vi.mock("@features/support/hooks/useCloseConversationFlow", () => ({
+  useCloseConversationFlow: () => ({
+    isConfirmOpen: false,
+    isClosing: false,
+    requestClose: vi.fn(),
+    confirmClose: vi.fn(),
+    cancelClose: vi.fn(),
+  }),
+}));
+
 vi.mock("@utils/permission", () => ({
   getProjectPermissions: () => ({ includeS0InSupportMetrics: true }),
 }));

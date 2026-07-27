@@ -46,4 +46,58 @@ describe("ChatHistoryCard", () => {
     fireEvent.click(actionButton as Element);
     expect(onItemAction).toHaveBeenCalled();
   });
+
+  it("shows Close for a resumable chat and calls onCloseChat without opening the chat", () => {
+    const onItemAction = vi.fn();
+    const onCloseChat = vi.fn();
+    render(
+      <ThemeProvider theme={createTheme()}>
+        <ChatHistoryCard
+          item={
+            {
+              chatId: "chat-1",
+              title: "Chat title",
+              status: "Active",
+              startedTime: "2026-01-01T00:00:00Z",
+              messages: 3,
+              kbArticles: 1,
+            } as never
+          }
+          onItemAction={onItemAction}
+          onCloseChat={onCloseChat}
+        />
+      </ThemeProvider>,
+    );
+    const closeButton = screen
+      .getAllByRole("button", { name: /close/i })
+      .find((element) => element.tagName.toLowerCase() === "span");
+    expect(closeButton).toBeDefined();
+    fireEvent.click(closeButton as Element);
+    expect(onCloseChat).toHaveBeenCalledWith("chat-1");
+    expect(onItemAction).not.toHaveBeenCalled();
+  });
+
+  it("does not show Close for a terminal chat", () => {
+    const onCloseChat = vi.fn();
+    render(
+      <ThemeProvider theme={createTheme()}>
+        <ChatHistoryCard
+          item={
+            {
+              chatId: "chat-2",
+              title: "Chat title",
+              status: "Close",
+              startedTime: "2026-01-01T00:00:00Z",
+              messages: 2,
+              kbArticles: 0,
+            } as never
+          }
+          onCloseChat={onCloseChat}
+        />
+      </ThemeProvider>,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^close$/i }),
+    ).toBeNull();
+  });
 });

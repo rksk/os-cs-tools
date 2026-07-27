@@ -49,6 +49,7 @@ import {
   CHAT_TYPING_INTERVAL_MS,
   NOVERA_ANALYZING_PLACEHOLDER_TEXT,
   NOVERA_INITIAL_WELCOME_TEXT,
+  NOVERA_WELCOME_MESSAGE_ID,
 } from "@features/support/constants/chatConstants";
 import {
   formatChatHistoryForClassification,
@@ -78,6 +79,11 @@ import {
   compareByCreatedOnThenId,
   dateFromApiCreatedOn,
 } from "@features/support/utils/support";
+
+// Max time (ms) to wait for the conversation id (delivered asynchronously over
+// the chat WebSocket) before creating a case, so the created case links to the
+// chat. Bounded so a missing id (e.g. socket down) can never block case creation.
+const CONVERSATION_ID_WAIT_MS = 3000;
 
 /**
  * NoveraChatPage component to provide AI-powered support assistance.
@@ -144,6 +150,10 @@ export default function NoveraChatPage(): JSX.Element {
   const [conversationId, setConversationId] = useState<string | null>(
     () => urlConversationId ?? conversationResponse?.conversationId ?? null,
   );
+  // Resolver for a pending "wait for the conversation id" promise (see
+  // waitForConversationId). Resolved when conversation_created arrives, so a
+  // case created moments after the first message still carries the id.
+  const pendingIdResolveRef = useRef<((id: string | null) => void) | null>(null);
 
   const {
     data: conversationHistory,
@@ -202,7 +212,7 @@ export default function NoveraChatPage(): JSX.Element {
     }
 
     const botWelcome: Message = {
-      id: "1",
+      id: NOVERA_WELCOME_MESSAGE_ID,
       text: NOVERA_INITIAL_WELCOME_TEXT,
       sender: ChatSender.BOT,
       timestamp: new Date(),
@@ -285,6 +295,25 @@ export default function NoveraChatPage(): JSX.Element {
     }
   }, [urlConversationId, conversationResponse, projectId, navigate]);
 
+  // Wait (bounded) for the conversation id, which arrives asynchronously over
+  // the chat WebSocket. Resolves immediately if it's already known; otherwise
+  // when conversation_created fires, or with null after the timeout so case
+  // creation is never blocked.
+  const waitForConversationId = useCallback((): Promise<string | null> => {
+    if (conversationId) {
+      return Promise.resolve(conversationId);
+    }
+    return new Promise<string | null>((resolve) => {
+      pendingIdResolveRef.current = resolve;
+      setTimeout(() => {
+        if (pendingIdResolveRef.current === resolve) {
+          pendingIdResolveRef.current = null;
+          resolve(null);
+        }
+      }, CONVERSATION_ID_WAIT_MS);
+    });
+  }, [conversationId]);
+
   const performClassification = useCallback(async () => {
     if (!projectId) {
       navigate("/");
@@ -292,6 +321,11 @@ export default function NoveraChatPage(): JSX.Element {
       setIsWaitingForClassification(false);
       return;
     }
+
+    // Capture the conversation id (bounded wait) so the created case links back
+    // to this chat; the backend then converts the chat on case creation. If the
+    // id never arrives, we still proceed — case creation must never block.
+    const chatConversationId = await waitForConversationId();
 
     try {
       const chatHistory = formatChatHistoryForClassification(messages);
@@ -305,16 +339,20 @@ export default function NoveraChatPage(): JSX.Element {
             projectTypeId,
           });
           navigate(`/projects/${projectId}/support/chat/create-case`, {
-            state: { messages, classificationResponse, conversationId },
+            state: {
+              messages,
+              classificationResponse,
+              conversationId: chatConversationId,
+            },
           });
         } catch {
           navigate(`/projects/${projectId}/support/chat/create-case`, {
-            state: { messages, conversationId },
+            state: { messages, conversationId: chatConversationId },
           });
         }
       } else {
         navigate(`/projects/${projectId}/support/chat/create-case`, {
-          state: { messages, conversationId },
+          state: { messages, conversationId: chatConversationId },
         });
       }
     } finally {
@@ -327,13 +365,16 @@ export default function NoveraChatPage(): JSX.Element {
     messages,
     envProducts,
     classifyCase,
-    conversationId,
     projectTypeId,
+    waitForConversationId,
   ]);
 
   const handleCreateCase = useCallback(() => {
     setIsCreateCaseLoading(true);
 
+    // Always proceed — case creation must never block on the conversation id or
+    // the WebSocket. performClassification waits (bounded) for the id so the
+    // case links to the chat, then navigates.
     if (isAllProductsLoading) {
       setIsWaitingForClassification(true);
     } else {
@@ -470,6 +511,12 @@ export default function NoveraChatPage(): JSX.Element {
           const nextConversationId = String(event.conversationId ?? "");
           if (nextConversationId) {
             setConversationId(nextConversationId);
+            // Unblock a pending "wait for id" (e.g. a fast Create Case click)
+            // so the case links to this chat.
+            if (pendingIdResolveRef.current) {
+              pendingIdResolveRef.current(nextConversationId);
+              pendingIdResolveRef.current = null;
+            }
             if (!urlConversationId && projectId) {
               navigate(
                 `/projects/${projectId}/support/chat/${nextConversationId}`,

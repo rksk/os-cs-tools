@@ -95,8 +95,11 @@ export default function ResolutionDialog({
   );
   const [cause, setCause] = useState<BeCaseCause | "">(initial?.cause ?? "");
   const [closeNotes, setCloseNotes] = useState(initial?.closeNotes ?? "");
+  const [closeNotesTouched, setCloseNotesTouched] = useState(false);
   const copy = COPY[kind];
-  const canSubmit = !!resolutionCode && !!cause && !isSubmitting;
+  const hasCloseNotes = closeNotes.trim().length > 0;
+  const closeNotesInvalid = closeNotesTouched && !hasCloseNotes;
+  const canSubmit = !!resolutionCode && !!cause && hasCloseNotes && !isSubmitting;
 
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
@@ -145,13 +148,21 @@ export default function ResolutionDialog({
 
         <TextField
           label="Close notes"
+          required
           size="small"
           fullWidth
           multiline
           minRows={3}
           value={closeNotes}
           onChange={(e) => setCloseNotes(e.target.value)}
-          placeholder="Optional free-text notes about the resolution…"
+          onBlur={() => setCloseNotesTouched(true)}
+          error={closeNotesInvalid}
+          helperText={
+            closeNotesInvalid
+              ? "Close notes are required."
+              : "Free-text notes about the resolution, shared with the customer."
+          }
+          placeholder="Describe the resolution…"
         />
       </DialogContent>
       <DialogActions>
@@ -163,7 +174,10 @@ export default function ResolutionDialog({
           color={kind === "close" ? "warning" : "primary"}
           disabled={!canSubmit}
           onClick={() => {
-            if (!resolutionCode || !cause) return;
+            if (!resolutionCode || !cause || !hasCloseNotes) {
+              setCloseNotesTouched(true);
+              return;
+            }
             onSubmit({ resolutionCode, cause, closeNotes });
           }}
         >

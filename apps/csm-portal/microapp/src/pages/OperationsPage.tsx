@@ -31,12 +31,11 @@ const TABS: { id: OperationsTabId; label: string }[] = [
 // Mirrors the webapp's OperationsPage (apps/csm-portal/webapp/src/features/csm-operations/pages/OperationsPage.tsx):
 // three tabs — Service requests (cases with type=service_request, reusing the Support page's own
 // list/pagination/filter infra, with its own "Create service request" Fab — see
-// ServiceRequestsTab.tsx), Change requests (its own list/detail/edit), and Incidents (list +
-// read-only detail with comments — see IncidentsTab.tsx/IncidentDetailPage.tsx). "Create change
-// request" and "Create incident" are deliberately out of scope for this pass — each is its own
-// large form (a 15+ field change-request form, or an incident form with an impact×urgency
-// priority matrix and 34 ServiceNow subcategories); incidents' Edit dialog (state transitions,
-// watch list management) is similarly out of scope.
+// ServiceRequestsTab.tsx), Change requests (its own list/detail/edit, with its own "Create change
+// request" Fab — see ChangeRequestsTab.tsx), and Incidents (list + read-only detail with comments
+// — see IncidentsTab.tsx/IncidentDetailPage.tsx). "Create incident" is deliberately out of scope
+// for this pass — it's its own large form (an impact×urgency priority matrix and 34 subcategories);
+// incidents' Edit dialog (state transitions, watch list management) is similarly out of scope.
 export default function OperationsPage() {
   const [activeTab, setActiveTab] = useState<OperationsTabId>("service_requests");
 

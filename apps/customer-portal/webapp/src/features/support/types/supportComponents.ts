@@ -449,6 +449,9 @@ export type CaseDetailsActionRowProps = {
   escalationLevelId?: string | null;
   onEscalateSuccess?: () => void;
   isCurrentUserLead?: boolean | undefined;
+  isEscalated?: boolean;
+  canDeescalate?: boolean;
+  onDeescalateSuccess?: () => void;
 };
 
 export type EscalateCaseModalProps = {
@@ -456,6 +459,14 @@ export type EscalateCaseModalProps = {
   caseId: string;
   escalationLevelId: string;
   escalationLevelLabel: string;
+  onClose: () => void;
+  onSuccess?: () => void;
+  onError?: (message: string) => void;
+};
+
+export type DeescalateCaseModalProps = {
+  open: boolean;
+  caseId: string;
   onClose: () => void;
   onSuccess?: () => void;
   onError?: (message: string) => void;
@@ -481,6 +492,7 @@ export type ChatHistoryListProps = {
   isLoading?: boolean;
   isError?: boolean;
   onItemAction?: (chatId: string, action: ChatAction) => void;
+  onCloseChat?: (chatId: string) => void;
 };
 
 export type ChatInputProps = {

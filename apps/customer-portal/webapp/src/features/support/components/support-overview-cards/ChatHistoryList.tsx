@@ -36,6 +36,7 @@ export default function ChatHistoryList({
   isLoading,
   isError,
   onItemAction,
+  onCloseChat,
 }: ChatHistoryListProps): JSX.Element {
   const listShellSx = {
     display: "flex",
@@ -90,6 +91,7 @@ export default function ChatHistoryList({
           key={item.chatId}
           item={item}
           onItemAction={onItemAction}
+          onCloseChat={onCloseChat}
         />
       ))}
     </Box>

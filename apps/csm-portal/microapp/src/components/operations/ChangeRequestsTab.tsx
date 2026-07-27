@@ -15,8 +15,9 @@
 // under the License.
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Chip, IconButton, Stack } from "@wso2/oxygen-ui";
-import { SlidersHorizontal } from "@wso2/oxygen-ui-icons-react";
+import { useNavigate } from "react-router-dom";
+import { Badge, Chip, Fab, IconButton, Stack } from "@wso2/oxygen-ui";
+import { Plus, SlidersHorizontal } from "@wso2/oxygen-ui-icons-react";
 import { useQueryErrorResetBoundary, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { changeRequests } from "@src/services/changeRequests";
 import { ErrorBoundary } from "@components/common/ErrorBoundary";
@@ -38,6 +39,7 @@ import {
 // Mirrors the shape of SupportPage's own list content (search + filter sheet + infinite scroll),
 // scoped to change requests instead of cases.
 export function ChangeRequestsTab() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
   const [filters, setFilters] = useState<ChangeRequestFilters>(EMPTY_CR_FILTERS);
@@ -69,6 +71,18 @@ export function ChangeRequestsTab() {
         filters={filters}
         onApply={setFilters}
       />
+
+      {/* Same floating create affordance as ServiceRequestsTab.tsx's own Fab — mirrors the
+          webapp's "Create change request" button (OperationsPage.tsx's `actions` prop). */}
+      <Fab
+        aria-label="Create change request"
+        size="medium"
+        color="primary"
+        onClick={() => navigate("/operations/change-requests/new")}
+        sx={{ position: "fixed", right: 10, bottom: "calc(var(--tab-bar-height) + 60px)" }}
+      >
+        <Plus size={20} />
+      </Fab>
     </Stack>
   );
 }
