@@ -27,7 +27,7 @@ function chooseOption(labelId: string, optionText: RegExp): void {
 }
 
 describe("ResolutionDialog", () => {
-  it("disables submit until both resolution code and cause are chosen", () => {
+  it("disables submit until resolution code, cause, and close notes are all provided", () => {
     render(
       <ResolutionDialog
         kind="close"
@@ -42,7 +42,30 @@ describe("ResolutionDialog", () => {
     expect(screen.getByRole("button", { name: /close case/i })).toBeDisabled();
 
     chooseOption("case-cause-label", /product\/bug/i);
+    expect(screen.getByRole("button", { name: /close case/i })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/close notes/i), {
+      target: { value: "Fixed by rolling back the config change." },
+    });
     expect(screen.getByRole("button", { name: /close case/i })).not.toBeDisabled();
+  });
+
+  it("shows a validation message when close notes is left blank", () => {
+    render(
+      <ResolutionDialog
+        kind="close"
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    chooseOption("resolution-code-label", /solved.*fixed by support\/guidance provided/i);
+    chooseOption("case-cause-label", /product\/bug/i);
+
+    // Submit stays disabled while blank, but leaving the field surfaces why.
+    fireEvent.blur(screen.getByLabelText(/close notes/i));
+    expect(screen.getByRole("button", { name: /close case/i })).toBeDisabled();
+    expect(screen.getByText(/close notes are required/i)).toBeInTheDocument();
   });
 
   it("submits the chosen resolution code, cause, and close notes", () => {
