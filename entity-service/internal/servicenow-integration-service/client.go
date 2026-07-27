@@ -24,14 +24,39 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 )
+
+// sanitizeLog strips CR/LF characters from a string to prevent log injection.
+// Apply to every downstream-derived operand before passing it to a log call.
+var sanitizeLog = strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace
+
+// internalErrorTagPattern matches a leading bracketed all-caps tag (e.g.
+// "[SERVICENOW_ERROR] ") that a downstream service prepends to its error
+// messages to identify which internal layer raised the error. The tag is
+// useful for correlating log lines with the originating layer, but it is an
+// implementation detail that must never reach the client-facing message.
+var internalErrorTagPattern = regexp.MustCompile(`^\[[A-Z][A-Z0-9_]*\]\s*`)
+
+// stripInternalErrorTag splits msg into the client-safe message with any
+// leading internal tag removed, and the tag itself (empty if msg carried no
+// tag). Only the client-safe message should ever be placed in a field the
+// caller can see; the tag, if present, belongs in logs only.
+func stripInternalErrorTag(msg string) (clientMsg string, tag string) {
+	loc := internalErrorTagPattern.FindStringIndex(msg)
+	if loc == nil {
+		return msg, ""
+	}
+	return msg[loc[1]:], strings.TrimSpace(msg[loc[0]:loc[1]])
+}
 
 // ClientCredentialsConfig holds the OAuth2 client credentials used to obtain
 // a bearer token for service-to-service calls to the Choreo API.
@@ -298,6 +323,13 @@ func (c *Client) Post(ctx context.Context, path string, userIDToken string, payl
 // extractDownstreamMessage attempts to parse a "message" field from the JSON
 // error body returned by the downstream service. Falls back to defaultMsg if
 // the body is empty, not JSON, or has no "message" field.
+//
+// The downstream service sometimes prefixes its message with an internal
+// bracketed tag identifying which layer raised it (e.g.
+// "[SERVICENOW_ERROR] State transition rejected"). That tag is logged here
+// for correlation but stripped from the returned string, since the returned
+// string is used verbatim as the client-facing apierror Msg — it must never
+// carry backend/vendor implementation detail.
 func extractDownstreamMessage(body []byte, defaultMsg string) string {
 	if len(body) == 0 {
 		return defaultMsg
@@ -306,7 +338,11 @@ func extractDownstreamMessage(body []byte, defaultMsg string) string {
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil && payload.Message != "" {
-		return payload.Message
+		clientMsg, tag := stripInternalErrorTag(payload.Message)
+		if tag != "" {
+			log.Printf("snclient: downstream error tagged %s: %s", sanitizeLog(tag), sanitizeLog(clientMsg)) // #nosec G706 -- tag and message sanitized
+		}
+		return clientMsg
 	}
 	return defaultMsg
 }
