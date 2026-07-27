@@ -370,6 +370,20 @@ func formatSNDate(t *time.Time) string {
 	return t.UTC().Format(snCreatedOnLayout)
 }
 
+// snDateOnlyLayout is the date-only wire format the integration service expects for
+// fields whose contract carries a date with no time component.
+const snDateOnlyLayout = "2006-01-02"
+
+// formatSNDateOnly renders a date-only value. The auto-closure hold is a date, not a
+// datetime: the integration service constrains it to YYYY-MM-DD, and sending a
+// datetime fails payload binding before the request ever reaches the data source.
+func formatSNDateOnly(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(snDateOnlyLayout)
+}
+
 type snCaseService struct {
 	client     *integrationservice.Client
 	pgFallback CaseService
@@ -1253,7 +1267,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		payload.RelatedCaseID = &sysid
 	}
 	if req.AutocloseHoldUntil != nil {
-		holdUntil := req.AutocloseHoldUntil.Format(snCreatedOnLayout)
+		holdUntil := formatSNDateOnly(req.AutocloseHoldUntil)
 		payload.AutocloseHoldUntil = &holdUntil
 	}
 	if req.Subject != nil {
