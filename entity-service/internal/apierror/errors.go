@@ -85,6 +85,17 @@ type ConflictError struct {
 // Error implements the error interface.
 func (e *ConflictError) Error() string { return e.Msg }
 
+// UnprocessableEntityError signals that the request was well-formed but
+// semantically rejected by a downstream dependency (e.g. an invalid state
+// transition) and should be reported as HTTP 422. The Msg is safe to log and
+// return to the caller.
+type UnprocessableEntityError struct {
+	Msg string
+}
+
+// Error implements the error interface.
+func (e *UnprocessableEntityError) Error() string { return e.Msg }
+
 // WriteJSON writes an ErrorResponse JSON body with the given HTTP status code.
 func WriteJSON(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")

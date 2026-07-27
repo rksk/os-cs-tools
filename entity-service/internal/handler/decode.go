@@ -95,6 +95,7 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 		ue  *apierror.UnauthorizedError
 		fe  *apierror.ForbiddenError
 		ce  *apierror.ConflictError
+		uee *apierror.UnprocessableEntityError
 	)
 	switch {
 	case errors.As(err, &ve):
@@ -121,6 +122,12 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 		// 409 – request conflicts with the current state of the resource; message is safe to return.
 		log.Printf("Conflict: %s %s: %s", r.Method, sanitizeLog(r.URL.Path), sanitizeLog(ce.Msg)) // #nosec G706 -- path and message sanitized
 		apierror.WriteJSON(w, http.StatusConflict, ce.Msg)
+
+	case errors.As(err, &uee):
+		// 422 – request was well-formed but semantically rejected by a downstream
+		// dependency (e.g. an invalid state transition); message is safe to return.
+		log.Printf("Unprocessable entity: %s %s: %s", r.Method, sanitizeLog(r.URL.Path), sanitizeLog(uee.Msg)) // #nosec G706 -- path and message sanitized
+		apierror.WriteJSON(w, http.StatusUnprocessableEntity, uee.Msg)
 
 	case errors.As(err, &sue):
 		// 503 – downstream dependency unavailable; log details, return generic message.

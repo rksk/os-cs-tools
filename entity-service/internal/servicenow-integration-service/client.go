@@ -339,6 +339,8 @@ func (c *Client) do(req *http.Request, path string) (json.RawMessage, error) {
 		return nil, &apierror.NotFoundError{Msg: extractDownstreamMessage(raw, "resource not found in downstream service")}
 	case resp.StatusCode == http.StatusConflict:
 		return nil, &apierror.ConflictError{Msg: extractDownstreamMessage(raw, "request conflicts with current state of the resource")}
+	case resp.StatusCode == http.StatusUnprocessableEntity:
+		return nil, &apierror.UnprocessableEntityError{Msg: extractDownstreamMessage(raw, "downstream service rejected the request as semantically invalid")}
 	case resp.StatusCode == http.StatusServiceUnavailable:
 		return nil, &apierror.ServiceUnavailableError{Msg: "downstream service unavailable"}
 	default:
