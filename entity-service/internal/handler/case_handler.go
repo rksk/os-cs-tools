@@ -28,6 +28,13 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
 )
 
+// maxAttachmentBodySize caps the CreateCaseAttachment JSON body at 15 MiB,
+// matching the csm-portal backend's own maxAttachmentBodyBytes ceiling: a 10
+// MB file becomes ~13.3 MB once base64-encoded, plus JSON envelope overhead.
+// The generic maxRequestBodySize (1 MiB) is far too small for this endpoint
+// and rejects legitimate small attachments (e.g. a 2 MB file).
+const maxAttachmentBodySize = int64(15 << 20)
+
 // safeAttachmentTypes is the allowlist of Content-Type values that may be
 // forwarded as-is. Anything not in this set is coerced to application/octet-stream
 // to prevent a stored-XSS attack via a crafted upstream Content-Type (e.g. text/html).
@@ -170,7 +177,7 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 // CreateCaseAttachment handles POST /attachments.
 func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateAttachmentRequest
-	if !decodeRequest(w, r, &req) {
+	if !decodeRequestWithLimit(w, r, &req, maxAttachmentBodySize, "attachment exceeds the maximum allowed size of 10 MB") {
 		return
 	}
 	resp, err := h.svc.CreateCaseAttachment(r.Context(), req)

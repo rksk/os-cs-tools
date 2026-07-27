@@ -38,11 +38,20 @@ var sanitizeLog = strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace
 // rejection, a 1 MiB body cap, and no trailing data after the JSON object.
 // Returns false and writes the error response if decoding fails.
 func decodeRequest[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	return decodeRequestWithLimit(w, r, dst, maxRequestBodySize, "request body too large")
+}
+
+// decodeRequestWithLimit is the same as decodeRequest but allows the caller to
+// override the default 1 MiB body cap and the message returned when that cap
+// is exceeded. Use this for endpoints whose payload is legitimately larger
+// than the generic JSON body (e.g. base64-encoded file uploads) instead of
+// changing the default for every other endpoint.
+func decodeRequestWithLimit[T any](w http.ResponseWriter, r *http.Request, dst *T, limit int64, tooLargeMsg string) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		apierror.WriteJSON(w, http.StatusBadRequest, decodeErrMsg(err))
+		apierror.WriteJSON(w, http.StatusBadRequest, decodeErrMsgWithLimit(err, tooLargeMsg))
 		return false
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -56,9 +65,17 @@ func decodeRequest[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
 // is safe to return to the caller. Infrastructure details (e.g. raw Go type
 // names) are replaced with user-friendly descriptions.
 func decodeErrMsg(err error) string {
+	return decodeErrMsgWithLimit(err, "request body too large")
+}
+
+// decodeErrMsgWithLimit behaves like decodeErrMsg but lets the caller supply
+// an endpoint-specific message for the body-too-large case, so a handler with
+// a raised size cap (see decodeRequestWithLimit) can tell the caller what the
+// actual limit is instead of the generic message.
+func decodeErrMsgWithLimit(err error, tooLargeMsg string) string {
 	var maxBytes *http.MaxBytesError
 	if errors.As(err, &maxBytes) {
-		return "request body too large"
+		return tooLargeMsg
 	}
 	var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) {
