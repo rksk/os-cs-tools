@@ -27,6 +27,7 @@ import { type JSX, type ReactNode, useCallback, useMemo, useState } from "react"
 import {  useParams } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
 import { useGetChangeRequest } from "@features/csm-operations/api/useGetChangeRequest";
@@ -57,6 +58,17 @@ import type { BeEntityRef } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
 
 const OPERATIONS_CR_PATH = "/operations?tab=change_requests";
+
+/**
+ * The backend surfaces real rejection reasons on 4xx (e.g. a state
+ * transition rejected by the backing data source); prefer that message over
+ * a generic fallback whenever one is available.
+ */
+function backendErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof BackendApiError && err.status < 500 && err.message
+    ? err.message
+    : fallback;
+}
 
 function formatDateTime(value?: string | null): string {
   return (
@@ -232,7 +244,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
       { id: cr.id, patch: { requestApproval: true } },
       {
         onError: (err) =>
-          showError("Could not request approval for this change request.", err),
+          showError(
+            backendErrorMessage(
+              err,
+              "Could not request approval for this change request.",
+            ),
+            err,
+          ),
       },
     );
   };
@@ -466,7 +484,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
               {
                 onSuccess: () => setEditOpen(false),
                 onError: (err) =>
-                  showError("Could not update the change request.", err),
+                  showError(
+                    backendErrorMessage(
+                      err,
+                      "Could not update the change request.",
+                    ),
+                    err,
+                  ),
               },
             )
           }
