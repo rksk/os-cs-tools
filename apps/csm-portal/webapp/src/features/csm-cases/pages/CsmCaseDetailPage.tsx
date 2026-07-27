@@ -35,6 +35,7 @@ import {
   ArrowLeft,
   CheckSquare,
   Clock,
+  Eye,
   Layers,
   Link as LinkIcon,
   ListChecks,
@@ -252,6 +253,7 @@ type CaseTabId =
   | "activities"
   | "details"
   | "related"
+  | "watchers"
   | "sla"
   | "attachments"
   | "time"
@@ -290,6 +292,7 @@ const TAB_DEFS: Array<{
   { id: "activities", label: "Activities", icon: <Activity size={16} /> },
   { id: "details", label: "Details", icon: <ListChecks size={16} /> },
   { id: "related", label: "Related", icon: <Users size={16} /> },
+  { id: "watchers", label: "Watchers", icon: <Eye size={16} /> },
   { id: "sla", label: "SLAs", icon: <Clock size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
   { id: "time", label: "Time tracking", icon: <Layers size={16} /> },
@@ -503,6 +506,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   if (
     isAnnouncement &&
     (activeTab === "related" ||
+      activeTab === "watchers" ||
       activeTab === "sla" ||
       activeTab === "time" ||
       activeTab === "call-requests" ||
@@ -795,10 +799,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
-      // Manage watchers jumps to the Related tab, which now edits the watch
+      // Manage watchers jumps to the Watchers tab, which edits the watch
       // list inline (add/remove chips) rather than opening a separate dialog.
       if (action.secondary === "manage_watchers") {
-        setActiveTab("related");
+        setActiveTab("watchers");
         return;
       }
 
@@ -1068,7 +1072,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
-  // Watchers are edited inline in the Related tab (see WatchersWidget); the
+  // Watchers are edited inline in the Watchers tab (see WatchersWidget); the
   // backend has no add/remove-one endpoint, only a full-list-replace
   // `PATCH /cases/{id}` (`watchList`), and that PATCH is an array of emails
   // (ServiceNow's watch_list only round-trips as `EmailString[]`), so both add
@@ -1642,25 +1646,29 @@ export default function CsmCaseDetailPage(): JSX.Element {
               !t.hidden &&
               (!isAnnouncement ||
                 (t.id !== "related" &&
+                  t.id !== "watchers" &&
                   t.id !== "sla" &&
                   t.id !== "time" &&
                   t.id !== "call-requests")),
           ).map((t) => {
             // Counts shown only where the tab IS the list (unambiguous). Not
-            // shown for "related" — it combines two lists (watchers + child
-            // cases), so a single count would be misleading.
+            // shown for "related" — ChildCasesWidget runs its own scoped
+            // query for the child-case list, so no count is available here
+            // without an extra fetch.
             const count =
-              t.id === "sla"
-                ? slaList?.count
-                : t.id === "attachments"
-                  ? attachmentList.length
-                  : t.id === "time"
-                    ? c.timeLogs.length
-                    : t.id === "call-requests"
-                      ? callRequests?.length
-                      : t.id === "tasks"
-                        ? caseTasks?.total
-                        : undefined;
+              t.id === "watchers"
+                ? c.watchers.length
+                : t.id === "sla"
+                  ? slaList?.count
+                  : t.id === "attachments"
+                    ? attachmentList.length
+                    : t.id === "time"
+                      ? c.timeLogs.length
+                      : t.id === "call-requests"
+                        ? callRequests?.length
+                        : t.id === "tasks"
+                          ? caseTasks?.total
+                          : undefined;
             return (
               <Tab
                 key={t.id}
@@ -1961,28 +1969,24 @@ export default function CsmCaseDetailPage(): JSX.Element {
       )}
 
       {activeTab === "related" && (
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "repeat(2, minmax(0, 1fr))",
-            },
-            alignItems: "start",
-          }}
-        >
+        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
+          <ChildCasesWidget caseId={c.id} />
+        </Box>
+      )}
+
+      {activeTab === "watchers" && (
+        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
           {/* Watchers list — moved off the (single-line) overview Cell so a
-              long watch list has room to wrap as chips. Add/remove are
-              inline here (no separate dialog); "Manage watchers…" in the
-              action bar just jumps to this tab. */}
+              long watch list has room to wrap as chips, and given its own
+              tab (split out of "Related") since it's not actually related
+              content. Add/remove are inline here (no separate dialog);
+              "Manage watchers…" in the action bar just jumps to this tab. */}
           <WatchersWidget
             watchers={c.watchers}
             onAdd={onAddWatcher}
             onRemove={onRemoveWatcher}
             isSaving={patchCase.isPending}
           />
-          <ChildCasesWidget caseId={c.id} />
         </Box>
       )}
 
