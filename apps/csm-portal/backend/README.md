@@ -310,7 +310,7 @@ backend/
 
 ### Incidents
 
-- `POST /incidents/search` — Search incidents; optional `filters` (`searchQuery`, `priorities`, `parentIds`) and `sortBy` (`field`: `createdOn`/`updatedOn`/`openedOn`, `order`) (ServiceNow data source only)
+- `POST /incidents/search` — Search incidents; optional `filters` (`searchQuery`, `priorities`, `parentIds`, `slaViolated`, `startCreatedDate`/`endCreatedDate`, `productNames`) and `sortBy` (`field`: `createdOn`/`updatedOn`/`openedOn`, `order`) (ServiceNow data source only). The created-date bounds are inclusive UTC `YYYY-MM-DDTHH:MM:SSZ` timestamps; `productNames` is a union match on the service the incident relates to, and only about 43% of incidents have one set, so a product filter misses roughly half of them.
 - `POST /incidents` — Create an incident (`callerId`, `category`, `serviceId`, `impact`, `urgency`, `subject` required; `subcategory`, `serviceOfferingId`, `configurationItemId`, `contactType`, `assignmentGroupId`, `assignedEngineerId`, `watchList`, `additionalComments`, `workNotes`, `parentId`, `parentIncidentId`, `changeRequestId`, `problemId`, `causedById` optional) (ServiceNow data source only)
 - `GET /incidents/{id}` — Get full incident detail by ID (ServiceNow data source only)
 - `PATCH /incidents/{id}` — Partially update an incident; all fields optional but at least one required (`subject`, `priority`, `state`, `category`/`subcategory`, `contactType`, `impact`/`urgency`, `resolutionCode`/`resolutionNotes`/`incidentReport`, `parentId`/`parentIncidentId`/`assignmentGroupId`/`assignedEngineerId`/`serviceId`/`serviceOfferingId`/`configurationItemId`/`changeRequestId`/`problemId`/`causedById`/`resolvedById`, `additionalComments`, `workNotes`, `watchList`); set a reference field to `null` to clear it (ServiceNow data source only)
@@ -374,7 +374,7 @@ curl -X POST http://localhost:8080/updates/levels/search \
 curl -X POST http://localhost:8080/incidents/search \
   -H "x-jwt-assertion: $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"filters":{"searchQuery":"outage","priorities":["CRITICAL"]},"pagination":{"limit":10,"offset":0}}'
+  -d '{"filters":{"searchQuery":"outage","priorities":["CRITICAL"],"slaViolated":true,"startCreatedDate":"2026-05-01T00:00:00Z","endCreatedDate":"2026-05-31T23:59:59Z","productNames":["Choreo"]},"pagination":{"limit":10,"offset":0}}'
 
 # Create an incident
 curl -X POST http://localhost:8080/incidents \

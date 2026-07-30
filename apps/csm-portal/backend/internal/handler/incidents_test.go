@@ -95,6 +95,56 @@ func TestSearchIncidents(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
+	t.Run("rejects malformed startCreatedDate", func(t *testing.T) {
+		h := NewIncidentHandler(&mockEntityIncidentClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/incidents/search", strings.NewReader(`{"filters":{"startCreatedDate":"01-05-2026"}}`)))
+		w := httptest.NewRecorder()
+		h.SearchIncidents(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects created date range whose end precedes its start", func(t *testing.T) {
+		h := NewIncidentHandler(&mockEntityIncidentClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/incidents/search", strings.NewReader(`{"filters":{"startCreatedDate":"2026-05-31T00:00:00Z","endCreatedDate":"2026-05-01T00:00:00Z"}}`)))
+		w := httptest.NewRecorder()
+		h.SearchIncidents(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects blank productNames entry", func(t *testing.T) {
+		h := NewIncidentHandler(&mockEntityIncidentClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/incidents/search", strings.NewReader(`{"filters":{"productNames":["Choreo","  "]}}`)))
+		w := httptest.NewRecorder()
+		h.SearchIncidents(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("forwards the SLA, created-date-range and product filters unchanged", func(t *testing.T) {
+		const reqPayload = `{"filters":{"slaViolated":true,"startCreatedDate":"2026-05-01T00:00:00Z","endCreatedDate":"2026-05-31T23:59:59Z","productNames":["Choreo","Asgardeo"]},"pagination":{"limit":10,"offset":0}}`
+		var capturedBody []byte
+		client := &mockEntityIncidentClient{
+			searchIncidentsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				capturedBody = body
+				return []byte(`{"incidents":[],"total":0}`), nil
+			},
+		}
+		h := NewIncidentHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/incidents/search", strings.NewReader(reqPayload)))
+		w := httptest.NewRecorder()
+		h.SearchIncidents(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		if string(capturedBody) != reqPayload {
+			t.Errorf("upstream received body %q, want %q", capturedBody, reqPayload)
+		}
+	})
+
 	t.Run("forwards body to upstream and returns 200 with response", func(t *testing.T) {
 		const reqPayload = `{"filters":{"searchQuery":"outage","priorities":["CRITICAL"]},"pagination":{"limit":10,"offset":0}}`
 		var capturedBody []byte

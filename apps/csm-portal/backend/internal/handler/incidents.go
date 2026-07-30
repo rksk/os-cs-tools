@@ -23,6 +23,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
@@ -44,6 +46,24 @@ type searchIncidentsRequest struct {
 	Filters struct {
 		Priorities []string `json:"priorities"`
 		ParentIDs  []string `json:"parentIds"`
+		// SLAViolated restricts results to incidents with at least one breached SLA
+		// record. False and omitted both mean "no SLA restriction" — false is not
+		// "SLA met".
+		SLAViolated *bool `json:"slaViolated"`
+		// StartCreatedDate and EndCreatedDate are inclusive UTC bounds on the creation
+		// timestamp. Decoding into time.Time is the validation: a bound that is not an
+		// RFC3339 timestamp fails the unmarshal and the request is rejected here rather
+		// than being silently reinterpreted downstream.
+		StartCreatedDate *time.Time `json:"startCreatedDate"`
+		EndCreatedDate   *time.Time `json:"endCreatedDate"`
+		// ProductNames filters by the name of the service the incident relates to,
+		// matched as a union. Note for anyone reading a support ticket about this
+		// filter: incidents carry no product dimension of their own, so the backing
+		// data source resolves it against the related service's name, which is only
+		// about 43% populated and whose values mix real products with customer names
+		// and service categories. Roughly half of all incidents are therefore invisible
+		// to a product filter. Known trade-off, not a defect.
+		ProductNames []string `json:"productNames"`
 	} `json:"filters"`
 	SortBy struct {
 		Field string `json:"field"`
@@ -303,6 +323,15 @@ func validateSearchIncidentsBody(body []byte) bool {
 		if !uuidRe.MatchString(id) {
 			return false
 		}
+	}
+	for _, name := range req.Filters.ProductNames {
+		if strings.TrimSpace(name) == "" {
+			return false
+		}
+	}
+	if req.Filters.StartCreatedDate != nil && req.Filters.EndCreatedDate != nil &&
+		req.Filters.EndCreatedDate.Before(*req.Filters.StartCreatedDate) {
+		return false
 	}
 	if req.SortBy.Field != "" && !validIncidentSortFields[req.SortBy.Field] {
 		return false
