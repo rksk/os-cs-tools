@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -1351,14 +1352,24 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 
 	// Close-gate: reject closing a case that still has an open, customer-visible task.
 	// This is the authoritative server-side check (item 1's close-gating requirement) --
-	// it only needs the existing read path (task search + task detail), so it is fully
-	// wired even though task writes themselves are still Ballerina-blocked.
+	// it only needs the existing read path (task search + task detail).
+	//
+	// hasOpenVisibleTasks's own pagination limit previously violated the
+	// entity-service's shared Pagination.limit constraint (max 50), which made
+	// every call to POST /cases/{id}/tasks/search fail at bind time with
+	// "Failed to bind request payload to the expected schema" -- that error then
+	// propagated up as if the close itself had failed, for every case, since
+	// this check runs unconditionally. Fixed at the source (see
+	// hasOpenVisibleTasks). This check still fails open (log and treat as "not
+	// blocked") on any other unexpected error from that dependency, since it's a
+	// safety nice-to-have and not the core close operation -- a future outage in
+	// this specific read path shouldn't block every case close.
 	if payload.StateKey != nil && *payload.StateKey == snStateIDMap[domain.CaseStateClosed] {
 		blocked, err := s.hasOpenVisibleTasks(ctx, uuidToSysid(req.ID), token)
 		if err != nil {
-			return domain.UpdateCaseResponse{}, err
-		}
-		if blocked {
+			slog.WarnContext(ctx, "sn update case: close-gate task check failed, allowing close to proceed",
+				"caseID", req.ID, "err", err)
+		} else if blocked {
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "case cannot be closed while it has an open task visible to the customer"}
 		}
 	}
@@ -2108,11 +2119,13 @@ func snWorkStateLabelToEnum(ws *snCaseLabel) *domain.CaseWorkState {
 // sn_task_service.go) does not carry visibleToCustomer -- only the single-task
 // detail response (snTaskDetail) does. So this walks the non-closed tasks
 // returned by the search and fetches each one's detail to check visibility.
-// Case task counts are small in practice, so a single page (limit 100) is
-// fetched rather than paginating fully; if that assumption stops holding, this
-// should switch to paging until exhausted.
+// Case task counts are small in practice, so a single page is fetched rather
+// than paginating fully; if that assumption stops holding, this should switch
+// to paging until exhausted. The limit is capped at 50, the entity-service's
+// shared Pagination.limit maxValue -- a higher limit fails at bind time on
+// every call, not just when a case happens to have >50 tasks.
 func (s *snCaseService) hasOpenVisibleTasks(ctx context.Context, caseSysid, token string) (bool, error) {
-	payload := snCaseTasksSearchPayload{Pagination: snProjectPagination{Limit: 100, Offset: 0}}
+	payload := snCaseTasksSearchPayload{Pagination: snProjectPagination{Limit: 50, Offset: 0}}
 
 	raw, err := s.client.Post(ctx, "/cases/"+caseSysid+"/tasks/search", token, payload)
 	if err != nil {

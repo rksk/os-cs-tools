@@ -608,6 +608,68 @@ func TestSNCaseService_UpdateCase_CloseGate_AllowsWhenNoVisibleOpenTask(t *testi
 	}
 }
 
+func TestSNCaseService_UpdateCase_CloseGate_TaskSearchLimitWithinConstraint(t *testing.T) {
+	// The entity-service's shared Pagination.limit is capped at 50 (maxValue
+	// constraint); a request over that fails at bind time regardless of the
+	// case's actual task count. Guards against reintroducing the limit:100
+	// that caused every case close to fail (root cause).
+	var gotLimit float64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid+"/tasks/search", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Pagination struct {
+				Limit float64 `json:"limit"`
+			} `json:"pagination"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		gotLimit = body.Pagination.Limit
+		_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []map[string]any{}, "total": 0, "offset": 0, "limit": int(gotLimit)})
+	})
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": "ok", "case": map[string]any{"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00"}})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	closed := domain.CaseStateClosed
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{ID: testCaseUUID, State: &closed}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if gotLimit <= 0 || gotLimit > 50 {
+		t.Fatalf("expected tasks/search pagination.limit in (0, 50], got %v", gotLimit)
+	}
+}
+
+func TestSNCaseService_UpdateCase_CloseGate_FailsOpenWhenTaskCheckErrors(t *testing.T) {
+	patchCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid+"/tasks/search", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": "Failed to bind request payload to the expected schema."})
+	})
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		patchCalled = true
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": "ok", "case": map[string]any{"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00"}})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	closed := domain.CaseStateClosed
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{ID: testCaseUUID, State: &closed})
+	if err != nil {
+		t.Fatalf("expected close to fail open when the task check itself errors, got %v", err)
+	}
+	if !patchCalled {
+		t.Fatalf("expected PATCH /cases/{id} to be called when the close-gate task check errors (fail open)")
+	}
+}
+
 // --- Case tags ---
 
 func TestSNCaseService_AddCaseTag_Validation(t *testing.T) {
