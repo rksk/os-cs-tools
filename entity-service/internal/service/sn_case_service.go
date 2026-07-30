@@ -1349,20 +1349,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		payload.PublicTicket = req.PublicTicket
 	}
 
-	// Close-gate: reject closing a case that still has an open, customer-visible task.
-	// This is the authoritative server-side check (item 1's close-gating requirement) --
-	// it only needs the existing read path (task search + task detail), so it is fully
-	// wired even though task writes themselves are still Ballerina-blocked.
-	if payload.StateKey != nil && *payload.StateKey == snStateIDMap[domain.CaseStateClosed] {
-		blocked, err := s.hasOpenVisibleTasks(ctx, uuidToSysid(req.ID), token)
-		if err != nil {
-			return domain.UpdateCaseResponse{}, err
-		}
-		if blocked {
-			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "case cannot be closed while it has an open task visible to the customer"}
-		}
-	}
-
 	raw, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(req.ID), token, payload)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, err
@@ -2098,51 +2084,6 @@ func snWorkStateLabelToEnum(ws *snCaseLabel) *domain.CaseWorkState {
 	default:
 		return nil
 	}
-}
-
-// hasOpenVisibleTasks reports whether the case identified by caseSysid has any
-// open task that is visible to the customer. Used by the close-gate in
-// UpdateCase (item 1's authoritative "can this case close?" check).
-//
-// SN's case-scoped task listing (snTask/snCaseTasksResponse, see
-// sn_task_service.go) does not carry visibleToCustomer -- only the single-task
-// detail response (snTaskDetail) does. So this walks the non-closed tasks
-// returned by the search and fetches each one's detail to check visibility.
-// Case task counts are small in practice, so a single page (limit 100) is
-// fetched rather than paginating fully; if that assumption stops holding, this
-// should switch to paging until exhausted.
-func (s *snCaseService) hasOpenVisibleTasks(ctx context.Context, caseSysid, token string) (bool, error) {
-	payload := snCaseTasksSearchPayload{Pagination: snProjectPagination{Limit: 100, Offset: 0}}
-
-	raw, err := s.client.Post(ctx, "/cases/"+caseSysid+"/tasks/search", token, payload)
-	if err != nil {
-		return false, err
-	}
-
-	var tasksResp snCaseTasksResponse
-	if err := json.Unmarshal(raw, &tasksResp); err != nil {
-		return false, fmt.Errorf("sn update case: parse case tasks response: %w", err)
-	}
-
-	for _, t := range tasksResp.Tasks {
-		if t.State != nil && *t.State == "CLOSED" {
-			continue
-		}
-
-		detailRaw, err := s.client.Get(ctx, "/tasks/"+t.ID, token)
-		if err != nil {
-			return false, err
-		}
-		var detail snTaskDetail
-		if err := json.Unmarshal(detailRaw, &detail); err != nil {
-			return false, fmt.Errorf("sn update case: parse task detail response: %w", err)
-		}
-		if detail.VisibleToCustomer {
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 // snAddTagPayload is the Choreo POST /cases/{id}/tags request body.
