@@ -2767,6 +2767,25 @@ type SearchIncidentsFilters struct {
 	SearchQuery string             `json:"searchQuery"`
 	Priorities  []IncidentPriority `json:"priorities"`
 	ParentIDs   []string           `json:"parentIds"`
+	// SLAViolated, when true, restricts results to incidents with at least one
+	// breached SLA record. When false or omitted no SLA restriction is applied
+	// (false is not "SLA met").
+	SLAViolated *bool `json:"slaViolated"`
+	// StartCreatedDate and EndCreatedDate bound the creation timestamp. Both bounds
+	// are inclusive and interpreted in UTC. Named to match the case search filters so
+	// both list pages agree on what a created-date range means.
+	StartCreatedDate *time.Time `json:"startCreatedDate"`
+	EndCreatedDate   *time.Time `json:"endCreatedDate"`
+	// ProductNames filters by the name of the service the incident relates to, matched
+	// as a union: an incident matching any one of the names is returned.
+	//
+	// Caveat worth knowing before trusting this filter: incidents carry no product
+	// dimension of their own, so the backing data source resolves this against the
+	// related service's name. Only about 43% of incidents have one set, and its
+	// distinct values mix real products with customer names and service categories.
+	// Filtering by product therefore misses roughly half of all incidents. This is an
+	// accepted trade-off, not a defect.
+	ProductNames []string `json:"productNames"`
 }
 
 // SearchIncidentsRequest is the input for POST /incidents/search.

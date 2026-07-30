@@ -20,12 +20,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
+
+// snIncidentDateTimeLayout is the wire format the integration service documents for
+// the created-date filter bounds: YYYY-MM-DDTHH:MM:SSZ, UTC, both bounds inclusive.
+const snIncidentDateTimeLayout = "2006-01-02T15:04:05Z"
+
+// formatSNIncidentDateTime renders an optional bound in snIncidentDateTimeLayout,
+// returning "" for an unset bound so the filter key is omitted entirely.
+func formatSNIncidentDateTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(snIncidentDateTimeLayout)
+}
 
 // snIncidentsResponse mirrors the Choreo POST /incidents/search response.
 type snIncidentsResponse struct {
@@ -85,6 +99,18 @@ type snIncidentFilters struct {
 	SearchQuery  string   `json:"searchQuery,omitempty"`
 	PriorityKeys []int    `json:"priorityKeys,omitempty"` // SN expects int keys
 	ParentIDs    []string `json:"parentIds,omitempty"`
+	// SLAViolated is only sent when set. SN derives it from the related task_sla
+	// records; sending false applies no predicate at all, so an unset filter and an
+	// explicit false behave identically.
+	SLAViolated *bool `json:"slaViolated,omitempty"`
+	// StartCreatedDate/EndCreatedDate are inclusive UTC bounds in SN's
+	// YYYY-MM-DDTHH:MM:SSZ wire format.
+	StartCreatedDate string `json:"startCreatedDate,omitempty"`
+	EndCreatedDate   string `json:"endCreatedDate,omitempty"`
+	// ProductNames is matched against the incident's business_service name — the
+	// incident table has no product column. See domain.SearchIncidentsFilters.ProductNames
+	// for the coverage caveat.
+	ProductNames []string `json:"productNames,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -188,6 +214,10 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	if req.Filters.EndCreatedDate != nil && req.Filters.StartCreatedDate != nil &&
+		req.Filters.EndCreatedDate.Before(*req.Filters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "endCreatedDate must not be before startCreatedDate"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -207,9 +237,13 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 
 	payload := snIncidentSearchPayload{
 		Filters: snIncidentFilters{
-			SearchQuery:  req.Filters.SearchQuery,
-			PriorityKeys: priorityKeys,
-			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
+			SearchQuery:      req.Filters.SearchQuery,
+			PriorityKeys:     priorityKeys,
+			ParentIDs:        uuidsToSysids(req.Filters.ParentIDs),
+			SLAViolated:      req.Filters.SLAViolated,
+			StartCreatedDate: formatSNIncidentDateTime(req.Filters.StartCreatedDate),
+			EndCreatedDate:   formatSNIncidentDateTime(req.Filters.EndCreatedDate),
+			ProductNames:     req.Filters.ProductNames,
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

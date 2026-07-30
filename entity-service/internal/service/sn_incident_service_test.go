@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -164,6 +165,104 @@ func TestSNIncidentService_UpdateIncident_WatchList_InvalidUUID(t *testing.T) {
 	_, err := svc.UpdateIncident(contextWithUserIDToken("token"), domain.UpdateIncidentRequest{
 		ID:        testIncidentUUID,
 		WatchList: &watchList,
+	})
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_FiltersForwarded verifies that the
+// SLA-violated, created-date-range and product filters reach the outgoing search
+// payload in the wire shape the integration service expects. The date bounds in
+// particular must be YYYY-MM-DDTHH:MM:SSZ and both inclusive; a wrongly formatted
+// bound is silently accepted upstream, so only this assertion catches it.
+func TestSNIncidentService_SearchIncidents_FiltersForwarded(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"incidents": [], "totalRecords": 0, "offset": 0, "limit": 25}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowIncidentService(client)
+
+	slaViolated := true
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 31, 23, 59, 59, 0, time.UTC)
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			SLAViolated:      &slaViolated,
+			StartCreatedDate: &start,
+			EndCreatedDate:   &end,
+			ProductNames:     []string{"Choreo", "Asgardeo"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	filters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+	if filters["slaViolated"] != true {
+		t.Fatalf("slaViolated: got %v, want true", filters["slaViolated"])
+	}
+	if filters["startCreatedDate"] != "2026-05-01T00:00:00Z" {
+		t.Fatalf("startCreatedDate: got %v, want 2026-05-01T00:00:00Z", filters["startCreatedDate"])
+	}
+	if filters["endCreatedDate"] != "2026-05-31T23:59:59Z" {
+		t.Fatalf("endCreatedDate: got %v, want 2026-05-31T23:59:59Z", filters["endCreatedDate"])
+	}
+	products, ok := filters["productNames"].([]any)
+	if !ok || len(products) != 2 || products[0] != "Choreo" || products[1] != "Asgardeo" {
+		t.Fatalf("productNames: got %+v, want [Choreo Asgardeo]", filters["productNames"])
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_UnsetFiltersOmitted verifies that unset
+// filters are omitted from the payload rather than sent as zero values, so an
+// untouched filter bar cannot accidentally constrain the result set.
+func TestSNIncidentService_SearchIncidents_UnsetFiltersOmitted(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"incidents": [], "totalRecords": 0, "offset": 0, "limit": 25}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowIncidentService(client)
+
+	if _, err := svc.SearchIncidents(contextWithUserIDToken("token"), domain.SearchIncidentsRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	filters, _ := gotBody["filters"].(map[string]any)
+	for _, key := range []string{"slaViolated", "startCreatedDate", "endCreatedDate", "productNames"} {
+		if _, present := filters[key]; present {
+			t.Fatalf("%s must be omitted when unset, got %v", key, filters[key])
+		}
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_InvertedDateRange verifies an inverted
+// created-date range is rejected before any upstream call, matching case search.
+func TestSNIncidentService_SearchIncidents_InvertedDateRange(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil)
+
+	start := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{StartCreatedDate: &start, EndCreatedDate: &end},
 	})
 	if _, ok := err.(*apierror.ValidationError); !ok {
 		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
