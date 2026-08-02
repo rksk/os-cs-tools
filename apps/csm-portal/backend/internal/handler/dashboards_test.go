@@ -31,7 +31,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
 )
 
-// testDashboardsConfigJSON is the pilot's 5-dashboard registry, identical to
+// testDashboardsConfigJSON is the pilot's 6-dashboard registry, identical to
 // the DASHBOARDS_CONFIG example documented in .env.example. dashboard.Dashboards
 // is populated from DASHBOARDS_CONFIG only in cmd/server/main.go, which tests
 // never run, so TestMain below seeds it directly via the same parse function
@@ -67,6 +67,21 @@ const testDashboardsConfigJSON = `[
       {"label":"Mine","filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]}]}}
     ]},
     {"id":"incident_wow","displayName":"Incident WOW","section":"SLA Violation","resourceType":"incident","shape":"count","gridWidth":6,"filters":{}}
+  ]},
+  {"id":"abt","displayName":"ABT Dashboard","targetTeam":"cs_engineers","isTeamBased":true,"widgets":[
+    {"id":"abt_my_open_incident","displayName":"Open Incident","section":"My Work","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"tag","op":"in","values":["s_dip"]},{"field":"state","op":"in","values":["open","work_in_progress","waiting_on_wso2","reopened"]}]}},
+    {"id":"abt_my_open_query","displayName":"Open Query","section":"My Work","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["waiting_on_wso2"]},{"field":"tag","op":"notIn","values":["s_dip"]}]}},
+    {"id":"abt_my_patches","displayName":"My Patches","section":"My Work","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"tag","op":"in","values":["patch"]},{"field":"state","op":"in","values":["open","work_in_progress","waiting_on_wso2","reopened","awaiting_info"]}]}},
+    {"id":"abt_my_pending_closure","displayName":"Pending Closure","section":"My Work","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"resolutionNotes","op":"isEmpty"},{"field":"state","op":"in","values":["solution_proposed"]}]}},
+    {"id":"abt_my_reminders","displayName":"My Reminders","section":"My Work","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["awaiting_info","solution_proposed"]}]}},
+    {"id":"abt_my_discussions","displayName":"My Discussions","section":"My Work","resourceType":"case","shape":"list","gridWidth":3,"listLimit":5,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"tag","op":"in","values":["s_dip"]},{"field":"state","op":"in","values":["open","work_in_progress","waiting_on_wso2","reopened","awaiting_info"]}]}},
+    {"id":"abt_on_going_cases","displayName":"On Going Cases","section":"My Work","resourceType":"case","shape":"list","gridWidth":6,"listLimit":5,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["open","work_in_progress","waiting_on_wso2","reopened","awaiting_info"]},{"field":"tag","op":"notIn","values":["s_dip"]},{"field":"projectOnboardingStatus","op":"in","values":["Completed"]}]}},
+    {"id":"abt_overall_open_incident","displayName":"Open Incident","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"tag","op":"in","values":["s_dip"]},{"field":"state","op":"in","values":["work_in_progress","open","waiting_on_wso2","reopened"]}]}},
+    {"id":"abt_overall_open_query","displayName":"Open Query","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"tag","op":"notIn","values":["s_dip"]},{"field":"state","op":"in","values":["open","waiting_on_wso2","reopened"]}]}},
+    {"id":"abt_overall_unassigned","displayName":"Unassigned Cases","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"assignedUserId","op":"isEmpty"},{"field":"state","op":"in","values":["open","work_in_progress","awaiting_info","waiting_on_wso2","reopened"]}]}},
+    {"id":"abt_team_wow_p1","displayName":"WOW P1","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"severity","op":"in","values":["catastrophic"]},{"field":"state","op":"in","values":["waiting_on_wso2"]},{"field":"tag","op":"notIn","values":["s_dip"]}]}},
+    {"id":"abt_team_discussions_ongoing","displayName":"Discussions on Going","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"state","op":"in","values":["waiting_on_wso2","open","reopened"]},{"field":"tag","op":"in","values":["s_dip"]}]}},
+    {"id":"abt_iam_open_cases","displayName":"IAM Open Cases","section":"Overall","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"tag","op":"in","values":["iam"]},{"field":"state","op":"in","values":["open","work_in_progress","awaiting_info"]}]}}
   ]}
 ]`
 
@@ -99,8 +114,8 @@ func filterValuesByField(filters map[string]any, field string) ([]any, bool) {
 // themselves via the same ParseDashboardsConfig function.
 func TestMain(m *testing.M) {
 	dashboard.Dashboards = dashboard.ParseDashboardsConfig(testDashboardsConfigJSON)
-	if len(dashboard.Dashboards) != 5 {
-		panic(fmt.Sprintf("TestMain: seeding dashboard.Dashboards failed, got %d dashboards, want 5", len(dashboard.Dashboards)))
+	if len(dashboard.Dashboards) != 6 {
+		panic(fmt.Sprintf("TestMain: seeding dashboard.Dashboards failed, got %d dashboards, want 6", len(dashboard.Dashboards)))
 	}
 	os.Exit(m.Run())
 }
@@ -225,17 +240,18 @@ func TestGetDashboards(t *testing.T) {
 			}
 		}
 
+		wantTeamBased := map[string]bool{"team_performance": true, "abt": true}
 		teamBasedCount := 0
 		for _, res := range results {
 			if res.IsTeamBased {
 				teamBasedCount++
-				if res.ID != "team_performance" {
-					t.Errorf("unexpected team-based dashboard %q, want team_performance", res.ID)
+				if !wantTeamBased[res.ID] {
+					t.Errorf("unexpected team-based dashboard %q, want one of team_performance/abt", res.ID)
 				}
 			}
 		}
-		if teamBasedCount != 1 {
-			t.Errorf("teamBasedCount = %d, want exactly 1 (team_performance)", teamBasedCount)
+		if teamBasedCount != len(wantTeamBased) {
+			t.Errorf("teamBasedCount = %d, want exactly %d (team_performance, abt)", teamBasedCount, len(wantTeamBased))
 		}
 
 		defaultCount := 0
@@ -256,8 +272,8 @@ func TestGetDashboards(t *testing.T) {
 // TestAllDashboardsHaveWidgets is the "no more mock/empty placeholders"
 // guarantee: every dashboard in the registry now has real widgets.
 func TestAllDashboardsHaveWidgets(t *testing.T) {
-	if len(dashboard.Dashboards) != 5 {
-		t.Fatalf("len(dashboard.Dashboards) = %d, want 5", len(dashboard.Dashboards))
+	if len(dashboard.Dashboards) != 6 {
+		t.Fatalf("len(dashboard.Dashboards) = %d, want 6", len(dashboard.Dashboards))
 	}
 	for _, d := range dashboard.Dashboards {
 		if len(d.Widgets) == 0 {
