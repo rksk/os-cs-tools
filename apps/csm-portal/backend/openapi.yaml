@@ -5231,6 +5231,43 @@ components:
           items:
             type: string
           description: Filter to cases carrying any of these free-text tag labels (optional)
+        excludeTags:
+          type: array
+          items:
+            type: string
+          description: Filter to cases NOT carrying any of these free-text tag labels (optional)
+        projectOnboardingStatuses:
+          type: array
+          items:
+            type: string
+          description: >
+            Filter to cases whose parent project's onboarding status is one of these values
+            (optional). Free-text ServiceNow choice labels (e.g. "Completed", "Not-Applicable")
+            rather than a closed enum.
+        projectTypeIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Filter to cases whose parent project's type is one of these project-type UUIDs (optional)
+        integrationCsTeamIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: >
+            Filter to cases whose parent account's integration CS team is one of these team
+            UUIDs (optional)
+        unassigned:
+          type: boolean
+          description: >
+            When true, filter to cases with no assigned engineer (optional). false and omitted
+            are treated identically.
+        resolutionNotesEmpty:
+          type: boolean
+          description: >
+            When true, filter to cases with empty resolution notes (optional). false and
+            omitted are treated identically.
 
     CaseSearchPayload:
       type: object
