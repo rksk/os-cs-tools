@@ -127,7 +127,7 @@ func TestGetConversationMessages(t *testing.T) {
 	})
 
 	t.Run("maps upstream errors", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve conversation messages.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve conversation messages.") {
 			t.Run(tc.name, func(t *testing.T) {
 				client := &mockEntityConversationClient{
 					searchCommentsFn: func(_ context.Context, _ []byte) ([]byte, error) {
@@ -243,7 +243,7 @@ func TestSearchConversations(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search conversations.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search conversations.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityConversationClient{

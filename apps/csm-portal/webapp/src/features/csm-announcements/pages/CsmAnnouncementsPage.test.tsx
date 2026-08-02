@@ -92,7 +92,7 @@ describe("CsmAnnouncementsPage — list states", () => {
   it("surfaces the error message on failure", () => {
     mockResult({ isError: true, error: new Error("boom") });
     render(<CsmAnnouncementsPage />);
-    expect(screen.getByText(/failed to load announcements: boom/i)).toBeInTheDocument();
+    expect(screen.getByText("boom")).toBeInTheDocument();
   });
 });
 

@@ -83,7 +83,7 @@ func TestPostDeployment(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create deployment.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create deployment.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityDeploymentClient{
@@ -160,7 +160,7 @@ func TestSearchDeployments(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search deployments.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search deployments.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityDeploymentClient{
@@ -368,7 +368,7 @@ func TestSearchDeployedProducts(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search deployed products.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search deployed products.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityDeploymentClient{
@@ -470,7 +470,7 @@ func TestPostDeployedProduct(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create deployed product.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create deployed product.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityDeploymentClient{

@@ -85,7 +85,7 @@ func (h *ChangeRequestHandler) CreateChangeRequest(w http.ResponseWriter, r *htt
 	result, err := h.entity.CreateChangeRequest(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateChangeRequest failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create change request.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create change request.")
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *ChangeRequestHandler) GetChangeRequest(w http.ResponseWriter, r *http.R
 	result, err := h.entity.GetChangeRequest(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetChangeRequest failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve change request.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve change request.")
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *ChangeRequestHandler) GetChangeRequestApprovals(w http.ResponseWriter, 
 	result, err := h.entity.GetChangeRequestApprovals(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetChangeRequestApprovals failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve change request approvals.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve change request approvals.")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (h *ChangeRequestHandler) CreateChangeRequestComment(w http.ResponseWriter,
 
 	if _, err := h.entity.GetChangeRequest(r.Context(), id); err != nil {
 		slog.ErrorContext(r.Context(), "entity GetChangeRequest failed during comment guard", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to create change request comment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create change request comment.")
 		return
 	}
 
@@ -229,7 +229,7 @@ func (h *ChangeRequestHandler) CreateChangeRequestComment(w http.ResponseWriter,
 	result, err := h.entity.CreateComment(r.Context(), newBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateComment failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to create change request comment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create change request comment.")
 		return
 	}
 
@@ -278,7 +278,7 @@ func (h *ChangeRequestHandler) SearchChangeRequestComments(w http.ResponseWriter
 	result, err := h.entity.SearchComments(r.Context(), newBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to search change request comments.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search change request comments.")
 		return
 	}
 
@@ -328,7 +328,7 @@ func (h *ChangeRequestHandler) DecideChangeRequestApproval(w http.ResponseWriter
 	result, err := h.entity.DecideChangeRequestApproval(r.Context(), id, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity DecideChangeRequestApproval failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to submit change request approval decision.")
+		mapUpstreamErrorGeneric(w, err, "Failed to submit change request approval decision.")
 		return
 	}
 
@@ -363,7 +363,7 @@ func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *ht
 	result, err := h.entity.SearchChangeRequests(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchChangeRequests failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search change requests.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search change requests.")
 		return
 	}
 

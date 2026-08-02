@@ -17,19 +17,10 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useBackendApi } from "@api/backend/client";
 import {
-  normalizeUser,
-  type NormalizedUser,
-  type SnUser,
+  normalizeUserDetail,
+  type NormalizedUserDetail,
+  type SnUserDetail,
 } from "@features/csm-users/types/csmUsers";
-
-/**
- * `GET /users/{id}` response. The endpoint is ServiceNow-data-source only, so
- * the row is always the `SnUser` shape; `groups`/`teams`/`projectAccess` are
- * additive detail the profile page doesn't render yet (see
- * `UserProfilePage`'s "not available yet" placeholders — that wiring is a
- * separate, larger piece of work).
- */
-type SnUserDetailResponse = SnUser;
 
 /**
  * Look up a single user by id, for the person-profile page. Returns `null`
@@ -38,17 +29,17 @@ type SnUserDetailResponse = SnUser;
  */
 export function useGetUserById(
   id: string | undefined,
-): UseQueryResult<NormalizedUser | null, Error> {
+): UseQueryResult<NormalizedUserDetail | null, Error> {
   const api = useBackendApi();
 
-  return useQuery<NormalizedUser | null, Error>({
+  return useQuery<NormalizedUserDetail | null, Error>({
     queryKey: ["csm-user-by-id", id ?? ""],
-    queryFn: async (): Promise<NormalizedUser | null> => {
+    queryFn: async (): Promise<NormalizedUserDetail | null> => {
       if (!id) return null;
-      const user = await api.get<SnUserDetailResponse>(
+      const user = await api.get<SnUserDetail>(
         `/users/${encodeURIComponent(id)}`,
       );
-      return user ? normalizeUser(user) : null;
+      return user ? normalizeUserDetail(user) : null;
     },
     enabled: !!id,
     staleTime: 30_000,

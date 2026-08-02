@@ -77,7 +77,7 @@ func TestSearchConfigurationItems(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search configuration items.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search configuration items.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityConfigurationItemClient{

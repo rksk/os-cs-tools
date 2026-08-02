@@ -26,7 +26,7 @@ import (
 
 // teamService serves the team registry.
 //
-// The registry itself is owned upstream and fetched at runtime -- team names are
+// The registry itself is deployment configuration installed at startup -- team names are
 // organisation vocabulary and are deliberately not hardcoded in this repo. A team's id is
 // its registry key rather than the backing group's id, because those ids differ between
 // environments while the key does not.

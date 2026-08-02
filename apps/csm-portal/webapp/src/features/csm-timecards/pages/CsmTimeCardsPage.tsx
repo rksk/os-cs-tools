@@ -715,7 +715,7 @@ function FilterBar({
    * there — hide it instead of showing a filter that silently does nothing. */
   hideStateFilter?: boolean;
 }): JSX.Element {
-  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(true);
 
   // filterState counts here even when this tab hides its own State control
   // (hideStateFilter) — it's shared across tabs, so a value set elsewhere

@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
+
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
@@ -29,17 +31,23 @@ import (
 // ABT-team-resolution tests.
 var testAbtUserSysid = sysid32('9')
 
-// abtTeamsFixtureJSON is a representative (not real) flat ABT registry: a
-// CRE team (Castor), a flat IAM-US team (no sub-team nesting), an SRE team
-// (Apollo SRE Group), and an unclassified team with no "family" field.
-const abtTeamsFixtureJSON = `{
-	"teams": [
-		{"teamKey": "castor", "displayName": "Castor", "family": "CRE"},
-		{"teamKey": "iam_us", "displayName": "IAM-US", "family": "CRE"},
-		{"teamKey": "apollo", "displayName": "Apollo SRE Group", "family": "SRE"},
-		{"teamKey": "customer_onboarding", "displayName": "Customer Onboarding"}
-	]
-}`
+// abtTeamRegistryFixture is a representative registry in its configured wire
+// form: a CRE team, a hyphenated flat team (no sub-team nesting), an SRE team,
+// and an unclassified team with no family field. Every name is an invented
+// placeholder -- real team names never appear in this repo.
+const abtTeamRegistryFixture = "alpha|Alpha Team|CRE,delta|Delta-Two|CRE,beta|Beta SRE Group|SRE,gamma|Gamma Team"
+
+// withTeamRegistry installs a parsed team registry for the duration of one
+// test and clears it afterwards, so no test inherits another's registry.
+func withTeamRegistry(t *testing.T, raw string) {
+	t.Helper()
+	teams, err := domain.ParseAbtTeamRegistry(raw)
+	if err != nil {
+		t.Fatalf("ParseAbtTeamRegistry(%q): %v", raw, err)
+	}
+	domain.SetAbtTeams(teams)
+	t.Cleanup(func() { domain.SetAbtTeams(nil) })
+}
 
 // snUserMeJSON is a minimal ServiceNow GET /users/me payload for the given
 // caller sys_id.
@@ -63,6 +71,8 @@ func membershipsJSON(userID, groupName string) string {
 }
 
 func TestSNUserService_GetMe_TeamMatch(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	var capturedBody []byte
 
 	mux := http.NewServeMux()
@@ -70,14 +80,10 @@ func TestSNUserService_GetMe_TeamMatch(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
 	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Castor")))
+		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Alpha Team")))
 	})
 
 	client := newTestSNClient(t, mux)
@@ -88,10 +94,10 @@ func TestSNUserService_GetMe_TeamMatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.Team == nil {
-		t.Fatalf("Team = nil, want Castor")
+		t.Fatalf("Team = nil, want Alpha Team")
 	}
-	if got.Team.TeamKey != "castor" || got.Team.TeamName != "Castor" || got.Team.Family != "cre" {
-		t.Fatalf("Team = %+v, want {castor Castor cre}", got.Team)
+	if got.Team.TeamKey != "alpha" || got.Team.TeamName != "Alpha Team" || got.Team.Family != "cre" {
+		t.Fatalf("Team = %+v, want {alpha Alpha Team cre}", got.Team)
 	}
 
 	// The request body must send groupNames, never groupIds.
@@ -113,34 +119,32 @@ func TestSNUserService_GetMe_TeamMatch(t *testing.T) {
 	}
 	found := false
 	for _, n := range reqBody.Filters.GroupNames {
-		if n == "Castor" {
+		if n == "Alpha Team" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("groupNames = %v, want it to include \"Castor\"", reqBody.Filters.GroupNames)
+		t.Fatalf("groupNames = %v, want it to include \"Alpha Team\"", reqBody.Filters.GroupNames)
 	}
 	if reqBody.Filters.UserID != testAbtUserSysid {
 		t.Fatalf("userId = %q, want %q", reqBody.Filters.UserID, testAbtUserSysid)
 	}
 }
 
-// TestSNUserService_GetMe_FlatTeamMatch_IAMUS verifies IAM-US resolves as its
-// own flat team -- the old sub-team nesting is gone, so this is just a
-// normal name match like any other team.
-func TestSNUserService_GetMe_FlatTeamMatch_IAMUS(t *testing.T) {
+// TestSNUserService_GetMe_FlatTeamMatch_HyphenatedName verifies a hyphenated team name
+// resolves as its own flat team -- there is no sub-team nesting, so this is
+// just a normal name match like any other team.
+func TestSNUserService_GetMe_FlatTeamMatch_HyphenatedName(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
 	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "IAM-US")))
+		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Delta-Two")))
 	})
 
 	client := newTestSNClient(t, mux)
@@ -151,10 +155,10 @@ func TestSNUserService_GetMe_FlatTeamMatch_IAMUS(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.Team == nil {
-		t.Fatalf("Team = nil, want IAM-US")
+		t.Fatalf("Team = nil, want Delta-Two")
 	}
-	if got.Team.TeamKey != "iam_us" || got.Team.TeamName != "IAM-US" || got.Team.Family != "cre" {
-		t.Fatalf("Team = %+v, want {iam_us IAM-US cre}", got.Team)
+	if got.Team.TeamKey != "delta" || got.Team.TeamName != "Delta-Two" || got.Team.Family != "cre" {
+		t.Fatalf("Team = %+v, want {delta Delta-Two cre}", got.Team)
 	}
 }
 
@@ -162,18 +166,16 @@ func TestSNUserService_GetMe_FlatTeamMatch_IAMUS(t *testing.T) {
 // "family" set still resolves correctly, with an empty Family rather than an
 // error.
 func TestSNUserService_GetMe_UnclassifiedTeamMatch(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
 	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Customer Onboarding")))
+		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Gamma Team")))
 	})
 
 	client := newTestSNClient(t, mux)
@@ -184,22 +186,20 @@ func TestSNUserService_GetMe_UnclassifiedTeamMatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.Team == nil {
-		t.Fatalf("Team = nil, want Customer Onboarding")
+		t.Fatalf("Team = nil, want Gamma Team")
 	}
-	if got.Team.TeamKey != "customer_onboarding" || got.Team.TeamName != "Customer Onboarding" || got.Team.Family != "" {
-		t.Fatalf("Team = %+v, want {customer_onboarding \"Customer Onboarding\" \"\"}", got.Team)
+	if got.Team.TeamKey != "gamma" || got.Team.TeamName != "Gamma Team" || got.Team.Family != "" {
+		t.Fatalf("Team = %+v, want {gamma \"Gamma Team\" \"\"}", got.Team)
 	}
 }
 
 func TestSNUserService_GetMe_NoMatch(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
-	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
 	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -223,14 +223,12 @@ func TestSNUserService_GetMe_NoMatch(t *testing.T) {
 // fails the overall /users/me response -- identity/roles must still come
 // back, with Team simply nil.
 func TestSNUserService_GetMe_GroupMembershipCallErrors_IdentityStillReturned(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
-	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
 	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -251,24 +249,22 @@ func TestSNUserService_GetMe_GroupMembershipCallErrors_IdentityStillReturned(t *
 	}
 }
 
-// TestSNUserService_GetMe_RegistryFetchFails_IdentityStillReturned verifies
-// that a failure fetching the ABT team registry itself (a distinct failure
-// mode from the group-membership call failing) also degrades gracefully:
-// identity/roles still come back, Team nil.
-func TestSNUserService_GetMe_RegistryFetchFails_IdentityStillReturned(t *testing.T) {
+// TestSNUserService_GetMe_EmptyRegistry_IdentityStillReturned verifies that a
+// deployment with no team registry configured still serves identity: roles
+// come back, Team is nil, and the membership lookup is skipped entirely.
+func TestSNUserService_GetMe_EmptyRegistry_IdentityStillReturned(t *testing.T) {
+	withTeamRegistry(t, "")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(snUserMeJSON(testAbtUserSysid)))
 	})
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	})
 	groupMembersCalled := false
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, r *http.Request) {
 		groupMembersCalled = true
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Castor")))
+		_, _ = w.Write([]byte(membershipsJSON(testAbtUserSysid, "Alpha Team")))
 	})
 
 	client := newTestSNClient(t, mux)
@@ -279,15 +275,15 @@ func TestSNUserService_GetMe_RegistryFetchFails_IdentityStillReturned(t *testing
 		t.Fatalf("unexpected error: %v (identity must still be returned)", err)
 	}
 	if got.Email != "agent@example.com" {
-		t.Fatalf("Email = %q, want agent@example.com even though registry fetch failed", got.Email)
+		t.Fatalf("Email = %q, want agent@example.com with an empty registry", got.Email)
 	}
 	if got.Team != nil {
-		t.Fatalf("Team = %+v, want nil when registry fetch fails", got.Team)
+		t.Fatalf("Team = %+v, want nil when no teams are configured", got.Team)
 	}
 	// With an empty registry, AbtGroupNames() is empty, so GetMe should
 	// short-circuit and never even call group-members/search.
 	if groupMembersCalled {
-		t.Fatalf("group-members/search was called despite an empty (failed-to-load) registry")
+		t.Fatalf("group-members/search was called despite an empty registry")
 	}
 }
 
@@ -315,7 +311,7 @@ func TestGetUserMeResponse_TeamOmittedWhenNil(t *testing.T) {
 func TestGetUserMeResponse_TeamFieldShape(t *testing.T) {
 	resp := domain.GetUserMeResponse{
 		ID: "u1", Email: "agent@example.com", Roles: []string{},
-		Team: &domain.UserTeam{TeamKey: "castor", TeamName: "Castor", Family: "cre"},
+		Team: &domain.UserTeam{TeamKey: "alpha", TeamName: "Alpha Team", Family: "cre"},
 	}
 	raw, err := json.Marshal(resp)
 	if err != nil {
@@ -333,10 +329,48 @@ func TestGetUserMeResponse_TeamFieldShape(t *testing.T) {
 	if err := json.Unmarshal(teamRaw, &team); err != nil {
 		t.Fatalf("unmarshal team: %v", err)
 	}
-	want := map[string]string{"teamKey": "castor", "teamName": "Castor", "family": "cre"}
+	want := map[string]string{"teamKey": "alpha", "teamName": "Alpha Team", "family": "cre"}
 	for k, v := range want {
 		if team[k] != v {
 			t.Fatalf("team[%q] = %q, want %q (full team object: %s)", k, team[k], v, teamRaw)
 		}
+	}
+}
+
+// TestSearchUsers_RejectsRoleOutsideConfiguredList proves the allow-list is
+// enforced on the real request path, not just in the helper.
+func TestSearchUsers_RejectsRoleOutsideConfiguredList(t *testing.T) {
+	withUserRoles(t, "agent")
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
+	upstreamCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/users/search", func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalled = true
+		_, _ = w.Write([]byte(`{"users":[],"totalRecords":0}`))
+	})
+	svc := NewServiceNowUserService(newTestSNClient(t, mux))
+
+	_, err := svc.SearchUsers(contextWithUserIDToken("token"), domain.SearchUsersRequest{
+		Pagination: domain.Pagination{Limit: 20},
+		Filters:    domain.SearchUsersFilters{RoleIDs: []domain.UserRole{domain.UserRoleAdmin}},
+	})
+	var verr *apierror.ValidationError
+	if !asValidationError(err, &verr) {
+		t.Fatalf("err = %v, want a ValidationError for a role outside the configured list", err)
+	}
+	if upstreamCalled {
+		t.Fatal("upstream user search was called with an unconfigured role")
+	}
+
+	// The configured role still passes validation and reaches upstream.
+	if _, err := svc.SearchUsers(contextWithUserIDToken("token"), domain.SearchUsersRequest{
+		Pagination: domain.Pagination{Limit: 20},
+		Filters:    domain.SearchUsersFilters{RoleIDs: []domain.UserRole{domain.UserRoleAgent}},
+	}); err != nil {
+		t.Fatalf("configured role \"agent\" was rejected: %v", err)
+	}
+	if !upstreamCalled {
+		t.Fatal("configured role did not reach the upstream search")
 	}
 }

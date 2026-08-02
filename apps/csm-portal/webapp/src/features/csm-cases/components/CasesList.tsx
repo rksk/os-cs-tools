@@ -16,6 +16,7 @@
 
 import {
   Box,
+  Chip,
   Skeleton,
   TableSortLabel,
   Typography,
@@ -30,13 +31,23 @@ import StateChip from "@components/StateChip";
 import WorkStateChip from "@components/WorkStateChip";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
 import type { CasesSortOrder } from "@features/csm-cases/utils/casesSort";
+import {
+  CASE_TYPE_COLOR,
+  CASE_TYPE_LABEL,
+  caseTypeDetailBasePath,
+  caseTypeHasSeverity,
+} from "@features/csm-cases/utils/caseType";
 
 interface CasesListProps {
   cases: CsmCaseRow[];
   isLoading: boolean;
   /** Number of skeleton rows to show while loading. Defaults to 6. */
   skeletonCount?: number;
-  /** Base path for detail links. Defaults to "/cases". */
+  /** Base path for detail links. Omit to have each row route to its own
+   * case type's own detail page (see `caseTypeDetailBasePath`) — the right
+   * choice for a mixed-type list. Pass an explicit value only when every row
+   * is already locked to one type (e.g. the Engagements/Security Center
+   * tabs), to route there directly without a per-row type check. */
   detailBasePath?: string;
   /** Hide the Severity column. Severity (S1-S4) is a support-case concept, so
    * non-case lists (service requests, engagements, security reports) hide it —
@@ -51,10 +62,14 @@ interface CasesListProps {
 }
 
 // Every column is left-aligned for a consistent scan line down the table.
+// Type (case / service request / security report / ...) is gated by the same
+// flag as Severity: both are noise in a list already locked to one case type
+// (see `hideSeverityColumn`'s callers), useful in the mixed, general list.
 const HEADER_CELLS_WITH_SEVERITY: string[] = [
   "Case ID",
   "Subject",
   "Product",
+  "Type",
   "Severity",
   "State",
 ];
@@ -70,7 +85,7 @@ const HEADER_CELLS_WITHOUT_SEVERITY: string[] = [
 // The work-state chip (only present for WIP cases) stacks under the State chip
 // in the State column, so it doesn't need a column of its own.
 const GRID_WITH_SEVERITY =
-  "minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) auto minmax(110px, 1fr) auto";
+  "minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) auto auto minmax(110px, 1fr) auto";
 const GRID_WITHOUT_SEVERITY =
   "minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) minmax(110px, 1fr) auto";
 
@@ -78,7 +93,7 @@ export default function CasesList({
   cases,
   isLoading,
   skeletonCount = 6,
-  detailBasePath = "/cases",
+  detailBasePath,
   hideSeverityColumn = false,
   sortOrder,
   onSortOrderChange,
@@ -190,6 +205,7 @@ export default function CasesList({
 
       {!isLoading &&
         cases.map((c) => {
+          const rowBasePath = detailBasePath ?? caseTypeDetailBasePath(c.caseType);
           return (
             // A real anchor (not a click-handler div) so the row supports
             // cmd/middle-click "open in new tab" — essential when an engineer
@@ -198,12 +214,12 @@ export default function CasesList({
             <Box
               key={c.id}
               component={RouterLink}
-              to={`${detailBasePath}/${c.id}`}
+              to={`${rowBasePath}/${c.id}`}
               // Carries the current (filtered) list URL forward so the detail
               // page's back button can return to it instead of a bare,
               // filter-less list path.
               state={{ from: `${location.pathname}${location.search}` }}
-              onMouseEnter={() => preloadRoute(detailBasePath)}
+              onMouseEnter={() => preloadRoute(rowBasePath)}
               sx={{
                 gridColumn: "1 / -1",
                 display: "grid",
@@ -272,7 +288,25 @@ export default function CasesList({
               </Typography>
               {!hideSeverityColumn && (
                 <Box sx={{ justifySelf: "start" }}>
-                  <SeverityChip severity={c.severity} clickable />
+                  {c.caseType ? (
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={CASE_TYPE_COLOR[c.caseType]}
+                      label={CASE_TYPE_LABEL[c.caseType]}
+                    />
+                  ) : (
+                    "—"
+                  )}
+                </Box>
+              )}
+              {!hideSeverityColumn && (
+                <Box sx={{ justifySelf: "start" }}>
+                  {caseTypeHasSeverity(c.caseType) ? (
+                    <SeverityChip severity={c.severity} clickable />
+                  ) : (
+                    "—"
+                  )}
                 </Box>
               )}
               {/* State chip, with the work-state chip stacked beneath it (the

@@ -18,7 +18,10 @@ import { Box, Card, Typography } from "@wso2/oxygen-ui";
 import type { JSX, ReactNode } from "react";
 
 interface SectionCardProps {
-  title: string;
+  /** Omit for a section with no heading of its own — e.g. a pilot/preview
+   * section that shouldn't advertise its own implementation status in the
+   * UI. `action` (if any) still renders on its own. */
+  title?: string;
   subtitle?: string;
   action?: ReactNode;
   children: ReactNode;
@@ -32,24 +35,26 @@ export default function SectionCard({
 }: SectionCardProps): JSX.Element {
   return (
     <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 2,
-        }}
-      >
-        <Box>
-          <Typography variant="h6">{title}</Typography>
-          {subtitle && (
-            <Typography variant="body2" color="text.secondary">
-              {subtitle}
-            </Typography>
-          )}
+      {(title || subtitle || action) && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 2,
+          }}
+        >
+          <Box>
+            {title && <Typography variant="h6">{title}</Typography>}
+            {subtitle && (
+              <Typography variant="body2" color="text.secondary">
+                {subtitle}
+              </Typography>
+            )}
+          </Box>
+          {action}
         </Box>
-        {action}
-      </Box>
+      )}
       {children}
     </Card>
   );

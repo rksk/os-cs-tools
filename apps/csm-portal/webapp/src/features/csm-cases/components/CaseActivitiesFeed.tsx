@@ -341,7 +341,11 @@ export default function CaseActivitiesFeed({
                       }}
                     >
                       <Typography variant="subtitle2">
-                        {e.entry.actor}
+                        <UserRefLink
+                          name={e.entry.actor}
+                          email={e.entry.actorUser?.email}
+                          userId={e.entry.actorUser?.id}
+                        />
                       </Typography>
                       <Chip
                         size="small"

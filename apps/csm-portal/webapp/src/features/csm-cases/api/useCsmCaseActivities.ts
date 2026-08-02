@@ -17,6 +17,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiQueryKeys, BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
+import { userReferenceFromBe } from "@api/backend/mappers";
 import type {
   BeCaseActivitiesSearchPayload,
   BeCaseActivitiesSearchResponse,
@@ -47,6 +48,7 @@ export function auditEntryFromBeActivity(
     id: entry.id,
     kind: "field_change",
     actor: activityAuthorName(entry),
+    actorUser: userReferenceFromBe(entry.createdByUser),
     createdAt: entry.createdOn,
     changes: (entry.changes ?? []).map((c) => ({
       field: c.field,

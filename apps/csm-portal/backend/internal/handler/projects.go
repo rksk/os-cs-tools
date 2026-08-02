@@ -63,7 +63,7 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetProject(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProject failed", "userID", user.UserID, "projectID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve project.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve project.")
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *ProjectHandler) SearchProjects(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.SearchProjects(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProjects failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search projects.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search projects.")
 		return
 	}
 
@@ -142,7 +142,7 @@ func (h *ProjectHandler) SearchProjectContacts(w http.ResponseWriter, r *http.Re
 	result, err := h.entity.SearchProjectContacts(r.Context(), id, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProjectContacts failed", "userID", user.UserID, "projectID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to search project contacts.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search project contacts.")
 		return
 	}
 
@@ -176,7 +176,7 @@ func (h *ProjectHandler) GetProjectContact(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProjectContact failed",
 			"userID", user.UserID, "projectID", id, "contactID", contactID, "err", err)
-		mapUpstreamError(w, err, "Failed to fetch the project contact.")
+		mapUpstreamErrorGeneric(w, err, "Failed to fetch the project contact.")
 		return
 	}
 

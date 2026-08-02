@@ -208,7 +208,7 @@ export default function LogTimeCardDialog({
       // Approvers must be real internal accounts — the backend requires a
       // real UUID in `approverIds`, so there is no offline/mock fallback
       // (a fabricated id would always be rejected on submit).
-      roles: INTERNAL_USER_ROLES,
+      roleIds: INTERNAL_USER_ROLES,
       active: true,
     },
     pagination: { limit: 6, offset: 0 },

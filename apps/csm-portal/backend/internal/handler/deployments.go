@@ -111,7 +111,7 @@ func (h *DeploymentHandler) PostDeployment(w http.ResponseWriter, r *http.Reques
 	result, err := h.entity.PostDeployment(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity PostDeployment failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create deployment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create deployment.")
 		return
 	}
 
@@ -189,7 +189,7 @@ func (h *DeploymentHandler) SearchDeployments(w http.ResponseWriter, r *http.Req
 	result, err := h.entity.SearchDeployments(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchDeployments failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search deployments.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search deployments.")
 		return
 	}
 
@@ -236,7 +236,7 @@ func (h *DeploymentHandler) SearchDeployedProducts(w http.ResponseWriter, r *htt
 	result, err := h.entity.SearchDeployedProducts(r.Context(), entityBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchDeployedProducts failed", "userID", user.UserID, "deploymentID", deploymentID, "err", err)
-		mapUpstreamError(w, err, "Failed to search deployed products.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search deployed products.")
 		return
 	}
 
@@ -284,7 +284,7 @@ func (h *DeploymentHandler) PostDeployedProduct(w http.ResponseWriter, r *http.R
 	result, err := h.entity.PostDeployedProduct(r.Context(), entityBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity PostDeployedProduct failed", "userID", user.UserID, "deploymentID", deploymentID, "err", err)
-		mapUpstreamError(w, err, "Failed to create deployed product.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create deployed product.")
 		return
 	}
 

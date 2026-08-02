@@ -910,7 +910,7 @@ public isolated function mapChangeRequestResponse(entity:ChangeRequestResponse r
     entity:ReferenceTableItem? deployment = response.deployment;
     entity:ReferenceTableItem? deployedProduct = response.deployedProduct;
     entity:ReferenceTableItem? product = response.product;
-    entity:ReferenceTableItem? approvedBy = response.approvedBy;
+    entity:ReferenceTableItem? approvedBy = response?.approvedBy;
     entity:ReferenceTableItem? assignedEngineer = response.assignedEngineer;
     entity:ReferenceTableItem? assignedTeam = response.assignedTeam;
     entity:ChoiceListItem? state = response.state;

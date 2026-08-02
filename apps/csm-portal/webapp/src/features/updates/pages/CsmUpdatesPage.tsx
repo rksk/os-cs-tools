@@ -672,7 +672,7 @@ export default function CsmUpdatesPage(): JSX.Element {
           </Typography>
           {productLevels.isError ? (
             <QueryErrorState
-              message={`Could not load product catalog: ${productLevels.error instanceof Error ? productLevels.error.message : "unknown error"}`}
+              message={productLevels.error instanceof Error && productLevels.error.message.trim() ? productLevels.error.message : "Could not load product catalog."}
               error={productLevels.error}
             />
           ) : productLevels.isLoading ? (
@@ -778,7 +778,7 @@ export default function CsmUpdatesPage(): JSX.Element {
             </Box>
           ) : searchResult.isError ? (
             <QueryErrorState
-              message={`Could not load updates: ${searchResult.error instanceof Error ? searchResult.error.message : "unknown error"}`}
+              message={searchResult.error instanceof Error && searchResult.error.message.trim() ? searchResult.error.message : "Could not load updates."}
               error={searchResult.error}
             />
           ) : sortedEntries.length === 0 ? (

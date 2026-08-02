@@ -18,6 +18,7 @@ import {
   Avatar,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -77,13 +78,21 @@ export default function AssignEngineerDialog({
   onAssign,
 }: AssignEngineerDialogProps): JSX.Element {
   const [input, setInput] = useState("");
+  // Which target's assign click is in flight — `isAssigning` alone (a plain
+  // disable) was easy to miss, especially on a fast request, so the clicked
+  // button also swaps its icon for a spinner instead of just dimming.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const handleAssign = (email: string): void => {
+    setPendingEmail(email);
+    onAssign(email);
+  };
   const search = useDebouncedValue(input.trim(), 300);
   const { data, isFetching, isError } = useSearchUsers({
     filters: {
       ...(search.length > 0 && { searchQuery: search }),
-      // Internal-facing roles only (ServiceNow source); the BE applies the
+      // Internal-facing roles only (backing data source); the BE applies the
       // filter, so we no longer client-gate on `userType` (absent on SnUser).
-      roles: INTERNAL_USER_ROLES,
+      roleIds: INTERNAL_USER_ROLES,
       // Don't offer inactive accounts as assignment targets.
       active: true,
     },
@@ -122,9 +131,15 @@ export default function AssignEngineerDialog({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<UserCheck size={16} />}
+              startIcon={
+                isAssigning && pendingEmail === currentUserEmail ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : (
+                  <UserCheck size={16} />
+                )
+              }
               disabled={isAssigning}
-              onClick={() => onAssign(currentUserEmail)}
+              onClick={() => handleAssign(currentUserEmail)}
               sx={{ alignSelf: "flex-start" }}
             >
               Assign to me
@@ -172,13 +187,14 @@ export default function AssignEngineerDialog({
               <Box sx={{ display: "flex", flexDirection: "column" }}>
                 {engineers.map((u) => {
                   const name = fullName(u);
+                  const isPendingForThis = isAssigning && pendingEmail === u.email;
                   return (
                     <Button
                       key={u.id}
                       variant="text"
                       color="inherit"
                       disabled={isAssigning}
-                      onClick={() => onAssign(u.email)}
+                      onClick={() => handleAssign(u.email)}
                       sx={{
                         justifyContent: "flex-start",
                         textTransform: "none",
@@ -187,9 +203,23 @@ export default function AssignEngineerDialog({
                         gap: 1.25,
                       }}
                     >
-                      <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>
-                        {initialsOf(name)}
-                      </Avatar>
+                      {isPendingForThis ? (
+                        <Box
+                          sx={{
+                            width: 28,
+                            height: 28,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <CircularProgress size={18} color="inherit" />
+                        </Box>
+                      ) : (
+                        <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>
+                          {initialsOf(name)}
+                        </Avatar>
+                      )}
                       <Box sx={{ minWidth: 0, textAlign: "left" }}>
                         <Typography variant="body2" sx={{ lineHeight: 1.2 }} noWrap>
                           {name}

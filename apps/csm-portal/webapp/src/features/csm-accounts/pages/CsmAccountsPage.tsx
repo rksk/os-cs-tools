@@ -132,7 +132,7 @@ export default function CsmAccountsPage(): JSX.Element {
                 <TableRow>
                   <TableCell colSpan={6} align="center">
                     <QueryErrorState
-                      message={`Failed to load accounts: ${error instanceof Error ? error.message : "unknown error"}`}
+                      message={error instanceof Error && error.message.trim() ? error.message : "Failed to load accounts."}
                       error={error}
                     />
                   </TableCell>

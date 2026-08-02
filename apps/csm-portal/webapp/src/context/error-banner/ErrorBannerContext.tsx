@@ -34,8 +34,8 @@ import { getErrorReferenceId } from "@utils/correlationId";
 interface ErrorBannerContextType {
   /**
    * Show the error banner with the given user-facing message. Pass the original
-   * error as the second argument to append a support "Reference ID" (the
-   * request's correlation ID) when one is available.
+   * error as the second argument to surface a copyable "Reference ID" (the
+   * request's correlation ID) alongside it when one is available.
    */
   showError: (message: string, error?: unknown) => void;
 }
@@ -59,11 +59,12 @@ export function ErrorBannerProvider({
   children,
 }: ErrorBannerProviderProps): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
+  const [referenceId, setReferenceId] = useState<string | undefined>(undefined);
   const [key, setKey] = useState(0);
 
   const showError = useCallback((msg: string, error?: unknown) => {
-    const referenceId = getErrorReferenceId(error);
-    setMessage(referenceId ? `${msg} (Reference ID: ${referenceId})` : msg);
+    setMessage(msg);
+    setReferenceId(getErrorReferenceId(error));
     setKey((prev) => prev + 1);
   }, []);
 
@@ -90,7 +91,12 @@ export function ErrorBannerProvider({
     <ErrorBannerContext.Provider value={contextValue}>
       {children}
       {visible && message && (
-        <ErrorBanner key={key} message={message} onClose={dismiss} />
+        <ErrorBanner
+          key={key}
+          message={message}
+          referenceId={referenceId}
+          onClose={dismiss}
+        />
       )}
     </ErrorBannerContext.Provider>
   );

@@ -205,20 +205,11 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     icon: Settings,
     children: [
       { id: "admin.users", label: "Users", href: "/admin/users" },
-      // These three route to placeholders that already name their backend
-      // blocker, so they render themselves rather than the generic WIP page.
-      {
-        id: "admin.roles",
-        label: "Roles",
-        href: "/admin/roles",
-        rendersOwnWipPage: true,
-      },
-      {
-        id: "admin.groups",
-        label: "Groups",
-        href: "/admin/groups",
-        rendersOwnWipPage: true,
-      },
+      { id: "admin.roles", label: "Roles", href: "/admin/roles" },
+      { id: "admin.groups", label: "Groups", href: "/admin/groups" },
+      { id: "admin.teams", label: "Teams", href: "/admin/teams" },
+      // Routes to a placeholder that already names its backend blocker, so it
+      // renders itself rather than the generic WIP page.
       {
         id: "admin.permissions",
         label: "Permissions",

@@ -63,12 +63,11 @@ func itoa(n int) string {
 // would send no id filter upstream and return every user, which reads as "everyone
 // matched" — the opposite of the truth.
 func TestSNUserService_SearchUsers_TeamFilterNoMembers(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	searchCalled := false
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"memberships": [], "totalRecords": 0}`))
 	})
@@ -81,7 +80,7 @@ func TestSNUserService_SearchUsers_TeamFilterNoMembers(t *testing.T) {
 
 	got, err := svc.SearchUsers(contextWithUserIDToken("token"), domain.SearchUsersRequest{
 		Pagination: domain.Pagination{Limit: 20},
-		Filters:    domain.SearchUsersFilters{TeamIDs: []string{"castor"}},
+		Filters:    domain.SearchUsersFilters{TeamIDs: []string{"alpha"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,15 +95,14 @@ func TestSNUserService_SearchUsers_TeamFilterNoMembers(t *testing.T) {
 
 // A team filter that does resolve must send the members' ids upstream.
 func TestSNUserService_SearchUsers_TeamFilterSendsUserIDs(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	memberSysid := sysid32('a')
 	var captured []byte
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(membershipsJSON(memberSysid, "Castor")))
+		_, _ = w.Write([]byte(membershipsJSON(memberSysid, "Alpha Team")))
 	})
 	mux.HandleFunc("/users/search", func(w http.ResponseWriter, r *http.Request) {
 		captured, _ = io.ReadAll(r.Body)
@@ -115,7 +113,7 @@ func TestSNUserService_SearchUsers_TeamFilterSendsUserIDs(t *testing.T) {
 
 	got, err := svc.SearchUsers(contextWithUserIDToken("token"), domain.SearchUsersRequest{
 		Pagination: domain.Pagination{Limit: 20},
-		Filters:    domain.SearchUsersFilters{TeamIDs: []string{"castor"}},
+		Filters:    domain.SearchUsersFilters{TeamIDs: []string{"alpha"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -145,10 +143,9 @@ func TestSNUserService_SearchUsers_TeamFilterSendsUserIDs(t *testing.T) {
 
 // An unknown team key is a client error, not a silent empty result.
 func TestSNUserService_SearchUsers_UnknownTeamKey(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 
 	svc := NewServiceNowUserService(newTestSNClient(t, mux))
 
@@ -164,18 +161,17 @@ func TestSNUserService_SearchUsers_UnknownTeamKey(t *testing.T) {
 
 // GetUser enriches the row with every group the user is in, and marks registry teams.
 func TestSNUserService_GetUser_GroupsAndTeams(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	userSysid := sysid32('b')
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/users/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(usersSearchJSON(snUserRowJSON(userSysid, "staff@wso2.com", "internal"))))
 	})
 	mux.HandleFunc("/group-members/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"memberships":[` +
-			`{"userId":"` + userSysid + `","groupId":"` + sysid32('c') + `","groupName":"Castor"},` +
+			`{"userId":"` + userSysid + `","groupId":"` + sysid32('c') + `","groupName":"Alpha Team"},` +
 			`{"userId":"` + userSysid + `","groupId":"` + sysid32('d') + `","groupName":"Some Other Group"}` +
 			`],"totalRecords":2}`))
 	})
@@ -189,8 +185,8 @@ func TestSNUserService_GetUser_GroupsAndTeams(t *testing.T) {
 	if len(got.Groups) != 2 {
 		t.Fatalf("got %d groups, want 2", len(got.Groups))
 	}
-	if len(got.Teams) != 1 || got.Teams[0].ID != "castor" {
-		t.Fatalf("teams = %+v, want just castor", got.Teams)
+	if len(got.Teams) != 1 || got.Teams[0].ID != "alpha" {
+		t.Fatalf("teams = %+v, want just alpha", got.Teams)
 	}
 	// Staff get no project-access block.
 	if got.ProjectAccess != nil {
@@ -200,13 +196,12 @@ func TestSNUserService_GetUser_GroupsAndTeams(t *testing.T) {
 
 // An external contact gets project access, including rows that grant nothing.
 func TestSNUserService_GetUser_ExternalProjectAccess(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	userSysid := sysid32('e')
 	projectSysid := sysid32('f')
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/users/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(usersSearchJSON(snUserRowJSON(userSysid, "jane@example.com", "external"))))
 	})
@@ -215,8 +210,8 @@ func TestSNUserService_GetUser_ExternalProjectAccess(t *testing.T) {
 	})
 	mux.HandleFunc("/project-contacts/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"contacts":[{"projectId":"` + projectSysid + `","projectName":"Proj A",` +
-			`"contactEmail":"jane@example.com","customerContactPresent":false,"customerContactEmail":null,` +
-			`"emailMatchesLogin":true,"registrationState":"INVITED","notificationsEnabled":false,` +
+			`"projectKey":"PROJA","contactEmail":"jane@example.com","customerContactPresent":false,` +
+			`"customerContactEmail":null,"registrationState":"INVITED","notificationsEnabled":false,` +
 			`"roles":[],"grantsCaseAccess":false}],"totalRecords":1}`))
 	})
 
@@ -239,16 +234,18 @@ func TestSNUserService_GetUser_ExternalProjectAccess(t *testing.T) {
 	if row.ProjectID != sysidToUUID(projectSysid) {
 		t.Fatalf("projectId = %q, want the converted id", row.ProjectID)
 	}
+	if row.ProjectKey != "PROJA" {
+		t.Fatalf("projectKey = %q, want %q", row.ProjectKey, "PROJA")
+	}
 }
 
 // A failing enrichment must not fail the whole profile.
 func TestSNUserService_GetUser_EnrichmentDegrades(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	userSysid := sysid32('1')
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/users/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(usersSearchJSON(snUserRowJSON(userSysid, "staff@wso2.com", "internal"))))
 	})
@@ -272,6 +269,8 @@ func TestSNUserService_GetUser_EnrichmentDegrades(t *testing.T) {
 
 // An id with no match is a 404, not an empty struct.
 func TestSNUserService_GetUser_NotFound(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/search", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"users":[],"totalRecords":0,"offset":0,"limit":1}`))
@@ -306,10 +305,9 @@ func asNotFoundError(err error, target **apierror.NotFoundError) bool {
 // through unchanged, so without this check a bogus id reaches upstream, which answers with
 // an opaque error or an empty page that reads like a legitimate "no such user".
 func TestSNUserService_SearchUsers_RejectsMalformedFilterIDs(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/users/search", func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("upstream search called; a malformed filter id should be rejected first")
 	})
@@ -347,10 +345,9 @@ func TestSNUserService_SearchUsers_RejectsMalformedFilterIDs(t *testing.T) {
 // GetUser must not report a malformed id as a missing one: "id is required" sends the caller
 // looking for a parameter they did supply.
 func TestSNUserService_GetUser_DistinguishesEmptyFromMalformedID(t *testing.T) {
+	withTeamRegistry(t, abtTeamRegistryFixture)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/teams", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(abtTeamsFixtureJSON))
-	})
 	mux.HandleFunc("/users/search", func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("upstream search called; an invalid id should be rejected first")
 	})

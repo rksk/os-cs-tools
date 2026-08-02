@@ -72,7 +72,15 @@ func writeJSONValue(w http.ResponseWriter, statusCode int, v any) {
 }
 
 // mapUpstreamError translates an upstream service error to an HTTP response,
-// mirroring the Ballerina getStatusCode pattern in the customer-portal.
+// mirroring the Ballerina getStatusCode pattern in the customer-portal. Use
+// this only for PATCH/update endpoints: their 4xx failures are reliably a
+// rejection of something in the payload the caller just sent (e.g. "Invalid
+// state transition"), so the upstream reason is worth showing. Every other
+// endpoint should use mapUpstreamErrorGeneric instead — most of them forward
+// a request that's only partially validated at this layer, so a 4xx from
+// upstream isn't necessarily something the caller could have avoided, and
+// echoing it would just leak upstream/internal implementation detail (e.g. a
+// JSON decoder's field names).
 func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 	var apiErr *apierror.Error
 	if errors.As(err, &apiErr) {
@@ -100,6 +108,38 @@ func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 			// with a message field proves its shape, not that its content is safe
 			// to show a portal client. So return the generic fallback only; the
 			// upstream detail is logged, not echoed.
+			writeError(w, http.StatusInternalServerError, fallbackMsg)
+		}
+		return
+	}
+	writeError(w, http.StatusInternalServerError, fallbackMsg)
+}
+
+// mapUpstreamErrorGeneric is mapUpstreamError's counterpart for every
+// non-PATCH endpoint: 401/403/404 still translate to the fixed messages, but
+// every other case — 400, 409, 422, 5xx, and unmapped statuses alike — falls
+// back to fallbackMsg instead of echoing the upstream body to the caller.
+// The full upstream reason (status + body) is still expected in the caller's
+// own slog.ErrorContext(ctx, ..., "err", err) call — server-side logs are
+// operator-facing, not caller-facing, so the detail this function withholds
+// from the HTTP response is deliberately preserved there for debugging.
+func mapUpstreamErrorGeneric(w http.ResponseWriter, err error, fallbackMsg string) {
+	var apiErr *apierror.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusUnauthorized:
+			writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		case http.StatusForbidden:
+			writeError(w, http.StatusForbidden, ErrMsgForbidden)
+		case http.StatusNotFound:
+			writeError(w, http.StatusNotFound, ErrMsgNotFound)
+		case http.StatusBadRequest:
+			writeError(w, http.StatusBadRequest, fallbackMsg)
+		case http.StatusConflict, http.StatusUnprocessableEntity:
+			writeError(w, apiErr.StatusCode, fallbackMsg)
+		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			writeError(w, http.StatusServiceUnavailable, fallbackMsg)
+		default:
 			writeError(w, http.StatusInternalServerError, fallbackMsg)
 		}
 		return

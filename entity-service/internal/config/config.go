@@ -53,6 +53,17 @@ type Config struct {
 	ServiceNowIntegrationServiceClientID     string
 	ServiceNowIntegrationServiceClientSecret string
 	ServiceNowIntegrationServiceScopes       string
+	// TeamRegistry is the raw CSM_TEAM_REGISTRY value: the curated ABT team
+	// registry as "teamKey|Display Name|FAMILY,..." rows. Parsed and installed
+	// at startup by domain.ParseAbtTeamRegistry / domain.SetAbtTeams. Empty
+	// means no teams are configured; there is deliberately no default, because
+	// team names are organisation vocabulary that must not be committed here.
+	TeamRegistry string
+	// UserRoles is the raw CSM_USER_ROLES value: a comma-separated
+	// assignable-role allow-list. Parsed and installed at startup by
+	// service.ParseUserRoles / service.SetUserRoles. Empty falls back to the
+	// committed default list.
+	UserRoles string
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -73,6 +84,8 @@ func Load() *Config {
 		ServiceNowIntegrationServiceClientID:     os.Getenv("SERVICENOW_INTEGRATION_SERVICE_CLIENT_ID"),
 		ServiceNowIntegrationServiceClientSecret: os.Getenv("SERVICENOW_INTEGRATION_SERVICE_CLIENT_SECRET"),
 		ServiceNowIntegrationServiceScopes:       os.Getenv("SERVICENOW_INTEGRATION_SERVICE_SCOPES"),
+		TeamRegistry:                             os.Getenv("CSM_TEAM_REGISTRY"),
+		UserRoles:                                os.Getenv("CSM_USER_ROLES"),
 	}
 }
 

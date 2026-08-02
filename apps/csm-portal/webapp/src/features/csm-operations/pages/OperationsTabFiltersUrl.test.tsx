@@ -23,6 +23,7 @@
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useSearchParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
@@ -108,10 +109,19 @@ function OperationsTabsHarness(): JSX.Element {
  * just filters applied by clicking.
  */
 function renderHarness(initialEntry: string) {
+  // Both tabs now default their filter panel open (see IncidentsTab /
+  // ChangeRequestsTab), so IncidentsFilterBar's product picker mounts
+  // immediately and needs a real QueryClientProvider, not just the mocked
+  // search hooks below.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <OperationsTabsHarness />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <OperationsTabsHarness />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

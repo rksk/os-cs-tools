@@ -67,7 +67,7 @@ const ROWS_PER_PAGE_OPTIONS = [10, DEFAULT_ROWS_PER_PAGE, BE_MAX_PAGE_LIMIT];
 // URL params owned by the filter state; cleared/rewritten on change while any
 // other params (e.g. a `tab` selection) are preserved.
 const FILTER_PARAM_KEYS = [
-  "q",
+  "search",
   "severities",
   "states",
   "types",

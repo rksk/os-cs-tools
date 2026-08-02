@@ -29,8 +29,9 @@ import (
 // The catalogue is this layer's own curated list, not a query against the backing data
 // source. That source carries dozens of roles that ship with the product and mean nothing
 // to a CS engineer, and their ids differ per environment. The keys here are stable, are
-// exactly what the user search accepts in roleIds, and come from the same map that
-// validates that filter -- so the dropdown and the filter can never disagree.
+// exactly what the user search accepts in roleIds, and come from the same configured
+// allow-list that validates that filter -- so the dropdown and the filter can never
+// disagree.
 type roleService struct{}
 
 // NewRoleService constructs a RoleService.
@@ -41,11 +42,12 @@ func NewRoleService() RoleService {
 func (s *roleService) SearchRoles(
 	_ context.Context, req domain.SearchRolesRequest,
 ) (domain.SearchRolesResponse, error) {
-	roles := make([]domain.Role, 0, len(validUserRole))
-	for key := range validUserRole {
+	catalogue := UserRoleCatalogue()
+	roles := make([]domain.Role, 0, len(catalogue))
+	for _, key := range catalogue {
 		roles = append(roles, domain.Role{ID: string(key), Name: roleDisplayName(string(key))})
 	}
-	// Map iteration order is random; sort so paging is stable across calls.
+	// Configuration order is whatever the deployer typed; sort so paging is stable.
 	sort.Slice(roles, func(i, j int) bool { return roles[i].ID < roles[j].ID })
 
 	if q := strings.TrimSpace(req.Filters.SearchQuery); q != "" {

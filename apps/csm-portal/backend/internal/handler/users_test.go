@@ -349,7 +349,7 @@ func TestSearchUsers(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search users.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search users.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				entityClient := &mockEntityUserClient{

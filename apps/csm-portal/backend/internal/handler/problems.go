@@ -112,7 +112,7 @@ func (h *ProblemHandler) SearchProblems(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.SearchProblems(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProblems failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search problems.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search problems.")
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *ProblemHandler) CreateProblem(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.CreateProblem(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateProblem failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create problem.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create problem.")
 		return
 	}
 
@@ -176,7 +176,7 @@ func (h *ProblemHandler) GetProblem(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetProblem(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProblem failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve problem.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve problem.")
 		return
 	}
 

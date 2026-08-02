@@ -29,7 +29,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/config"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/db"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/server"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
 )
 
 func main() {
@@ -41,6 +43,21 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
+
+	// The two curated directory vocabularies are deployment configuration.
+	// Parse them here so a typo stops the deploy rather than quietly emptying
+	// a dropdown at the first request.
+	teams, err := domain.ParseAbtTeamRegistry(cfg.TeamRegistry)
+	if err != nil {
+		log.Fatalf("invalid CSM_TEAM_REGISTRY: %v", err)
+	}
+	domain.SetAbtTeams(teams)
+
+	roles, err := service.ParseUserRoles(cfg.UserRoles)
+	if err != nil {
+		log.Fatalf("invalid CSM_USER_ROLES: %v", err)
+	}
+	service.SetUserRoles(roles)
 
 	pool, err := db.NewPoolIfNeeded(cfg)
 	if err != nil {

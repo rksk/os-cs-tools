@@ -134,7 +134,7 @@ function ProjectsSection({ accountId }: { accountId: string }): JSX.Element {
               <TableRow>
                 <TableCell colSpan={4} align="center">
                   <QueryErrorState
-                    message={`Failed to load projects: ${error instanceof Error ? error.message : "unknown error"}`}
+                    message={error instanceof Error && error.message.trim() ? error.message : "Failed to load projects."}
                     error={error}
                   />
                 </TableCell>

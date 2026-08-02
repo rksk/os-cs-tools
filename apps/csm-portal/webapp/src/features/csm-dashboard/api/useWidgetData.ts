@@ -22,7 +22,7 @@ import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetRes
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
-const DEFAULT_LIST_LIMIT = 5;
+const DEFAULT_LIST_LIMIT = 4;
 
 export interface WidgetData {
   /** Total matching records — what a `shape: "count"` tile renders. */
@@ -46,10 +46,20 @@ export function useWidgetData(
   filters: Record<string, unknown>,
   shape: BeWidgetShape,
   listLimit?: number,
+  /** Row offset for a `shape: "list"` widget — only meaningful there, and
+   * only actually used by `DashboardWidgetPreviewPage`'s pagination; the
+   * compact tile always fetches from the start. */
+  offset = 0,
+  /** Set to `false` to defer the query — used by `DashboardWidgetPreviewPage`
+   * while it's still waiting to resolve a `@me`-style filter sentinel (see
+   * `widgetPreviewUrl.ts`) into the signed-in user's real id, so a request
+   * never goes out with the literal placeholder still in it. */
+  enabled = true,
 ): UseQueryResult<WidgetData, Error> {
   const api = useBackendApi();
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   const limit = shape === "list" ? (listLimit ?? DEFAULT_LIST_LIMIT) : 1;
+  const effectiveOffset = shape === "list" ? offset : 0;
 
   return useQuery<WidgetData, Error>({
     queryKey: [
@@ -58,7 +68,9 @@ export function useWidgetData(
       resourceType,
       filters,
       limit,
+      effectiveOffset,
     ],
+    enabled,
     queryFn: async (): Promise<WidgetData> => {
       if (!config) {
         // A widget's resourceType came back from the backend (now a
@@ -72,7 +84,7 @@ export function useWidgetData(
         Record<string, unknown>
       >(config.searchEndpoint, {
         filters,
-        pagination: { offset: 0, limit },
+        pagination: { offset: effectiveOffset, limit },
       });
       const total = typeof res.total === "number" ? res.total : 0;
       const rawItems = res[config.itemsKey];

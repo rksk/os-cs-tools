@@ -74,7 +74,7 @@ func (h *ProductHandler) SearchProducts(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.SearchProducts(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProducts failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search products.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search products.")
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *ProductHandler) SearchProductVersions(w http.ResponseWriter, r *http.Re
 	result, err := h.entity.SearchProductVersions(r.Context(), productID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProductVersions failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search product versions.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search product versions.")
 		return
 	}
 

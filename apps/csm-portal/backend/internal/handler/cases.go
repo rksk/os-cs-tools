@@ -171,7 +171,7 @@ func (h *CaseHandler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.CreateCase(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCase failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create case.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create case.")
 		return
 	}
 
@@ -225,7 +225,7 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		current, err := h.entity.GetCase(r.Context(), caseID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during comment guard", "userID", user.UserID, "caseID", caseID, "err", err)
-			mapUpstreamError(w, err, "Failed to create case comment.")
+			mapUpstreamErrorGeneric(w, err, "Failed to create case comment.")
 			return
 		}
 		var currentCase struct {
@@ -248,7 +248,7 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		current, err := h.entity.GetCase(r.Context(), caseID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during work-note closed guard", "userID", user.UserID, "caseID", caseID, "err", err)
-			mapUpstreamError(w, err, "Failed to create case comment.")
+			mapUpstreamErrorGeneric(w, err, "Failed to create case comment.")
 			return
 		}
 		var currentCase struct {
@@ -268,7 +268,7 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.CreateCaseComment(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCaseComment failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to create case comment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create case comment.")
 		return
 	}
 
@@ -318,7 +318,7 @@ func (h *CaseHandler) SearchCaseComments(w http.ResponseWriter, r *http.Request)
 	result, err := h.entity.SearchComments(r.Context(), newBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to search case comments.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search case comments.")
 		return
 	}
 
@@ -360,7 +360,7 @@ func (h *CaseHandler) SearchCaseActivities(w http.ResponseWriter, r *http.Reques
 	result, err := h.entity.SearchCaseActivities(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCaseActivities failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to search case activities.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search case activities.")
 		return
 	}
 
@@ -395,7 +395,7 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.SearchCases(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCases failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search cases.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search cases.")
 		return
 	}
 
@@ -436,7 +436,7 @@ func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Reques
 		current, err := h.entity.GetCase(r.Context(), attachMeta.ReferenceID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during attachment closed guard", "userID", user.UserID, "caseID", attachMeta.ReferenceID, "err", err)
-			mapUpstreamError(w, err, "Failed to create case attachment.")
+			mapUpstreamErrorGeneric(w, err, "Failed to create case attachment.")
 			return
 		}
 		var currentCase struct {
@@ -456,7 +456,7 @@ func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Reques
 	result, err := h.entity.CreateCaseAttachment(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCaseAttachment failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create case attachment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create case attachment.")
 		return
 	}
 
@@ -490,7 +490,7 @@ func (h *CaseHandler) SearchCaseAttachments(w http.ResponseWriter, r *http.Reque
 	result, err := h.entity.SearchCaseAttachments(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCaseAttachments failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search case attachments.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search case attachments.")
 		return
 	}
 
@@ -514,7 +514,7 @@ func (h *CaseHandler) GetCaseAttachmentContent(w http.ResponseWriter, r *http.Re
 	content, contentType, err := h.entity.GetCaseAttachmentContent(r.Context(), attachmentID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetCaseAttachmentContent failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve attachment content.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachment content.")
 		return
 	}
 
@@ -545,7 +545,7 @@ func (h *CaseHandler) DeleteCaseAttachment(w http.ResponseWriter, r *http.Reques
 	result, err := h.entity.DeleteCaseAttachment(r.Context(), attachmentID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity DeleteCaseAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
-		mapUpstreamError(w, err, "Failed to delete case attachment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to delete case attachment.")
 		return
 	}
 
@@ -586,7 +586,7 @@ func (h *CaseHandler) AddCaseTag(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.AddCaseTag(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity AddCaseTag failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to add case tag.")
+		mapUpstreamErrorGeneric(w, err, "Failed to add case tag.")
 		return
 	}
 
@@ -616,7 +616,7 @@ func (h *CaseHandler) RemoveCaseTag(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.entity.RemoveCaseTag(r.Context(), caseID, tagID); err != nil {
 		slog.ErrorContext(r.Context(), "entity RemoveCaseTag failed", "userID", user.UserID, "caseID", caseID, "tagID", tagID, "err", err)
-		mapUpstreamError(w, err, "Failed to remove case tag.")
+		mapUpstreamErrorGeneric(w, err, "Failed to remove case tag.")
 		return
 	}
 
@@ -648,7 +648,7 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.SearchTags(r.Context(), q, limit)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search tags.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search tags.")
 		return
 	}
 
@@ -699,7 +699,7 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		current, err := h.entity.GetCase(r.Context(), caseID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during state validation", "userID", user.UserID, "caseID", caseID, "err", err)
-			mapUpstreamError(w, err, "Failed to retrieve current case state.")
+			mapUpstreamErrorGeneric(w, err, "Failed to retrieve current case state.")
 			return
 		}
 		var currentCase struct {
@@ -751,7 +751,7 @@ func (h *CaseHandler) GetCase(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetCase(r.Context(), caseID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetCase failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve case details.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve case details.")
 		return
 	}
 
@@ -824,7 +824,7 @@ func (h *CaseHandler) CreateCallRequest(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.CreateCallRequest(r.Context(), entityBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCallRequest failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to create call request.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create call request.")
 		return
 	}
 
@@ -873,7 +873,7 @@ func (h *CaseHandler) SearchCallRequests(w http.ResponseWriter, r *http.Request)
 	result, err := h.entity.SearchCallRequests(r.Context(), entityBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCallRequests failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to search call requests.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search call requests.")
 		return
 	}
 
@@ -974,7 +974,7 @@ func (h *CaseHandler) CreateCaseGithubIssue(w http.ResponseWriter, r *http.Reque
 	result, err := h.entity.CreateCaseGithubIssue(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCaseGithubIssue failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamError(w, err, "Failed to create GitHub issue.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create GitHub issue.")
 		return
 	}
 

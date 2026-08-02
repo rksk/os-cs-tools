@@ -38,3 +38,46 @@ export const CASE_TYPE_LABEL: Record<BeCaseType, string> = {
   announcement: "Announcement",
   engagement: "Engagement",
 };
+
+type ChipColor = "default" | "info" | "warning" | "success" | "error";
+
+/** Chip color per case type — `case` (the default/majority type) stays
+ * neutral, the others get a distinguishing color. */
+export const CASE_TYPE_COLOR: Record<BeCaseType, ChipColor> = {
+  case: "default",
+  service_request: "info",
+  security_report_analysis: "warning",
+  announcement: "success",
+  engagement: "default",
+};
+
+/**
+ * Whether severity (S1-S4) is a meaningful concept for this case type. Only
+ * plain support cases (`case`) actually have one set with any intent — every
+ * other type still carries a `severity` in the search response (the field
+ * isn't type-gated upstream), but it's not something anyone sets or acts on
+ * for those, so the UI hides it there rather than show a value nobody put
+ * any thought into. A missing `caseType` (legacy rows) is treated as `case`.
+ */
+export function caseTypeHasSeverity(caseType: BeCaseType | undefined): boolean {
+  return caseType === undefined || caseType === "case";
+}
+
+/** Where a case's own detail page lives, keyed by its type — each
+ * non-`case` type has its own dedicated route/detail page (different
+ * fields/actions), not just a filtered view of `/cases`. */
+export function caseTypeDetailBasePath(caseType: BeCaseType | undefined): string {
+  switch (caseType) {
+    case "service_request":
+      return "/operations/service-requests";
+    case "security_report_analysis":
+      return "/security-center/security-reports";
+    case "engagement":
+      return "/engagements";
+    case "announcement":
+      return "/announcements";
+    case "case":
+    default:
+      return "/cases";
+  }
+}

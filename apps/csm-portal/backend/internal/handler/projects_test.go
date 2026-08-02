@@ -72,7 +72,7 @@ func TestGetProject(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve project.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve project.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProjectClient{
@@ -150,7 +150,7 @@ func TestSearchProjects(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search projects.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search projects.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProjectClient{
@@ -261,7 +261,7 @@ func TestSearchProjectContacts(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search project contacts.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search project contacts.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProjectClient{
@@ -274,6 +274,99 @@ func TestSearchProjectContacts(t *testing.T) {
 				r.SetPathValue("id", projectID)
 				w := httptest.NewRecorder()
 				h.SearchProjectContacts(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
+func TestGetProjectContact(t *testing.T) {
+	const projectID = "11111111-1111-1111-1111-111111111111"
+	const contactID = "22222222-2222-2222-2222-222222222222"
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewProjectHandler(&mockEntityProjectClient{})
+		r := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/contacts/"+contactID, nil)
+		r.SetPathValue("id", projectID)
+		r.SetPathValue("contactId", contactID)
+		w := httptest.NewRecorder()
+		h.GetProjectContact(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects non-UUID project ID", func(t *testing.T) {
+		h := NewProjectHandler(&mockEntityProjectClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/projects/not-a-uuid/contacts/"+contactID, nil))
+		r.SetPathValue("id", "not-a-uuid")
+		r.SetPathValue("contactId", contactID)
+		w := httptest.NewRecorder()
+		h.GetProjectContact(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects non-UUID contact ID", func(t *testing.T) {
+		h := NewProjectHandler(&mockEntityProjectClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/contacts/not-a-uuid", nil))
+		r.SetPathValue("id", projectID)
+		r.SetPathValue("contactId", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.GetProjectContact(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("passes both IDs to upstream and returns 200 with response", func(t *testing.T) {
+		var capturedProjectID, capturedContactID string
+		client := &mockEntityProjectClient{
+			getProjectContactFn: func(_ context.Context, pID, cID string) ([]byte, error) {
+				capturedProjectID = pID
+				capturedContactID = cID
+				return []byte(`{"id":"` + contactID + `","name":"Jane Doe"}`), nil
+			},
+		}
+		h := NewProjectHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/contacts/"+contactID, nil))
+		r.SetPathValue("id", projectID)
+		r.SetPathValue("contactId", contactID)
+		w := httptest.NewRecorder()
+		h.GetProjectContact(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if capturedProjectID != projectID {
+			t.Errorf("upstream received projectID %q, want %q", capturedProjectID, projectID)
+		}
+		if capturedContactID != contactID {
+			t.Errorf("upstream received contactID %q, want %q", capturedContactID, contactID)
+		}
+		resp := decodeJSON[map[string]any](t, w)
+		if resp["id"] != contactID {
+			t.Errorf("response id = %v, want %v", resp["id"], contactID)
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to fetch the project contact.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityProjectClient{
+					getProjectContactFn: func(_ context.Context, _, _ string) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewProjectHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/contacts/"+contactID, nil))
+				r.SetPathValue("id", projectID)
+				r.SetPathValue("contactId", contactID)
+				w := httptest.NewRecorder()
+				h.GetProjectContact(w, r)
 				assertStatus(t, w, tc.wantCode)
 				assertErrorMessage(t, w, tc.wantMsg)
 				assertContentType(t, w, "application/json")

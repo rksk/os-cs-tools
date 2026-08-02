@@ -315,15 +315,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
         : isSecurityReportRoute
           ? "/security-center?tab=security_reports"
           : "/cases";
-  const backLabel = isEngagementRoute
-    ? "Back to engagements"
-    : isServiceRequestRoute
-      ? "Back to service requests"
-      : isAnnouncementRoute
-        ? "Back to announcements"
-        : isSecurityReportRoute
-          ? "Back to security reports"
-          : "Back to cases";
   const detailPath = isEngagementRoute
     ? `/engagements/${caseId}`
     : isServiceRequestRoute
@@ -1451,10 +1442,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
           onClick={() => navigate(resolvedBackPath)}
           sx={{ alignSelf: "flex-start" }}
         >
-          {backLabel}
+          Back
         </Button>
         <QueryErrorState
-          message={`Could not load this case: ${error instanceof Error ? error.message : "unknown error"}`}
+          message={error instanceof Error && error.message.trim() ? error.message : "Could not load this case."}
           error={error}
         />
       </Box>
@@ -1471,7 +1462,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
           onClick={() => navigate(resolvedBackPath)}
           sx={{ alignSelf: "flex-start" }}
         >
-          {backLabel}
+          Back
         </Button>
         <Typography variant="h5">Case not found</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -1522,7 +1513,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         onClick={() => navigate(resolvedBackPath)}
         sx={{ alignSelf: "flex-start" }}
       >
-        {backLabel}
+        Back
       </Button>
 
       <Box
@@ -1693,6 +1684,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
               caseDetail={c}
               onAction={onAction}
               closeBlockedReason={closeBlockedReason}
+              isPending={patchCase.isPending}
             />
           </Box>
         )}

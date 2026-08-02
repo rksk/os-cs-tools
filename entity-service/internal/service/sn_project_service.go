@@ -507,12 +507,14 @@ type snProjectContactsResponse struct {
 type snProjectContact struct {
 	// ID is absent on instances that predate the upstream change, and null for a row
 	// with no linked contact record.
-	ID                   *string  `json:"id"`
-	Name                 string   `json:"name"`
-	Email                string   `json:"email"`
-	RegistrationState    string   `json:"registrationState"`
-	NotificationsEnabled bool     `json:"notificationsEnabled"`
-	Roles                []string `json:"roles"`
+	ID                     *string  `json:"id"`
+	Name                   string   `json:"name"`
+	Email                  string   `json:"email"`
+	RegistrationState      string   `json:"registrationState"`
+	NotificationsEnabled   bool     `json:"notificationsEnabled"`
+	Roles                  []string `json:"roles"`
+	CustomerContactPresent bool     `json:"customerContactPresent"`
+	GrantsCaseAccess       bool     `json:"grantsCaseAccess"`
 }
 
 type snProjectContactService struct {
@@ -564,12 +566,14 @@ func (s *snProjectContactService) SearchProjectContacts(ctx context.Context, pro
 			contactID = &id
 		}
 		contacts = append(contacts, domain.ProjectContact{
-			ID:                   contactID,
-			Name:                 c.Name,
-			Email:                c.Email,
-			RegistrationState:    c.RegistrationState,
-			NotificationsEnabled: c.NotificationsEnabled,
-			Roles:                c.Roles,
+			ID:                     contactID,
+			Name:                   c.Name,
+			Email:                  c.Email,
+			RegistrationState:      c.RegistrationState,
+			NotificationsEnabled:   c.NotificationsEnabled,
+			Roles:                  c.Roles,
+			CustomerContactPresent: c.CustomerContactPresent,
+			GrantsCaseAccess:       c.GrantsCaseAccess,
 		})
 	}
 

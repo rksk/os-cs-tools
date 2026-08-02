@@ -121,7 +121,7 @@ func TestSearchIncidents(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search incidents.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search incidents.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityIncidentClient{
@@ -239,7 +239,7 @@ func TestCreateIncident(t *testing.T) {
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
 		const validPayload = `{"callerId":"11111111-1111-1111-1111-111111111111","category":"SECURITY","serviceId":"22222222-2222-2222-2222-222222222222","impact":"HIGH","urgency":"HIGH","subject":"Something broke"}`
-		for _, tc := range upstreamErrors("Failed to create incident.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create incident.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityIncidentClient{
@@ -320,7 +320,7 @@ func TestGetIncident(t *testing.T) {
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
 		const incidentID = "11111111-1111-1111-1111-111111111111"
-		for _, tc := range upstreamErrors("Failed to retrieve incident.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve incident.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityIncidentClient{
@@ -558,7 +558,7 @@ func TestCreateIncidentComment(t *testing.T) {
 	})
 
 	t.Run("upstream GetIncident error is mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create incident comment.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create incident comment.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityIncidentClient{

@@ -71,7 +71,7 @@ func (h *TaskSlaHandler) SearchTaskSlas(w http.ResponseWriter, r *http.Request) 
 	result, err := h.entity.SearchTaskSlas(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTaskSlas failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search task SLAs.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search task SLAs.")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *TaskSlaHandler) GetTaskSla(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetTaskSla(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetTaskSla failed", "userID", user.UserID, "id", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve task SLA.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve task SLA.")
 		return
 	}
 

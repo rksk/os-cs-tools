@@ -115,7 +115,7 @@ func TestSearchCaseTasks(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve case tasks.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve case tasks.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityTaskClient{
@@ -196,7 +196,7 @@ func TestGetTask(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve task.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve task.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityTaskClient{
@@ -305,7 +305,7 @@ func TestCreateCaseTask(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create case task.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create case task.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityTaskClient{

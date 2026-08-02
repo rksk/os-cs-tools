@@ -70,7 +70,7 @@ func (h *GroupHandler) SearchGroups(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.SearchGroups(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchGroups failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search groups.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search groups.")
 		return
 	}
 

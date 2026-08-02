@@ -47,6 +47,9 @@ import { ErrorPageProvider } from "@context/error-page/ErrorPageContext";
 const CsmDashboardPage = lazy(
   () => import("@features/csm-dashboard/pages/CsmDashboardPage"),
 );
+const DashboardWidgetPreviewPage = lazy(
+  () => import("@features/csm-dashboard/pages/DashboardWidgetPreviewPage"),
+);
 const CsmCasesPage = lazy(
   () => import("@features/csm-cases/pages/CsmCasesPage"),
 );
@@ -88,6 +91,24 @@ const CsmUsersPage = lazy(
 );
 const UserProfilePage = lazy(
   () => import("@features/csm-users/pages/UserProfilePage"),
+);
+const CsmRolesPage = lazy(
+  () => import("@features/csm-admin/pages/CsmRolesPage"),
+);
+const RoleMembersPage = lazy(
+  () => import("@features/csm-admin/pages/RoleMembersPage"),
+);
+const CsmGroupsPage = lazy(
+  () => import("@features/csm-admin/pages/CsmGroupsPage"),
+);
+const GroupMembersPage = lazy(
+  () => import("@features/csm-admin/pages/GroupMembersPage"),
+);
+const CsmTeamsPage = lazy(
+  () => import("@features/csm-admin/pages/CsmTeamsPage"),
+);
+const TeamMembersPage = lazy(
+  () => import("@features/csm-admin/pages/TeamMembersPage"),
 );
 const CsmCustomersLayout = lazy(
   () => import("@features/csm-customers/pages/CsmCustomersLayout"),
@@ -272,33 +293,17 @@ export default function App(): JSX.Element {
                     element={<LegacyDetailRedirect to="/customers/projects" />}
                   />
 
-                  {/* Administration — Users tab is real, others are WIP */}
+                  {/* Administration — Users/Roles/Groups/Teams are real,
+                      Permissions is still WIP. */}
                   <Route path="admin" element={<CsmAdminLayout />}>
                     <Route
                       index
                       element={<SectionIndexRedirect sectionId="admin" />}
                     />
                     <Route path="users" element={<CsmUsersPage />} />
-                    <Route
-                      path="roles"
-                      element={
-                        <CsmComingSoonPage
-                          title="Roles"
-                          description="Role-based access control: define roles and their permission sets."
-                          blockedOn="csm-portal/backend roles endpoints"
-                        />
-                      }
-                    />
-                    <Route
-                      path="groups"
-                      element={
-                        <CsmComingSoonPage
-                          title="Groups"
-                          description="User groups for bulk role assignment and access control."
-                          blockedOn="csm-portal/backend groups endpoints"
-                        />
-                      }
-                    />
+                    <Route path="roles" element={<CsmRolesPage />} />
+                    <Route path="groups" element={<CsmGroupsPage />} />
+                    <Route path="teams" element={<CsmTeamsPage />} />
                     <Route
                       path="permissions"
                       element={
@@ -310,6 +315,14 @@ export default function App(): JSX.Element {
                       }
                     />
                   </Route>
+
+                  {/* Role/group/team member lists, one level below the
+                      directory pages above. Not admin-permission-gated:
+                      standing project rule is to show the action and let the
+                      backend reject it, never gate in the frontend. */}
+                  <Route path="admin/roles/:id" element={<RoleMembersPage />} />
+                  <Route path="admin/groups/:id" element={<GroupMembersPage />} />
+                  <Route path="admin/teams/:id" element={<TeamMembersPage />} />
 
                   {/* Person profile — reachable by clicking any user reference
                       (case creator, assignee, watchers, comment authors,
@@ -325,6 +338,15 @@ export default function App(): JSX.Element {
                   />
 
                   <Route path="dashboard" element={<CsmDashboardPage />} />
+                  {/* Dashboard widget "View more" preview — :previewSlug is
+                      one of WIDGET_RESOURCE_CONFIG's own previewSlug values
+                      (e.g. "cases"), resolved back to a resourceType by
+                      resourceTypeForPreviewSlug. Distinct from the resource's
+                      own real list route (e.g. /cases). */}
+                  <Route
+                    path="dashboard/:previewSlug"
+                    element={<DashboardWidgetPreviewPage />}
+                  />
                   <Route path="cases" element={<CsmCasesPage />} />
                   <Route path="cases/new" element={<CsmCaseCreatePage />} />
                   <Route path="cases/:caseId" element={<CsmCaseDetailPage />} />

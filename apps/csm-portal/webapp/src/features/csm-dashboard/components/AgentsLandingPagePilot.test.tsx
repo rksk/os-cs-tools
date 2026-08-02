@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -26,6 +26,19 @@ const postMock = vi.fn();
 
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ get: getMock, post: postMock }),
+}));
+// A `shape: "list"` tile renders through widgetListConfig.tsx, which pulls in
+// useTimeSheets.ts (time_card's mapper) — that module reads `window.config`
+// at load via `@config/apiConfig`, unavailable under vitest.
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
+vi.mock("@context/current-user/CurrentUserContext", () => ({
+  useCurrentUser: () => ({
+    user: { id: "11111111-aaaa-bbbb-cccc-000000000001" },
+    isLoading: false,
+    isError: false,
+  }),
 }));
 
 import AgentsLandingPagePilot from "@features/csm-dashboard/components/AgentsLandingPagePilot";
@@ -143,5 +156,36 @@ describe("AgentsLandingPagePilot", () => {
     expect(screen.getByText("Open Incidents (Team)")).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.queryByText("3")).not.toBeInTheDocument();
+  });
+
+  it("shows skeleton tiles again and re-fetches every widget's own data when refresh is clicked", async () => {
+    getMock.mockResolvedValueOnce(DASHBOARD_DETAIL);
+    postMock.mockResolvedValue(searchResponseFor(3));
+
+    const { container } = renderWithClient(<AgentsLandingPagePilot dashboardId="agents_pilot" />);
+    await waitFor(() => expect(screen.getByText("My Patches")).toBeInTheDocument());
+    expect(postMock).toHaveBeenCalledTimes(3);
+
+    let resolveRefetch: (value: typeof DASHBOARD_DETAIL) => void = () => {};
+    getMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRefetch = resolve;
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh widget pilot" }));
+
+    // Skeletons reappear immediately, before the held-open refetch resolves —
+    // not just stale tiles sitting there while new data loads underneath.
+    await waitFor(() =>
+      expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(3),
+    );
+
+    resolveRefetch(DASHBOARD_DETAIL);
+
+    // Every widget's own /cases/search re-runs too, not just the dashboard
+    // metadata — 3 more calls on top of the initial 3.
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(6));
+    expect(screen.getByText("My Patches")).toBeInTheDocument();
   });
 });

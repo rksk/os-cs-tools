@@ -94,7 +94,7 @@ export default function ChangeRequestsTab(): JSX.Element {
     () => readChangeRequestFiltersFromUrl(searchParams),
     [searchParams],
   );
-  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(true);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
   const debouncedSearch = useDebouncedValue(filters.search.trim(), 300);
@@ -244,7 +244,7 @@ export default function ChangeRequestsTab(): JSX.Element {
                 <TableRow>
                   <TableCell colSpan={7} align="center">
                     <QueryErrorState
-                      message={`Failed to load change requests: ${error instanceof Error ? error.message : "unknown error"}`}
+                      message={error instanceof Error && error.message.trim() ? error.message : "Failed to load change requests."}
                       error={error}
                     />
                   </TableCell>

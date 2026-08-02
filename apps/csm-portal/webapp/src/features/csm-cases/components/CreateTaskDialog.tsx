@@ -93,7 +93,7 @@ export default function CreateTaskDialog({
   const { data, isFetching, isError } = useSearchUsers({
     filters: {
       ...(search.length > 0 && { searchQuery: search }),
-      roles: INTERNAL_USER_ROLES,
+      roleIds: INTERNAL_USER_ROLES,
       active: true,
     },
     pagination: { limit: 8, offset: 0 },

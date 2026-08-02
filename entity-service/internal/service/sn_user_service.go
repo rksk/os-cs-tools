@@ -109,12 +109,17 @@ type snUserSearchPayload struct {
 }
 
 type snUserFilters struct {
-	SearchQuery string   `json:"searchQuery,omitempty"`
-	Roles       []string `json:"roles,omitempty"`
-	UserNames   []string `json:"userNames,omitempty"`
-	Emails      []string `json:"emails,omitempty"`
-	UserIDs     []string `json:"userIds,omitempty"`
-	Active      *bool    `json:"active,omitempty"`
+	SearchQuery string `json:"searchQuery,omitempty"`
+	// RoleNames is sent under the backing data source's open, unconstrained role
+	// filter rather than its closed "roles" enum -- this service's own role catalogue
+	// is itself configuration-driven (CSM_USER_ROLES) and not limited to that closed
+	// set, so a role outside it (e.g. timecard_approver) must not be sent under "roles",
+	// which the upstream layer rejects at request binding for values it doesn't recognize.
+	RoleNames []string `json:"roleNames,omitempty"`
+	UserNames []string `json:"userNames,omitempty"`
+	Emails    []string `json:"emails,omitempty"`
+	UserIDs   []string `json:"userIds,omitempty"`
+	Active    *bool    `json:"active,omitempty"`
 }
 
 // snProjectContactRowsPayload is the Choreo POST project-contacts/search request body.
@@ -135,10 +140,10 @@ type snProjectContactRowsResponse struct {
 type snProjectContactRow struct {
 	ProjectID              string   `json:"projectId"`
 	ProjectName            string   `json:"projectName"`
+	ProjectKey             string   `json:"projectKey"`
 	ContactEmail           string   `json:"contactEmail"`
 	CustomerContactPresent bool     `json:"customerContactPresent"`
 	CustomerContactEmail   string   `json:"customerContactEmail"`
-	EmailMatchesLogin      bool     `json:"emailMatchesLogin"`
 	RegistrationState      string   `json:"registrationState"`
 	NotificationsEnabled   bool     `json:"notificationsEnabled"`
 	Roles                  []string `json:"roles"`
@@ -163,19 +168,6 @@ type snUserSort struct {
 	Order string `json:"order"`
 }
 
-var validUserRole = map[domain.UserRole]bool{
-	domain.UserRoleInternal:         true,
-	domain.UserRoleAgent:            true,
-	domain.UserRoleAdmin:            true,
-	domain.UserRoleCommenter:        true,
-	domain.UserRoleExternal:         true,
-	domain.UserRoleCustomer:         true,
-	domain.UserRoleCustomerAdmin:    true,
-	domain.UserRolePartner:          true,
-	domain.UserRolePartnerAdmin:     true,
-	domain.UserRoleTimecardApprover: true,
-}
-
 var validUserSortField = map[domain.UserSortField]bool{
 	domain.UserSortFieldName:      true,
 	domain.UserSortFieldCreatedOn: true,
@@ -193,11 +185,8 @@ type snUserService struct {
 
 // NewServiceNowUserService constructs an SNUserService backed by the Choreo API.
 func NewServiceNowUserService(client *integrationservice.Client) SNUserService {
-	// The ABT team registry (GET teams) is static reference data served
-	// by the same Choreo-fronted Ballerina service — no user token needed.
-	domain.SetAbtTeamsFetcher(func(ctx context.Context) (json.RawMessage, error) {
-		return client.Get(ctx, "/teams", "")
-	})
+	// The ABT team registry is deployment configuration installed at startup
+	// (domain.SetAbtTeams), not something this service fetches.
 	return &snUserService{client: client}
 }
 
@@ -218,7 +207,7 @@ func (s *snUserService) SearchUsers(ctx context.Context, req domain.SearchUsersR
 		return domain.SearchSNUsersResponse{}, &apierror.ValidationError{Msg: "emails cannot contain more than 50 values"}
 	}
 	for _, role := range req.Filters.RoleIDs {
-		if !validUserRole[role] {
+		if !isValidUserRole(role) {
 			return domain.SearchSNUsersResponse{}, &apierror.ValidationError{Msg: "roleIds contains invalid value: " + string(role)}
 		}
 	}
@@ -292,7 +281,7 @@ func (s *snUserService) SearchUsers(ctx context.Context, req domain.SearchUsersR
 	payload := snUserSearchPayload{
 		Filters: snUserFilters{
 			SearchQuery: req.Filters.SearchQuery,
-			Roles:       roles,
+			RoleNames:   roles,
 			UserNames:   req.Filters.UserNames,
 			Emails:      req.Filters.Emails,
 			UserIDs:     userIDs,
@@ -560,10 +549,10 @@ func (s *snUserService) resolveProjectAccess(
 		access = append(access, domain.UserProjectAccess{
 			ProjectID:            sysidToUUID(c.ProjectID),
 			ProjectName:          c.ProjectName,
+			ProjectKey:           c.ProjectKey,
 			ContactEmail:         c.ContactEmail,
 			ContactRecordPresent: c.CustomerContactPresent,
 			ContactRecordEmail:   c.CustomerContactEmail,
-			EmailMatchesLogin:    c.EmailMatchesLogin,
 			RegistrationState:    c.RegistrationState,
 			NotificationsEnabled: c.NotificationsEnabled,
 			Roles:                c.Roles,

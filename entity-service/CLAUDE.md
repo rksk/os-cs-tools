@@ -36,6 +36,13 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `DB_NAME`     | yes      | —       | Database name              |
 | `DB_SSLMODE`  | no       | —       | `disable` or `require`    |
 | `SERVER_PORT` | no       | `8080`  | HTTP listen port           |
+| `CSM_TEAM_REGISTRY` | no | — (empty registry) | Curated team vocabulary: `teamKey\|Display Name\|FAMILY` rows separated by commas, family optional (`CRE`/`SRE`). Deliberately has no default — team names are organisation vocabulary and must never be committed to this repo. A malformed row is fatal at startup. |
+| `CSM_USER_ROLES` | no | the 10 built-in role names | Assignable-role allow-list, comma-separated. Validates the `roleIds` user filter and is the catalogue `POST /roles/search` serves, so the dropdown and the filter cannot disagree. |
+
+Both are flat single-line strings on purpose: the deployment platform's
+configuration UI is one-dimensional and stringifies nested collections, so a
+structured registry cannot be deployed at all. Do not introduce nested-collection
+configuration here.
 
 ## Adding a new entity
 

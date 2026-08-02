@@ -131,6 +131,8 @@ export const ApiQueryKeys = {
   CSM_ADMIN_ROLE_DETAIL: "csm-admin-role-detail",
   CSM_ADMIN_GROUPS: "csm-admin-groups",
   CSM_ADMIN_GROUP_DETAIL: "csm-admin-group-detail",
+  CSM_ADMIN_TEAMS: "csm-admin-teams",
+  CSM_ADMIN_TEAM_DETAIL: "csm-admin-team-detail",
   CSM_ADMIN_PERMISSIONS: "csm-admin-permissions",
 } as const;
 

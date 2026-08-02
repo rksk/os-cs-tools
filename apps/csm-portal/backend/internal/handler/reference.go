@@ -92,7 +92,7 @@ func (h *ReferenceHandler) forward(
 	result, err := call(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity "+op+" failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, failureMsg)
+		mapUpstreamErrorGeneric(w, err, failureMsg)
 		return
 	}
 

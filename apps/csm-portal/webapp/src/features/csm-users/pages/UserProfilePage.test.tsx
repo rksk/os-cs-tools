@@ -1,0 +1,256 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
+import { MemoryRouter } from "react-router";
+import { QueryClient, QueryClientProvider, type UseQueryResult } from "@tanstack/react-query";
+import type { NormalizedUserDetail } from "@features/csm-users/types/csmUsers";
+
+const navigateMock = vi.fn();
+const useGetUserByIdMock = vi.fn();
+
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return { ...actual, useParams: () => ({ id: "user-1" }) };
+});
+vi.mock("@hooks/useNavTransition", () => ({
+  useNavTransition: () => navigateMock,
+}));
+// The backend client reads runtime config (`CSM_PORTAL_BACKEND_BASE_URL`) at
+// module load, which isn't present under vitest. `QueryErrorState` imports
+// `BackendApiError` from it directly, so stub the module with a real class
+// (so `instanceof` still works) — same approach as
+// CsmChangeRequestDetailPage.test.tsx. `useBackendApi` also needs a working
+// `post`: `PermissionsCard` resolves role display names via `useSearchRoles`,
+// which goes through this same client.
+const backendPostMock = vi.fn();
+vi.mock("@api/backend/client", () => ({
+  BackendApiError: class BackendApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+  useBackendApi: () => ({ post: backendPostMock }),
+}));
+vi.mock("@features/csm-users/api/useGetUserById", () => ({
+  useGetUserById: () => useGetUserByIdMock(),
+}));
+
+// Imported after the mocks above so the module picks them up.
+import UserProfilePage from "@features/csm-users/pages/UserProfilePage";
+
+const INTERNAL_USER: NormalizedUserDetail = {
+  id: "user-1",
+  userName: "jane.doe",
+  name: "Jane Doe",
+  email: "jane.doe@example.com",
+  timezone: "UTC",
+  userType: "internal",
+  active: true,
+  roles: ["internal", "agent"],
+  phone: "+10000000000",
+  createdOn: "2025-01-01T00:00:00Z",
+  updatedOn: "2025-06-01T00:00:00Z",
+  groups: [{ id: "grp-1", name: "Tier 2 support" }],
+  teams: [{ id: "team-1", name: "CRE", family: "CRE" }],
+};
+
+const BLOCKED_EXTERNAL_USER: NormalizedUserDetail = {
+  id: "user-2",
+  userName: "john.smith",
+  name: "John Smith",
+  email: "john.smith@example.com",
+  timezone: null,
+  userType: "external",
+  active: true,
+  roles: ["customer"],
+  createdOn: "2025-01-01T00:00:00Z",
+  updatedOn: "2025-06-01T00:00:00Z",
+  projectAccess: [
+    {
+      projectId: "proj-1",
+      projectName: "Payments Platform",
+      projectKey: "PAYPLAT",
+      contactEmail: "john.smith@example.com",
+      contactRecordPresent: false,
+      grantsCaseAccess: false,
+    },
+    {
+      projectId: "proj-2",
+      projectName: "Identity Platform",
+      projectKey: "IDPLAT",
+      contactEmail: "john.smith@example.com",
+      contactRecordPresent: true,
+      contactRecordEmail: "john.smith@example.com",
+      registrationState: "registered",
+      notificationsEnabled: true,
+      roles: ["viewer"],
+      grantsCaseAccess: true,
+    },
+  ],
+};
+
+function mockQueryResult(
+  overrides: Partial<UseQueryResult<NormalizedUserDetail | null, Error>>,
+): void {
+  useGetUserByIdMock.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
+    ...overrides,
+  });
+}
+
+function renderPage(): ReturnType<typeof render> {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <UserProfilePage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const ROLES_RESPONSE = {
+  roles: [
+    { id: "internal", name: "Internal" },
+    { id: "agent", name: "Agent" },
+    { id: "customer", name: "Customer" },
+  ],
+  total: 3,
+  limit: 50,
+  offset: 0,
+};
+
+describe("UserProfilePage", () => {
+  beforeEach(() => {
+    backendPostMock.mockReset();
+    backendPostMock.mockResolvedValue(ROLES_RESPONSE);
+  });
+
+  it("renders a loading skeleton while the query is pending", () => {
+    mockQueryResult({ isLoading: true });
+    const { container } = renderPage();
+    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBeGreaterThan(0);
+  });
+
+  it("renders an error state when the query fails", () => {
+    mockQueryResult({ isError: true, error: new Error("boom") });
+    renderPage();
+    expect(screen.getByText("boom")).toBeInTheDocument();
+  });
+
+  it("renders a not-found state when the user is null", () => {
+    mockQueryResult({ data: null });
+    renderPage();
+    expect(screen.getByText(/User not found/i)).toBeInTheDocument();
+  });
+
+  it("renders an internal user's team inline in the Overview card, plus groups and roles", async () => {
+    mockQueryResult({ data: INTERNAL_USER });
+    renderPage();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByText("+10000000000")).toBeInTheDocument();
+    expect(screen.getByText("Tier 2 support")).toBeInTheDocument();
+    expect(screen.getByText("CRE (CRE)")).toBeInTheDocument();
+
+    // Role labels resolve through the roles catalogue, same as the users
+    // list, so this reads "Agent" (and "Internal", appearing twice: once as
+    // the account-type chip, once as a role chip) rather than the raw keys
+    // "agent"/"internal".
+    expect(await screen.findByText("Agent", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getAllByText("Internal", { selector: ".MuiChip-label" }).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText("agent", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+  });
+
+  it("renders 'Unassigned' rather than hiding the field when an internal user has no team", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, teams: [] } });
+    renderPage();
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+  });
+
+  it("does not render a team field or a User groups cluster for an external user", () => {
+    mockQueryResult({ data: BLOCKED_EXTERNAL_USER });
+    renderPage();
+    expect(screen.queryByText("Team")).not.toBeInTheDocument();
+    expect(screen.queryByText(/User groups/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the project key and the blocking reason for a project that doesn't grant an external user case access", () => {
+    mockQueryResult({ data: BLOCKED_EXTERNAL_USER });
+    renderPage();
+
+    // The blocked project surfaces its reason...
+    expect(screen.getByText("Payments Platform")).toBeInTheDocument();
+    expect(screen.getByText("PAYPLAT")).toBeInTheDocument();
+    expect(screen.getByText("No access", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/No contact record is linked to this project/i),
+    ).toBeInTheDocument();
+
+    // ...while the granted, registered project shows "Has access" and no reason.
+    expect(screen.getByText("Identity Platform")).toBeInTheDocument();
+    expect(screen.getByText("IDPLAT")).toBeInTheDocument();
+    expect(screen.getByText("Has access", { selector: ".MuiChip-label" })).toBeInTheDocument();
+
+    expect(screen.getByText(/Blocked on 1 of 2 projects/i)).toBeInTheDocument();
+  });
+
+  it("renders 'Invited' rather than 'Has access' for a granted row still pending registration", () => {
+    mockQueryResult({
+      data: {
+        ...BLOCKED_EXTERNAL_USER,
+        projectAccess: [
+          {
+            projectId: "proj-3",
+            projectName: "Analytics Platform",
+            projectKey: "ANALYTICS",
+            contactEmail: "john.smith@example.com",
+            contactRecordPresent: true,
+            contactRecordEmail: "john.smith@example.com",
+            registrationState: "invited",
+            grantsCaseAccess: true,
+          },
+        ],
+      },
+    });
+    renderPage();
+    expect(screen.getByText("Invited", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.queryByText("Has access", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+  });
+
+  it("renders 'No project access records found' rather than hiding the card for an external user with none", () => {
+    mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, projectAccess: [] } });
+    renderPage();
+    expect(
+      screen.getByText(/No project access records found for this user/i),
+    ).toBeInTheDocument();
+  });
+
+  it("calls out an inactive account as blocking access to every project", () => {
+    mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, active: false } });
+    renderPage();
+    expect(screen.getByText(/account is inactive/i)).toBeInTheDocument();
+  });
+});

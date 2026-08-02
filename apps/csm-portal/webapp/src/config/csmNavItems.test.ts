@@ -91,6 +91,6 @@ describe("rendersOwnWipPage", () => {
     const flagged = flattenNavNodes()
       .filter((node) => node.rendersOwnWipPage)
       .map((node) => node.id);
-    expect(flagged).toEqual(["admin.roles", "admin.groups", "admin.permissions"]);
+    expect(flagged).toEqual(["admin.permissions"]);
   });
 });

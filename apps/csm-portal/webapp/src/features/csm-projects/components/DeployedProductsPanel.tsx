@@ -176,7 +176,7 @@ export default function DeployedProductsPanel({
   if (isError) {
     return (
       <QueryErrorState
-        message={`Failed to load deployed products: ${error instanceof Error ? error.message : "unknown error"}`}
+        message={error instanceof Error && error.message.trim() ? error.message : "Failed to load deployed products."}
         error={error}
       />
     );

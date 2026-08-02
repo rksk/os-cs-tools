@@ -3332,17 +3332,21 @@ components:
     UserProjectAccess:
       type: object
       description: >
-        One project-contact row for a user, reported as stored rather than as filtered. The
-        backing access rule grants access only when the row's email matches the login
-        exactly AND a contact record is linked; rows failing either test make the project,
-        and every case on it, silently invisible to that user.
-      required: [projectId, projectName, contactEmail, contactRecordPresent, emailMatchesLogin, grantsCaseAccess]
+        One project-contact row for a user, reported as stored rather than as filtered. A
+        row with no linked contact record makes the project, and every case on it, silently
+        invisible to that user. grantsCaseAccess mirrors contactRecordPresent directly --
+        deliberately not the stricter email-match rule the live access check enforces, since
+        that only diverges for integration/system accounts.
+      required: [projectId, projectName, projectKey, contactEmail, contactRecordPresent, grantsCaseAccess]
       properties:
         projectId:
           type: string
           format: uuid
         projectName:
           type: string
+        projectKey:
+          type: string
+          description: The project's short human-readable key (e.g. "TESTPROSSUB").
         contactEmail:
           type: string
           description: The email as stored on the row itself.
@@ -3352,8 +3356,6 @@ components:
         contactRecordEmail:
           type: string
           description: The linked record's own email, which may differ from contactEmail.
-        emailMatchesLogin:
-          type: boolean
         registrationState:
           type: string
         notificationsEnabled:
@@ -3900,6 +3902,17 @@ components:
           type: array
           items:
             type: string
+        customerContactPresent:
+          type: boolean
+          description: >
+            Whether a contact record is linked to this row at all. False is the same fault an
+            absent `id` signals, restated as an explicit boolean.
+        grantsCaseAccess:
+          type: boolean
+          description: >
+            Whether this row would actually grant its person visibility into this project's
+            cases. Mirrors `customerContactPresent` directly — a row can be listed here without
+            granting access.
 
     SearchProjectContactsResponse:
       type: object

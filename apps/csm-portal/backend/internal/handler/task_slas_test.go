@@ -77,7 +77,7 @@ func TestSearchTaskSlas(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search task SLAs.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search task SLAs.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityTaskSlaClient{
@@ -154,7 +154,7 @@ func TestGetTaskSla(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve task SLA.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve task SLA.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityTaskSlaClient{

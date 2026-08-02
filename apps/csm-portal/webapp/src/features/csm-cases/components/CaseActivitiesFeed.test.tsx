@@ -97,7 +97,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    const { container } = render(
+    const { container } = renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -132,7 +132,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -159,7 +159,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -183,7 +183,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -192,6 +192,60 @@ describe("CaseActivitiesFeed", () => {
     // The time is a permalink anchor to the entry, same pattern comments use.
     const permalink = document.querySelector(`a[href="#${entry.id}"]`);
     expect(permalink).not.toBeNull();
+  });
+
+  it("links the actor to their profile when actorUser carries a resolvable id", () => {
+    const entry: CaseAuditEntry = {
+      id: "fc-8",
+      kind: "field_change",
+      actor: "Jane Doe",
+      actorUser: { id: "user-1", email: "jane.doe@example.com", name: "Jane Doe" },
+      createdAt: "2026-07-01T00:00:00Z",
+      changes: [
+        {
+          field: "state",
+          fieldLabel: "State",
+          previousValue: "In Progress",
+          newValue: "Resolved",
+        },
+      ],
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
+    );
+
+    const link = screen.getByRole("link", { name: "Jane Doe" });
+    expect(link).toHaveAttribute("href", "/people/user-1");
+  });
+
+  it("renders the actor as plain text (no link) when the activity's email field is really a username, not an address", () => {
+    // Real backend shape: activity entries never resolve `id`, and `email`
+    // sometimes holds an automation account name (e.g. "system"/"guest")
+    // rather than an address — `isPlausibleEmail` correctly refuses to
+    // resolve it, and no id-lookup request should ever fire for it.
+    const entry: CaseAuditEntry = {
+      id: "fc-9",
+      kind: "field_change",
+      actor: "System",
+      actorUser: { id: null, email: "system", name: "System" },
+      createdAt: "2026-07-01T00:00:00Z",
+      changes: [
+        {
+          field: "state",
+          fieldLabel: "State",
+          previousValue: "In Progress",
+          newValue: "Resolved",
+        },
+      ],
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
+    );
+
+    expect(screen.getByText("System")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "System" })).not.toBeInTheDocument();
   });
 
   it("renders every backend-provided change line, even one matching the entry's own timestamp", () => {
@@ -218,7 +272,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -242,7 +296,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    const { container } = render(
+    const { container } = renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -264,7 +318,7 @@ describe("CaseActivitiesFeed", () => {
       createdAt: "2026-07-01T00:00:00Z",
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 

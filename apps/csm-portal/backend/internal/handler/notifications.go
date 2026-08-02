@@ -105,7 +105,7 @@ func (h *NotificationHandler) PostGoogleChatAlert(w http.ResponseWriter, r *http
 		// err's text is safe to log: SendIncidentAlert never wraps a URL
 		// (which would carry the webhook's key/token) into its error text.
 		slog.ErrorContext(r.Context(), "google chat SendIncidentAlert failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to send Google Chat alert.")
+		mapUpstreamErrorGeneric(w, err, "Failed to send Google Chat alert.")
 		return
 	}
 

@@ -83,7 +83,7 @@ func TestCreateProblem(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create problem.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create problem.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProblemClient{
@@ -163,7 +163,7 @@ func TestGetProblem(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve problem.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve problem.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProblemClient{
@@ -241,7 +241,7 @@ func TestSearchProblems(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search problems.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search problems.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProblemClient{

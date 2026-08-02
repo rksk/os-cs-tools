@@ -17,6 +17,7 @@
 import {
   Box,
   Button,
+  CircularProgress,
   Menu,
   MenuItem,
   Tooltip,
@@ -381,6 +382,11 @@ interface CaseActionBarProps {
    * or stale. Only ever applied to a `targetState === "closed"` button.
    */
   closeBlockedReason?: string;
+  /** True while a lifecycle PATCH from this bar (e.g. "Assign to me") is in
+   * flight — disables the primary action and swaps its icon for a spinner,
+   * so a click has visible feedback even before the resulting toast/state
+   * change lands. */
+  isPending?: boolean;
 }
 
 /**
@@ -394,6 +400,7 @@ export default function CaseActionBar({
   caseDetail,
   onAction,
   closeBlockedReason,
+  isPending = false,
 }: CaseActionBarProps): JSX.Element {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [stateMenuAnchor, setStateMenuAnchor] = useState<HTMLElement | null>(null);
@@ -435,8 +442,8 @@ export default function CaseActionBar({
               size="small"
               variant="contained"
               color={p.color}
-              startIcon={p.icon}
-              disabled={blocked}
+              startIcon={isPending ? <CircularProgress size={14} color="inherit" /> : p.icon}
+              disabled={blocked || isPending}
               onClick={() => runPrimary(p)}
             >
               {p.label}
@@ -457,7 +464,8 @@ export default function CaseActionBar({
             size="small"
             variant="contained"
             color="primary"
-            endIcon={<ChevronDown size={16} />}
+            endIcon={isPending ? <CircularProgress size={14} color="inherit" /> : <ChevronDown size={16} />}
+            disabled={isPending}
             onClick={(e) => setStateMenuAnchor(e.currentTarget)}
           >
             Change state

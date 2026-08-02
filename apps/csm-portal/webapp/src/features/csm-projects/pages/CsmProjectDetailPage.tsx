@@ -33,6 +33,7 @@ import { useGetProject } from "@features/csm-projects/api/useGetProject";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
+import ProjectContactsTab from "@features/csm-projects/components/ProjectContactsTab";
 import {
   endDateLabel,
   startDateLabel,
@@ -314,16 +315,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
 
       {activeTab === "deployments" && <DeploymentsTab projectId={p.id} />}
 
-      {activeTab === "contacts" && (
-        <Card sx={{ p: 2.5 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Project contacts
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Project contacts are not available yet.
-          </Typography>
-        </Card>
-      )}
+      {activeTab === "contacts" && <ProjectContactsTab projectId={p.id} />}
 
       {activeTab === "workItems" && (
         <CsmIssuesView

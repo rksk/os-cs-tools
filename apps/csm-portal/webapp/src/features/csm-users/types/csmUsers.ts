@@ -14,7 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export type UserType = "internal" | "customer";
+/**
+ * Whether the user is staff or a customer/partner contact. The value set
+ * differs by backing data source: one emits `internal`, `customer` or
+ * `system`, the other `internal` or `external`. Callers branching on
+ * staff-vs-not must treat everything other than `internal` alike, not just
+ * `customer` or just `external` — see `isInternalUser` in `UserProfilePage`.
+ */
+export type UserType = "internal" | "external" | "customer" | "system";
 
 /**
  * Roles as modelled by the ServiceNow data source. `internal`/`agent`/`admin`
@@ -53,7 +60,10 @@ export interface User {
 
 /**
  * User shape returned by the ServiceNow data source. No `firstName`/`lastName`
- * (use `name`), no `userType` (use `roles`), no `hasMore` on the envelope.
+ * (use `name`), no `hasMore` on the envelope. `userType` and `mobilePhone` are
+ * present on the full-profile response (`GET /users/{id}`); `userType` may be
+ * absent from the search-list response on an older backend, so callers must
+ * still fall back to `roles` (see `isInternalUser`).
  */
 export interface SnUser {
   id: string;
@@ -61,19 +71,85 @@ export interface SnUser {
   name: string;
   email: string;
   timeZone?: string | null;
+  mobilePhone?: string | null;
+  userType?: UserType;
   active: boolean;
   createdOn: string;
   updatedOn: string;
   roles: string[];
 }
 
+/** One group the user belongs to. */
+export interface UserGroupRef {
+  id: string;
+  name: string;
+}
+
+/** One CRE/SRE team the user belongs to (a subset of their groups). */
+export interface UserTeamRef {
+  id: string;
+  name: string;
+  family?: string;
+}
+
+/**
+ * One project-contact row for an external user, reported as stored rather
+ * than as filtered. A row with no linked contact record makes the project,
+ * and every case on it, silently invisible to that user —
+ * {@link grantsCaseAccess} is the verdict, mirroring
+ * {@link contactRecordPresent} directly (deliberately not the stricter
+ * email-match rule the live access check enforces, since that only diverges
+ * for integration/system accounts).
+ */
+export interface UserProjectAccess {
+  projectId: string;
+  projectName: string;
+  projectKey: string;
+  contactEmail: string;
+  contactRecordPresent: boolean;
+  contactRecordEmail?: string;
+  registrationState?: string;
+  notificationsEnabled?: boolean;
+  roles?: string[];
+  grantsCaseAccess: boolean;
+}
+
+/**
+ * `GET /users/{id}` response: the user row plus every group they belong to,
+ * the subset of those that are teams, and — for external contacts — their
+ * per-project access. Populated only for users sourced from the data source
+ * that carries group and project-contact records. The membership and
+ * project-access blocks are best-effort: empty rather than absent when their
+ * upstream lookup fails.
+ */
+export interface SnUserDetail extends SnUser {
+  groups?: UserGroupRef[];
+  teams?: UserTeamRef[];
+  /** Present for external contacts only. */
+  projectAccess?: UserProjectAccess[];
+}
+
 export interface UserSearchFilters {
   searchQuery?: string;
-  /** ServiceNow data source only. */
-  roles?: SnUserRole[];
+  /**
+   * Filter by one or more role keys, as returned by `POST /roles/search`.
+   * Backing data source only. Named `roleIds` (not `roles`) to match the
+   * backend contract — a role's "id" is its key (e.g. "agent"), not a
+   * separate numeric identifier.
+   */
+  roleIds?: string[];
+  /** Restrict to specific users by id. Intersects with the other filters and
+   * lifts the active-only default. Backing data source only. */
+  userIds?: string[];
+  /** Restrict to members of these groups (group ids). Backing data source
+   * only. */
+  groupIds?: string[];
+  /** Restrict to members of these teams, by team registry key (not a UUID).
+   * Backing data source only. */
+  teamIds?: string[];
   userNames?: string[];
   emails?: string[];
-  /** ServiceNow data source only. */
+  /** Backing data source only. */
   active?: boolean | null;
 }
 
@@ -122,12 +198,15 @@ export interface NormalizedUser {
   name: string;
   email: string;
   timezone: string | null;
-  /** Present only from the postgres source. */
   userType?: UserType;
   /** Present only from the ServiceNow source. */
   active?: boolean;
   /** Present only from the ServiceNow source. */
   roles?: string[];
+  /** Present from either source, when the caller requested the full profile. */
+  phone?: string | null;
+  createdOn?: string;
+  updatedOn?: string;
 }
 
 export interface NormalizedUserSearchResult {
@@ -151,8 +230,12 @@ export function normalizeUser(u: User | SnUser): NormalizedUser {
       name: u.name?.trim() || "",
       email: u.email,
       timezone: u.timeZone ?? null,
+      userType: u.userType,
       active: u.active,
       roles: u.roles,
+      phone: u.mobilePhone ?? null,
+      createdOn: u.createdOn,
+      updatedOn: u.updatedOn,
     };
   }
   return {
@@ -162,6 +245,30 @@ export function normalizeUser(u: User | SnUser): NormalizedUser {
     email: u.email,
     timezone: u.timezone ?? null,
     userType: u.userType,
+    phone: u.phone ?? null,
+    createdOn: u.createdAt,
+    updatedOn: u.updatedAt,
+  };
+}
+
+/**
+ * Full-profile counterpart of {@link NormalizedUser}: adds the group/team
+ * memberships and (for external contacts) per-project access that only
+ * `GET /users/{id}` returns.
+ */
+export interface NormalizedUserDetail extends NormalizedUser {
+  groups?: UserGroupRef[];
+  teams?: UserTeamRef[];
+  projectAccess?: UserProjectAccess[];
+}
+
+/** Maps `GET /users/{id}`'s response into {@link NormalizedUserDetail}. */
+export function normalizeUserDetail(u: SnUserDetail): NormalizedUserDetail {
+  return {
+    ...normalizeUser(u),
+    groups: u.groups,
+    teams: u.teams,
+    projectAccess: u.projectAccess,
   };
 }
 

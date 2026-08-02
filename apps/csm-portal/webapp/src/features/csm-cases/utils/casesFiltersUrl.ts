@@ -96,7 +96,7 @@ export function readCasesFiltersFromUrl(
     ? parseCsv(params.get("workStates"), VALID_WORK_STATES)
     : [];
   return {
-    search: params.get("q") ?? "",
+    search: params.get("search") ?? "",
     severities: parseCsv(params.get("severities"), VALID_SEVERITIES),
     states,
     caseTypes: parseCsv(params.get("types"), VALID_CASE_TYPES),
@@ -114,7 +114,7 @@ export function readCasesFiltersFromUrl(
  */
 export function writeCasesFiltersToUrl(f: CasesFilters): URLSearchParams {
   const out = new URLSearchParams();
-  if (f.search) out.set("q", f.search);
+  if (f.search) out.set("search", f.search);
   if (f.severities.length) out.set("severities", f.severities.join(","));
   if (f.states.length) out.set("states", f.states.join(","));
   if (f.caseTypes.length) out.set("types", f.caseTypes.join(","));

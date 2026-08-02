@@ -357,7 +357,7 @@ func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request
 	result, err := h.entity.SearchIncidents(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchIncidents failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search incidents.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search incidents.")
 		return
 	}
 
@@ -398,7 +398,7 @@ func (h *IncidentHandler) CreateIncident(w http.ResponseWriter, r *http.Request)
 	result, err := h.entity.CreateIncident(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateIncident failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create incident.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create incident.")
 		return
 	}
 
@@ -422,7 +422,7 @@ func (h *IncidentHandler) GetIncident(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetIncident(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetIncident failed", "userID", user.UserID, "incidentID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to retrieve incident.")
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve incident.")
 		return
 	}
 
@@ -510,7 +510,7 @@ func (h *IncidentHandler) CreateIncidentComment(w http.ResponseWriter, r *http.R
 
 	if _, err := h.entity.GetIncident(r.Context(), id); err != nil {
 		slog.ErrorContext(r.Context(), "entity GetIncident failed during comment guard", "userID", user.UserID, "incidentID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to create incident comment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create incident comment.")
 		return
 	}
 
@@ -523,7 +523,7 @@ func (h *IncidentHandler) CreateIncidentComment(w http.ResponseWriter, r *http.R
 	result, err := h.entity.CreateComment(r.Context(), newBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateComment failed", "userID", user.UserID, "incidentID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to create incident comment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create incident comment.")
 		return
 	}
 
@@ -572,7 +572,7 @@ func (h *IncidentHandler) SearchIncidentComments(w http.ResponseWriter, r *http.
 	result, err := h.entity.SearchComments(r.Context(), newBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "incidentID", id, "err", err)
-		mapUpstreamError(w, err, "Failed to search incident comments.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search incident comments.")
 		return
 	}
 

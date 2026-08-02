@@ -85,7 +85,7 @@ func TestGetAccount(t *testing.T) {
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
 		const accountID = "11111111-1111-1111-1111-111111111111"
-		for _, tc := range upstreamErrors("Failed to retrieve account.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve account.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityAccountClient{
@@ -163,7 +163,7 @@ func TestSearchAccounts(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search accounts.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search accounts.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityAccountClient{
@@ -274,7 +274,7 @@ func TestSearchAccountContacts(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search account contacts.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search account contacts.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityAccountClient{

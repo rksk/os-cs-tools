@@ -72,7 +72,7 @@ func (h *TimeCardHandler) SearchTimeCards(w http.ResponseWriter, r *http.Request
 	result, err := h.entity.SearchTimeCards(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTimeCards failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search time cards.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search time cards.")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *TimeCardHandler) CreateTimeCard(w http.ResponseWriter, r *http.Request)
 	result, err := h.entity.CreateTimeCard(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateTimeCard failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to create time card.")
+		mapUpstreamErrorGeneric(w, err, "Failed to create time card.")
 		return
 	}
 

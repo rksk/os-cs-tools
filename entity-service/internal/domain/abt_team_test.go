@@ -17,31 +17,20 @@
 package domain
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
+	"strings"
 	"testing"
 )
 
-// abtTeamsFixtureJSON is a representative (not real) flat ABT registry:
-// several CRE teams, an SRE team, and an unclassified team with no "family"
-// field at all (mirrors the 6 unclassified teams in the real 15-team list).
-const abtTeamsFixtureJSON = `{
-	"teams": [
-		{"teamKey": "castor", "displayName": "Castor", "family": "CRE"},
-		{"teamKey": "sirius", "displayName": "Sirius", "family": "CRE"},
-		{"teamKey": "vega", "displayName": "Vega", "family": "CRE"},
-		{"teamKey": "apollo", "displayName": "Apollo SRE Group", "family": "SRE"},
-		{"teamKey": "iam_us", "displayName": "IAM-US", "family": "CRE"},
-		{"teamKey": "customer_onboarding", "displayName": "Customer Onboarding"}
-	]
-}`
+// abtTeamRegistryFixture is a representative registry in the configured wire
+// form: two classified teams, one unclassified (2-field) team, and a
+// hyphenated display name. Every name here is an invented placeholder -- real
+// team names are organisation vocabulary and never appear in this repo.
+const abtTeamRegistryFixture = "alpha|Alpha Team|CRE,beta|Beta SRE Group|SRE,delta|Delta-Two|cre,gamma|Gamma Team"
 
-// resetAbtRegistry clears package-level ABT registry state so the calling test
-// starts from a clean, unloaded cache, and registers a cleanup that clears it
-// again on exit. Without the cleanup the last test to run leaves its fetcher and
-// cached teams in place, which any later test in this package would silently
-// inherit -- making results order-dependent.
+// resetAbtRegistry clears the package-level registry so the calling test starts
+// clean, and registers a cleanup that clears it again on exit. Without the
+// cleanup the last test to run leaves its teams in place, which any later test
+// in this package would silently inherit -- making results order-dependent.
 func resetAbtRegistry(t *testing.T) {
 	t.Helper()
 	clearAbtRegistry()
@@ -51,9 +40,17 @@ func resetAbtRegistry(t *testing.T) {
 func clearAbtRegistry() {
 	abtMu.Lock()
 	defer abtMu.Unlock()
-	abtFetcher = nil
-	abtLoaded = false
 	abtTeams = nil
+}
+
+// mustSetRegistry parses raw and installs it, failing the test on a parse error.
+func mustSetRegistry(t *testing.T, raw string) {
+	t.Helper()
+	teams, err := ParseAbtTeamRegistry(raw)
+	if err != nil {
+		t.Fatalf("ParseAbtTeamRegistry(%q) returned error: %v", raw, err)
+	}
+	SetAbtTeams(teams)
 }
 
 // TestAbtRegistry_StartsClean deliberately does NOT call resetAbtRegistry: it asserts that
@@ -61,165 +58,221 @@ func clearAbtRegistry() {
 // resetAbtRegistry's cleanup load-bearing -- drop the cleanup and this fails under
 // -shuffle=on whenever it is not scheduled first.
 func TestAbtRegistry_StartsClean(t *testing.T) {
-	abtMu.Lock()
-	fetcher, loaded, teams := abtFetcher, abtLoaded, abtTeams
-	abtMu.Unlock()
+	abtMu.RLock()
+	teams := abtTeams
+	abtMu.RUnlock()
 
-	if fetcher != nil || loaded || teams != nil {
-		t.Fatalf("registry not clean on entry: fetcher set=%t loaded=%t teams=%d; an earlier test leaked state",
-			fetcher != nil, loaded, len(teams))
+	if teams != nil {
+		t.Fatalf("registry not clean on entry: %d teams; an earlier test leaked state", len(teams))
 	}
 }
 
-func TestAbtRegistry_FetchAndCache_PopulatesCorrectly(t *testing.T) {
+func TestParseAbtTeamRegistry_PopulatesCorrectly(t *testing.T) {
 	resetAbtRegistry(t)
-	SetAbtTeamsFetcher(func(ctx context.Context) (json.RawMessage, error) {
-		return json.RawMessage(abtTeamsFixtureJSON), nil
-	})
+	mustSetRegistry(t, abtTeamRegistryFixture)
 
 	names := AbtGroupNames()
-	if len(names) != 6 {
-		t.Fatalf("AbtGroupNames() returned %d names, want 6: %v", len(names), names)
+	if len(names) != 4 {
+		t.Fatalf("AbtGroupNames() returned %d names, want 4: %v", len(names), names)
 	}
 
-	// Sirius: CRE.
-	sirius, ok := FindAbtTeamByGroupName("Sirius")
+	// Three fields, family CRE.
+	alpha, ok := FindAbtTeamByGroupName("Alpha Team")
 	if !ok {
-		t.Fatalf("expected to find Sirius")
+		t.Fatalf("expected to find Alpha Team")
 	}
-	if sirius.TeamKey != "sirius" || sirius.Family != AbtFamilyCRE {
-		t.Fatalf("Sirius = %+v, want teamKey=sirius family=cre", sirius)
+	if alpha.TeamKey != "alpha" || alpha.Family != AbtFamilyCRE {
+		t.Fatalf("Alpha Team = %+v, want teamKey=alpha family=cre", alpha)
 	}
 
-	// IAM-US: flat team (not a sub-team), CRE.
-	iamUS, ok := FindAbtTeamByGroupName("IAM-US")
+	// Three fields, family SRE, multi-word display name.
+	beta, ok := FindAbtTeamByGroupName("Beta SRE Group")
 	if !ok {
-		t.Fatalf("expected to find IAM-US")
+		t.Fatalf("expected to find Beta SRE Group")
 	}
-	if iamUS.TeamKey != "iam_us" || iamUS.Family != AbtFamilyCRE {
-		t.Fatalf("IAM-US = %+v, want teamKey=iam_us family=cre", iamUS)
+	if beta.TeamKey != "beta" || beta.Family != AbtFamilySRE {
+		t.Fatalf("Beta SRE Group = %+v, want teamKey=beta family=sre", beta)
 	}
 
-	// Apollo SRE Group: SRE.
-	apollo, ok := FindAbtTeamByGroupName("Apollo SRE Group")
+	// A lowercase family in config normalizes the same way an uppercase one does.
+	delta, ok := FindAbtTeamByGroupName("Delta-Two")
 	if !ok {
-		t.Fatalf("expected to find Apollo SRE Group")
+		t.Fatalf("expected to find Delta-Two")
 	}
-	if apollo.TeamKey != "apollo" || apollo.Family != AbtFamilySRE {
-		t.Fatalf("Apollo = %+v, want teamKey=apollo family=sre", apollo)
+	if delta.TeamKey != "delta" || delta.Family != AbtFamilyCRE {
+		t.Fatalf("Delta-Two = %+v, want teamKey=delta family=cre", delta)
 	}
 
-	// Customer Onboarding: no family field at all -- must still parse and
-	// match, with an empty Family rather than a parse error.
-	onboarding, ok := FindAbtTeamByGroupName("Customer Onboarding")
+	// Two fields: no family, and that is not an error.
+	gamma, ok := FindAbtTeamByGroupName("Gamma Team")
 	if !ok {
-		t.Fatalf("expected to find Customer Onboarding")
+		t.Fatalf("expected to find Gamma Team")
 	}
-	if onboarding.TeamKey != "customer_onboarding" || onboarding.Family != "" {
-		t.Fatalf("Customer Onboarding = %+v, want teamKey=customer_onboarding family=\"\"", onboarding)
+	if gamma.TeamKey != "gamma" || gamma.Family != "" {
+		t.Fatalf("Gamma Team = %+v, want teamKey=gamma family=\"\"", gamma)
+	}
+
+	// Lookup by key works for the same rows.
+	if team, ok := FindAbtTeamByKey("beta"); !ok || team.DisplayName != "Beta SRE Group" {
+		t.Fatalf("FindAbtTeamByKey(\"beta\") = %+v, %t; want the Beta SRE Group row", team, ok)
+	}
+	if _, ok := FindAbtTeamByKey("nope"); ok {
+		t.Fatalf("expected no match for an unknown team key")
 	}
 
 	// Unknown name -> no match.
 	if _, ok := FindAbtTeamByGroupName("Does Not Exist"); ok {
 		t.Fatalf("expected no match for unknown group name")
 	}
+
+	// AbtTeams preserves configured order.
+	all := AbtTeams()
+	if len(all) != 4 || all[0].TeamKey != "alpha" || all[3].TeamKey != "gamma" {
+		t.Fatalf("AbtTeams() = %+v, want the 4 configured rows in order", all)
+	}
 }
 
-func TestAbtRegistry_FetchFailure_DegradesToEmptyRegistry(t *testing.T) {
+// TestParseAbtTeamRegistry_TrimsWhitespace covers the value someone types into
+// a deployment platform's web form, with spaces around the separators.
+func TestParseAbtTeamRegistry_TrimsWhitespace(t *testing.T) {
 	resetAbtRegistry(t)
-	SetAbtTeamsFetcher(func(ctx context.Context) (json.RawMessage, error) {
-		return nil, errors.New("upstream unavailable")
-	})
+	mustSetRegistry(t, "  alpha | Alpha Team | CRE , beta | Beta Team ")
+
+	if _, ok := FindAbtTeamByGroupName("Alpha Team"); !ok {
+		t.Fatalf("expected \"Alpha Team\" to match after trimming; got names %v", AbtGroupNames())
+	}
+	alpha, _ := FindAbtTeamByKey("alpha")
+	if alpha.TeamKey != "alpha" || alpha.DisplayName != "Alpha Team" || alpha.Family != AbtFamilyCRE {
+		t.Fatalf("alpha = %+v, want every field trimmed", alpha)
+	}
+	beta, ok := FindAbtTeamByKey("beta")
+	if !ok || beta.DisplayName != "Beta Team" {
+		t.Fatalf("beta = %+v, %t; want DisplayName \"Beta Team\"", beta, ok)
+	}
+}
+
+// TestParseAbtTeamRegistry_TrailingCommaTolerated: a blank row is skipped, not
+// rejected -- a trailing comma is not worth failing a deploy over.
+func TestParseAbtTeamRegistry_TrailingCommaTolerated(t *testing.T) {
+	teams, err := ParseAbtTeamRegistry("alpha|Alpha Team,")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(teams) != 1 {
+		t.Fatalf("got %d teams, want 1: %+v", len(teams), teams)
+	}
+}
+
+func TestParseAbtTeamRegistry_RejectsMalformedRows(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		wantIn  string // substring the error must name
+		wantRow string // the offending row must be quoted in the error
+	}{
+		{
+			name:    "one field",
+			raw:     "alpha|Alpha Team,beta",
+			wantIn:  "row 2",
+			wantRow: "beta",
+		},
+		{
+			name:    "four fields",
+			raw:     "alpha|Alpha Team|CRE|extra",
+			wantIn:  "row 1",
+			wantRow: "alpha|Alpha Team|CRE|extra",
+		},
+		{
+			name:    "empty teamKey",
+			raw:     "alpha|Alpha Team,|Beta Team|SRE",
+			wantIn:  "teamKey is empty",
+			wantRow: "|Beta Team|SRE",
+		},
+		{
+			name:    "whitespace-only teamKey",
+			raw:     "   |Alpha Team",
+			wantIn:  "teamKey is empty",
+			wantRow: "|Alpha Team",
+		},
+		{
+			// The dangerous one: an empty display name is matched verbatim
+			// against the upstream group name, so it resolves zero members
+			// without surfacing an error anywhere.
+			name:    "empty displayName",
+			raw:     "alpha|",
+			wantIn:  "displayName is empty",
+			wantRow: "alpha|",
+		},
+		{
+			name:    "whitespace-only displayName",
+			raw:     "alpha|   |CRE",
+			wantIn:  "displayName is empty",
+			wantRow: "alpha|   |CRE",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			teams, err := ParseAbtTeamRegistry(tc.raw)
+			if err == nil {
+				t.Fatalf("ParseAbtTeamRegistry(%q) = %+v, nil; want an error", tc.raw, teams)
+			}
+			if teams != nil {
+				t.Fatalf("ParseAbtTeamRegistry(%q) returned teams %+v alongside its error; want nil", tc.raw, teams)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Fatalf("error %q does not mention %q", err, tc.wantIn)
+			}
+			if !strings.Contains(err.Error(), tc.wantRow) {
+				t.Fatalf("error %q does not name the offending row %q", err, tc.wantRow)
+			}
+		})
+	}
+}
+
+// TestAbtRegistry_UnsetConfig_EmptyRegistryNoPanic: an unset variable is legal.
+// The service must start and every lookup must return empty rather than panic.
+func TestAbtRegistry_UnsetConfig_EmptyRegistryNoPanic(t *testing.T) {
+	resetAbtRegistry(t)
+
+	teams, err := ParseAbtTeamRegistry("")
+	if err != nil {
+		t.Fatalf("ParseAbtTeamRegistry(\"\") returned error %v, want nil", err)
+	}
+	if len(teams) != 0 {
+		t.Fatalf("ParseAbtTeamRegistry(\"\") = %+v, want no teams", teams)
+	}
+	SetAbtTeams(teams)
 
 	names := AbtGroupNames()
 	if names == nil {
 		t.Fatalf("AbtGroupNames() returned nil, want empty non-nil slice")
 	}
 	if len(names) != 0 {
-		t.Fatalf("AbtGroupNames() = %v, want empty on fetch failure", names)
+		t.Fatalf("AbtGroupNames() = %v, want empty", names)
 	}
-
-	if _, ok := FindAbtTeamByGroupName("Castor"); ok {
-		t.Fatalf("expected no match when registry failed to load")
+	if _, ok := FindAbtTeamByGroupName("Alpha Team"); ok {
+		t.Fatalf("expected no match against an empty registry")
 	}
-}
-
-func TestAbtRegistry_NoFetcherRegistered_DegradesToEmptyRegistry(t *testing.T) {
-	resetAbtRegistry(t)
-
-	names := AbtGroupNames()
-	if len(names) != 0 {
-		t.Fatalf("AbtGroupNames() = %v, want empty when no fetcher registered", names)
+	if _, ok := FindAbtTeamByKey("alpha"); ok {
+		t.Fatalf("expected no key match against an empty registry")
+	}
+	if got := AbtTeams(); len(got) != 0 {
+		t.Fatalf("AbtTeams() = %+v, want empty", got)
 	}
 }
 
-// TestAbtRegistry_FetchFailure_IsNotCached guards the availability property that
-// matters most here: one transient upstream failure must not leave the registry
-// permanently empty. A failed load is not committed, so the very next lookup
-// retries and picks up the recovered upstream.
-func TestAbtRegistry_FetchFailure_IsNotCached(t *testing.T) {
+// TestSetAbtTeams_CopiesInput guards against the caller mutating the slice it
+// handed over and silently rewriting the live registry.
+func TestSetAbtTeams_CopiesInput(t *testing.T) {
 	resetAbtRegistry(t)
 
-	calls := 0
-	failing := true
-	SetAbtTeamsFetcher(func(ctx context.Context) (json.RawMessage, error) {
-		calls++
-		if failing {
-			return nil, errors.New("upstream unavailable")
-		}
-		return json.RawMessage(abtTeamsFixtureJSON), nil
-	})
+	teams := []AbtTeam{{TeamKey: "alpha", DisplayName: "Alpha Team"}}
+	SetAbtTeams(teams)
+	teams[0].DisplayName = "Mutated"
 
-	if names := AbtGroupNames(); len(names) != 0 {
-		t.Fatalf("AbtGroupNames() = %v, want empty while upstream is failing", names)
-	}
-
-	// Upstream recovers. No restart, no SetAbtTeamsFetcher call.
-	failing = false
-
-	names := AbtGroupNames()
-	if len(names) != 6 {
-		t.Fatalf("after recovery AbtGroupNames() returned %d names, want 6: %v", len(names), names)
-	}
-	if _, ok := FindAbtTeamByGroupName("Castor"); !ok {
-		t.Fatalf("expected Castor to resolve after the registry recovered")
-	}
-	if calls != 2 {
-		t.Fatalf("fetcher called %d times, want 2 (one failed attempt, then one retry that is cached)", calls)
-	}
-}
-
-// TestAbtRegistry_NoFetcher_IsNotCached checks the same for the missing-fetcher
-// path: a lookup made before service wiring registers the fetcher must not
-// permanently mark the registry loaded.
-func TestAbtRegistry_NoFetcher_IsNotCached(t *testing.T) {
-	resetAbtRegistry(t)
-
-	if names := AbtGroupNames(); len(names) != 0 {
-		t.Fatalf("AbtGroupNames() = %v, want empty with no fetcher registered", names)
-	}
-
-	abtMu.Lock()
-	loaded := abtLoaded
-	abtMu.Unlock()
-	if loaded {
-		t.Fatalf("abtLoaded = true after a lookup with no fetcher; the empty registry is now permanent")
-	}
-}
-
-func TestAbtRegistry_LoadsOnlyOnce(t *testing.T) {
-	resetAbtRegistry(t)
-	calls := 0
-	SetAbtTeamsFetcher(func(ctx context.Context) (json.RawMessage, error) {
-		calls++
-		return json.RawMessage(abtTeamsFixtureJSON), nil
-	})
-
-	_ = AbtGroupNames()
-	_ = AbtGroupNames()
-	_, _ = FindAbtTeamByGroupName("Castor")
-
-	if calls != 1 {
-		t.Fatalf("fetcher called %d times, want exactly 1 (cached after first load)", calls)
+	got, ok := FindAbtTeamByKey("alpha")
+	if !ok || got.DisplayName != "Alpha Team" {
+		t.Fatalf("registry = %+v after the caller mutated its slice; want DisplayName \"Alpha Team\"", got)
 	}
 }

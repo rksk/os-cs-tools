@@ -77,7 +77,7 @@ func TestSearchGroups(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search groups.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search groups.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityGroupClient{

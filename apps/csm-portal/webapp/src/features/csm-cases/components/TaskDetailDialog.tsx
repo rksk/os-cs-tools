@@ -111,7 +111,7 @@ export function TaskDetailDialog({
   const { data: userResults, isFetching: isFetchingUsers } = useSearchUsers({
     filters: {
       ...(assigneeSearch.length > 0 && { searchQuery: assigneeSearch }),
-      roles: INTERNAL_USER_ROLES,
+      roleIds: INTERNAL_USER_ROLES,
       active: true,
     },
     pagination: { limit: 6, offset: 0 },

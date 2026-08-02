@@ -81,7 +81,7 @@ func TestSearchProducts(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search products.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search products.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProductClient{
@@ -177,7 +177,7 @@ func TestSearchProductVersions(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search product versions.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search product versions.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityProductClient{

@@ -191,21 +191,24 @@ type UserTeamRef struct {
 // UserProjectAccess is one project-contact row for a user, reported as stored rather than
 // as filtered.
 //
-// The backing access rule only grants access when the row's email matches the login
-// exactly AND a contact record is linked. Rows failing either test make the project, and
-// every case on it, silently invisible to that user, so they are reported here with
-// GrantsCaseAccess spelling out the verdict instead of being dropped.
+// Rows with no linked contact record make the project, and every case on it, silently
+// invisible to that user, so they are reported here with GrantsCaseAccess spelling out the
+// verdict instead of being dropped. GrantsCaseAccess mirrors ContactRecordPresent directly
+// -- deliberately not the stricter email-match rule the live access check enforces, since
+// that only diverges for integration/system accounts, which aren't the audience this
+// signals for.
 type UserProjectAccess struct {
 	ProjectID   string `json:"projectId"`
 	ProjectName string `json:"projectName"`
+	// ProjectKey is the project's short human-readable key (e.g. "TESTPROSSUB").
+	ProjectKey string `json:"projectKey"`
 	// ContactEmail is the email as stored on the row itself.
 	ContactEmail string `json:"contactEmail"`
 	// ContactRecordPresent is false when the row has no contact record linked.
 	ContactRecordPresent bool `json:"contactRecordPresent"`
 	// ContactRecordEmail is the linked record's own email, which may differ from
-	// ContactEmail -- that mismatch is itself an access fault.
+	// ContactEmail.
 	ContactRecordEmail   string   `json:"contactRecordEmail"`
-	EmailMatchesLogin    bool     `json:"emailMatchesLogin"`
 	RegistrationState    string   `json:"registrationState"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
 	Roles                []string `json:"roles"`
@@ -2218,6 +2221,16 @@ type ProjectContact struct {
 	RegistrationState    string   `json:"registrationState"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
 	Roles                []string `json:"roles"`
+	// CustomerContactPresent and GrantsCaseAccess answer "can this person actually see
+	// this project's cases" per row, not just "are they listed". CustomerContactPresent
+	// is whether a contact record is linked at all (false is the same fault ID==nil
+	// signals, restated as an explicit boolean rather than an absence a caller has to
+	// notice). GrantsCaseAccess mirrors it directly -- deliberately not the stricter
+	// invited-email-matches-account-email rule the portal's access check technically
+	// applies underneath, since that only ever diverges for integration/system accounts,
+	// not the real customers this signals for.
+	CustomerContactPresent bool `json:"customerContactPresent"`
+	GrantsCaseAccess       bool `json:"grantsCaseAccess"`
 }
 
 // SearchProjectContactsRequest is the input for POST /projects/{id}/contacts/search.

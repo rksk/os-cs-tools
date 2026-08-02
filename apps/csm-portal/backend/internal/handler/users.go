@@ -237,7 +237,7 @@ func (h *UsersHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.SearchUsers(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchUsers failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to search users.")
+		mapUpstreamErrorGeneric(w, err, "Failed to search users.")
 		return
 	}
 
@@ -265,7 +265,7 @@ func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	result, err := h.entity.GetUser(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetUser failed", "userID", user.UserID, "err", err)
-		mapUpstreamError(w, err, "Failed to fetch the user.")
+		mapUpstreamErrorGeneric(w, err, "Failed to fetch the user.")
 		return
 	}
 

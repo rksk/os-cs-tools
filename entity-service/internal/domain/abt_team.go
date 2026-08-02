@@ -17,8 +17,6 @@
 package domain
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -37,49 +35,47 @@ const (
 	AbtFamilySRE AbtFamily = "sre"
 )
 
-// AbtTeam is one of WSO2's Account-Based Teams. The registry of teams is
-// owned by a private-repo Ballerina endpoint and fetched live at runtime —
-// team names are never hardcoded in this public repo. The registry is a flat
-// list; there is no sub-team nesting.
+// AbtTeam is one of WSO2's Account-Based Teams. Team names are organisation
+// vocabulary and are never hardcoded in this repo: the registry is supplied as
+// deployment configuration (see ParseAbtTeamRegistry) and installed once at
+// startup. The registry is a flat list; there is no sub-team nesting.
 type AbtTeam struct {
-	TeamKey     string
-	DisplayName string // the exact ServiceNow group name; matched against group-members/search's groupName
-	Family      AbtFamily // may be empty -- not every team has a family assigned
+	TeamKey string
+	// DisplayName is the exact group name in the backing data source; it is
+	// matched verbatim against group-members/search's groupName, so an empty
+	// or misspelt value silently resolves zero members. ParseAbtTeamRegistry
+	// rejects an empty one for that reason.
+	DisplayName string
+	// Family may be empty -- not every team has a family assigned.
+	Family AbtFamily
 }
-
-// AbtTeamsFetcher fetches the raw ABT team registry JSON body from the
-// upstream Ballerina cs-entity-service (GET teams). It is registered via
-// SetAbtTeamsFetcher during service wiring, before the first call to
-// AbtGroupNames or FindAbtTeamByGroupName.
-type AbtTeamsFetcher func(ctx context.Context) (json.RawMessage, error)
 
 var (
-	abtMu      sync.Mutex
-	abtFetcher AbtTeamsFetcher
-	abtLoaded  bool
-	abtTeams   []AbtTeam
+	abtMu    sync.RWMutex
+	abtTeams []AbtTeam
 )
 
-// SetAbtTeamsFetcher registers the function used to populate the in-memory
-// ABT team registry on first use. Calling this again (e.g. in tests, or if
-// service wiring re-runs) invalidates any cached registry so the next lookup
-// re-fetches via the new fetcher.
-func SetAbtTeamsFetcher(fetch AbtTeamsFetcher) {
+// SetAbtTeams installs the ABT team registry. It is called once during startup
+// with the parsed contents of the team-registry configuration, and by tests.
+// An empty registry is legal (no teams configured) and is warned about rather
+// than rejected: team names cannot be defaulted in this repo, so a deployment
+// that has not set the variable yet must still start and serve every other
+// endpoint.
+func SetAbtTeams(teams []AbtTeam) {
 	abtMu.Lock()
 	defer abtMu.Unlock()
-	abtFetcher = fetch
-	abtLoaded = false
-	abtTeams = nil
+	abtTeams = append([]AbtTeam(nil), teams...)
+	if len(abtTeams) == 0 {
+		log.Printf("abtteam: team registry is empty; team filters and the team catalogue will return nothing")
+	}
 }
 
-// AbtGroupNames returns the ServiceNow group display name for every cached
-// ABT team, suitable for a single groupNames-IN membership query. Returns an
-// empty slice if the registry has never been populated or failed to load.
+// AbtGroupNames returns the backing data source's group display name for every
+// configured ABT team, suitable for a single groupNames-IN membership query.
+// Returns an empty slice if no teams are configured.
 func AbtGroupNames() []string {
-	ensureAbtRegistryLoaded()
-
-	abtMu.Lock()
-	defer abtMu.Unlock()
+	abtMu.RLock()
+	defer abtMu.RUnlock()
 
 	names := make([]string, 0, len(abtTeams))
 	for _, team := range abtTeams {
@@ -90,13 +86,11 @@ func AbtGroupNames() []string {
 	return names
 }
 
-// FindAbtTeamByGroupName looks up the ABT team whose ServiceNow group name
-// exactly matches groupName. ok is false if no team in the registry matches.
-// FindAbtTeamByKey looks a team up by its registry key.
+// FindAbtTeamByKey looks a team up by its registry key. ok is false if no
+// configured team matches.
 func FindAbtTeamByKey(key string) (team AbtTeam, ok bool) {
-	ensureAbtRegistryLoaded()
-	abtMu.Lock()
-	defer abtMu.Unlock()
+	abtMu.RLock()
+	defer abtMu.RUnlock()
 	for _, t := range abtTeams {
 		if t.TeamKey == key {
 			return t, true
@@ -105,21 +99,21 @@ func FindAbtTeamByKey(key string) (team AbtTeam, ok bool) {
 	return AbtTeam{}, false
 }
 
-// AbtTeams returns every team in the registry. Empty if the registry never loaded.
+// AbtTeams returns every configured team. Empty if none are configured.
 func AbtTeams() []AbtTeam {
-	ensureAbtRegistryLoaded()
-	abtMu.Lock()
-	defer abtMu.Unlock()
+	abtMu.RLock()
+	defer abtMu.RUnlock()
 	out := make([]AbtTeam, len(abtTeams))
 	copy(out, abtTeams)
 	return out
 }
 
+// FindAbtTeamByGroupName looks up the ABT team whose group name in the backing
+// data source exactly matches groupName. ok is false if no configured team
+// matches.
 func FindAbtTeamByGroupName(groupName string) (team AbtTeam, ok bool) {
-	ensureAbtRegistryLoaded()
-
-	abtMu.Lock()
-	defer abtMu.Unlock()
+	abtMu.RLock()
+	defer abtMu.RUnlock()
 
 	for _, t := range abtTeams {
 		if t.DisplayName == groupName {
@@ -129,97 +123,73 @@ func FindAbtTeamByGroupName(groupName string) (team AbtTeam, ok bool) {
 	return AbtTeam{}, false
 }
 
-// ensureAbtRegistryLoaded populates abtTeams on first use. Any failure (no
-// fetcher registered, fetch error, or parse error) is logged and degrades to
-// an empty registry for that call only: the failure is not cached, so the next
-// lookup retries. Caching a failure would leave team resolution permanently
-// empty for the rest of the process after one transient upstream outage.
-func ensureAbtRegistryLoaded() {
-	abtMu.Lock()
-	fetch := abtFetcher
-	alreadyLoaded := abtLoaded
-	abtMu.Unlock()
+// ParseAbtTeamRegistry parses the team registry from its flat, single-line
+// configuration form:
+//
+//	teamKey|Display Name|FAMILY,teamKey|Display Name,...
+//
+// Rows are separated by ",", fields within a row by "|". A row carries either
+// two fields (key and display name) or three (plus the family). Whitespace
+// around every field is trimmed, so a value pasted into a web form survives.
+// A wholly blank row is skipped, which tolerates a trailing comma.
+//
+// The single-line shape is deliberate: the deployment platform's configuration
+// UI is one-dimensional and stringifies nested collections, so a structured
+// (nested-array) registry cannot be deployed at all. Do not reintroduce one.
+//
+// An empty string yields no teams and no error. Any malformed row is an error
+// naming the offending row, so a typo stops a deploy instead of silently
+// degrading team resolution at the first request.
+func ParseAbtTeamRegistry(raw string) ([]AbtTeam, error) {
+	rows := strings.Split(raw, ",")
+	teams := make([]AbtTeam, 0, len(rows))
 
-	if alreadyLoaded {
-		return
-	}
-
-	var teams []AbtTeam
-	loaded := false
-	if fetch == nil {
-		log.Printf("abtteam: no fetcher registered; ABT team registry will be empty")
-	} else {
-		raw, err := fetch(context.Background())
-		if err != nil {
-			log.Printf("abtteam: fetch teams registry failed: %v", err)
-		} else {
-			teams, err = parseAbtTeamsResponse(raw)
-			if err != nil {
-				log.Printf("abtteam: parse abt-teams registry failed: %v", err)
-				teams = nil
-			} else {
-				// A successful but empty response is still a load: the registry
-				// legitimately has no teams and there is nothing to retry.
-				loaded = true
-			}
+	for i, row := range rows {
+		if strings.TrimSpace(row) == "" {
+			continue
 		}
+
+		fields := strings.Split(row, "|")
+		if len(fields) < 2 || len(fields) > 3 {
+			return nil, fmt.Errorf(
+				"team registry row %d (%q): expected 2 or 3 %q-separated fields (teamKey|displayName[|family]), got %d",
+				i+1, strings.TrimSpace(row), "|", len(fields))
+		}
+		for j := range fields {
+			fields[j] = strings.TrimSpace(fields[j])
+		}
+
+		if fields[0] == "" {
+			return nil, fmt.Errorf("team registry row %d (%q): teamKey is empty", i+1, strings.TrimSpace(row))
+		}
+		// An empty display name is the dangerous one: it is matched verbatim
+		// against the group name upstream, so it would resolve zero members
+		// without any error surfacing anywhere.
+		if fields[1] == "" {
+			return nil, fmt.Errorf("team registry row %d (%q): displayName is empty", i+1, strings.TrimSpace(row))
+		}
+
+		team := AbtTeam{TeamKey: fields[0], DisplayName: fields[1]}
+		if len(fields) == 3 {
+			team.Family = normalizeAbtFamily(fields[2])
+		}
+		teams = append(teams, team)
 	}
 
-	abtMu.Lock()
-	defer abtMu.Unlock()
-	// Another goroutine may have loaded (or reset, via SetAbtTeamsFetcher)
-	// concurrently; only commit if still unloaded for this fetcher generation,
-	// and only on success so a failed attempt does not poison the cache.
-	if !abtLoaded && loaded {
-		abtTeams = teams
-		abtLoaded = true
-	}
-}
-
-// wireAbtTeamsResponse mirrors the Ballerina GET abt-teams response.
-type wireAbtTeamsResponse struct {
-	Teams []wireAbtTeam `json:"teams"`
-}
-
-type wireAbtTeam struct {
-	TeamKey     string `json:"teamKey"`
-	DisplayName string `json:"displayName"`
-	Family      string `json:"family"` // "CRE" | "SRE" | absent
-}
-
-// parseAbtTeamsResponse parses the wire response and normalizes the
-// uppercase wire "family" ("CRE" | "SRE") into this package's lowercase
-// AbtFamily constants. Teams with no family (absent/unrecognized wire value)
-// get an empty AbtFamily rather than a parse error -- not every team is
-// classified.
-func parseAbtTeamsResponse(raw json.RawMessage) ([]AbtTeam, error) {
-	var wire wireAbtTeamsResponse
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, fmt.Errorf("abtteam: parse abt-teams response: %w", err)
-	}
-
-	teams := make([]AbtTeam, 0, len(wire.Teams))
-	for _, wt := range wire.Teams {
-		teams = append(teams, AbtTeam{
-			TeamKey:     wt.TeamKey,
-			DisplayName: wt.DisplayName,
-			Family:      normalizeAbtFamily(wt.Family),
-		})
-	}
 	return teams, nil
 }
 
-// normalizeAbtFamily normalizes the wire's uppercase "CRE"/"SRE" into this
-// package's lowercase AbtFamily constants. Any other value (including the
-// absent/empty case) is passed through lowercased rather than rejected, so an
-// unclassified team or a future family value never breaks registry parsing.
-func normalizeAbtFamily(wireFamily string) AbtFamily {
-	switch wireFamily {
+// normalizeAbtFamily normalizes the configured "CRE"/"SRE" (in any case) into
+// this package's lowercase AbtFamily constants. Any other value (including the
+// empty case) is passed through lowercased rather than rejected, so an
+// unclassified team or a future family value never blocks a deploy.
+func normalizeAbtFamily(family string) AbtFamily {
+	switch strings.ToUpper(family) {
 	case "CRE":
 		return AbtFamilyCRE
 	case "SRE":
 		return AbtFamilySRE
 	default:
-		return AbtFamily(strings.ToLower(wireFamily))
+		return AbtFamily(strings.ToLower(family))
 	}
 }

@@ -304,6 +304,12 @@ export interface CaseAuditEntry {
   id: string;
   kind: CaseAuditKind;
   actor: string;
+  /** Canonical reference to the actor, when the backend supplies one. `id` is
+   * typically null here (the activity feed doesn't resolve one) and `email`
+   * is sometimes a non-email username (e.g. an automation account) rather
+   * than a real address — `UserRefLink`'s plausibility check already refuses
+   * to look those up, so this is safe to pass through as-is. */
+  actorUser?: UserReference;
   /** Free-text summary; used when `changes` is absent (older/synthetic entries). */
   description?: string;
   createdAt: string;

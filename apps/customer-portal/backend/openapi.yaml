@@ -4310,7 +4310,6 @@ components:
       allOf:
       - $ref: '#/components/schemas/ChangeRequest'
       - required:
-        - approvedBy
         - approvedOn
         - communicationPlan
         - createdBy

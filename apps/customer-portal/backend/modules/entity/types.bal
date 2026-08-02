@@ -2316,7 +2316,7 @@ public type ChangeRequestResponse record {|
     # Indicates if the customer has permission to review
     boolean hasCustomerReviewed;
     # Internal approval details
-    ReferenceTableItem? approvedBy;
+    ReferenceTableItem? approvedBy?;
     # Internal approval date and time
     string? approvedOn;
     json...;
