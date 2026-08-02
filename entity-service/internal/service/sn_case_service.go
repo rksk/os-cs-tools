@@ -302,8 +302,15 @@ type snCaseFilters struct {
 	// Forwarded to Choreo so filtering starts working the moment Ballerina adds
 	// support, but the current POST /cases/search contract ignores this field.
 	Tags []string `json:"tags,omitempty"`
+	// ExcludeTags: see domain.SearchCasesFilters.ExcludeTags doc comment.
+	ExcludeTags []string `json:"excludeTags,omitempty"`
 	// ParentID: see domain.SearchCasesFilters.ParentID doc comment.
-	ParentID string `json:"parentId,omitempty"`
+	ParentID                  string   `json:"parentId,omitempty"`
+	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
+	ProjectTypeIDs            []string `json:"projectTypeIds,omitempty"`
+	IntegrationCsTeamIDs      []string `json:"integrationCsTeamIds,omitempty"`
+	Unassigned                bool     `json:"unassigned,omitempty"`
+	ResolutionNotesEmpty      bool     `json:"resolutionNotesEmpty,omitempty"`
 }
 
 // snStateIDMap maps domain CaseState enums to SN numeric state IDs.
@@ -1875,6 +1882,12 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 			return domain.SearchCasesResponse{}, err
 		}
 	}
+	if err := validateUUIDs("projectTypeIds", req.Filters.ProjectTypeIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("integrationCsTeamIds", req.Filters.IntegrationCsTeamIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -1907,27 +1920,33 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 
 	payload := snCaseSearchPayload{
 		Filters: snCaseFilters{
-			CaseTypes:          snCaseTypes,
-			SearchQuery:        req.Filters.SearchQuery,
-			ProjectIDs:         uuidsToSysids(req.Filters.ProjectIDs),
-			DeploymentIDs:      uuidsToSysids(req.Filters.DeploymentIDs),
-			StateKeys:          domainStatesToSNIDs(req.Filters.States),
-			SeverityKeys:       domainSeveritiesToSNIDs(req.Filters.Severities),
-			IssueTypeKeys:      domainIssueTypesToSNIDs(req.Filters.IssueTypes),
-			EngagementTypeKeys: domainEngagementTypesToSNIDs(req.Filters.EngagementTypes),
-			ClosedStartDate:    formatSNDate(req.Filters.ClosedStartDate),
-			ClosedEndDate:      formatSNDate(req.Filters.ClosedEndDate),
-			StartCreatedDate:   formatSNDate(req.Filters.StartCreatedDate),
-			EndCreatedDate:     formatSNDate(req.Filters.EndCreatedDate),
-			StartUpdatedDate:   formatSNDate(req.Filters.StartUpdatedDate),
-			EndUpdatedDate:     formatSNDate(req.Filters.EndUpdatedDate),
-			CreatedBy:          req.Filters.CreatedBy,
-			CreatedByMe:        req.Filters.CreatedByMe,
-			WorkStateKeys:      domainWorkStatesToSNIDs(req.Filters.WorkStates),
-			AssignedUserIDs:    uuidsToSysids(req.Filters.AssignedUserIDs),
-			ProductNames:       req.Filters.ProductNames,
-			Tags:               req.Filters.Tags,
-			ParentID:           snParentIDFilter(req.Filters.ParentID),
+			CaseTypes:                 snCaseTypes,
+			SearchQuery:               req.Filters.SearchQuery,
+			ProjectIDs:                uuidsToSysids(req.Filters.ProjectIDs),
+			DeploymentIDs:             uuidsToSysids(req.Filters.DeploymentIDs),
+			StateKeys:                 domainStatesToSNIDs(req.Filters.States),
+			SeverityKeys:              domainSeveritiesToSNIDs(req.Filters.Severities),
+			IssueTypeKeys:             domainIssueTypesToSNIDs(req.Filters.IssueTypes),
+			EngagementTypeKeys:        domainEngagementTypesToSNIDs(req.Filters.EngagementTypes),
+			ClosedStartDate:           formatSNDate(req.Filters.ClosedStartDate),
+			ClosedEndDate:             formatSNDate(req.Filters.ClosedEndDate),
+			StartCreatedDate:          formatSNDate(req.Filters.StartCreatedDate),
+			EndCreatedDate:            formatSNDate(req.Filters.EndCreatedDate),
+			StartUpdatedDate:          formatSNDate(req.Filters.StartUpdatedDate),
+			EndUpdatedDate:            formatSNDate(req.Filters.EndUpdatedDate),
+			CreatedBy:                 req.Filters.CreatedBy,
+			CreatedByMe:               req.Filters.CreatedByMe,
+			WorkStateKeys:             domainWorkStatesToSNIDs(req.Filters.WorkStates),
+			AssignedUserIDs:           uuidsToSysids(req.Filters.AssignedUserIDs),
+			ProductNames:              req.Filters.ProductNames,
+			Tags:                      req.Filters.Tags,
+			ExcludeTags:               req.Filters.ExcludeTags,
+			ParentID:                  snParentIDFilter(req.Filters.ParentID),
+			ProjectOnboardingStatuses: req.Filters.ProjectOnboardingStatuses,
+			ProjectTypeIDs:            uuidsToSysids(req.Filters.ProjectTypeIDs),
+			IntegrationCsTeamIDs:      uuidsToSysids(req.Filters.IntegrationCsTeamIDs),
+			Unassigned:                req.Filters.Unassigned,
+			ResolutionNotesEmpty:      req.Filters.ResolutionNotesEmpty,
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

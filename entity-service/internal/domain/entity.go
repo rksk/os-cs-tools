@@ -1360,10 +1360,28 @@ type SearchCasesFilters struct {
 	// support exists yet, so this filter is accepted here but has no effect until
 	// Ballerina wires it through.
 	Tags []string `json:"tags"`
+	// ExcludeTags filters to cases NOT carrying any of these free-text tag labels (optional).
+	ExcludeTags []string `json:"excludeTags"`
 	// ParentID filters to child cases of this case (the hierarchical major-case/
 	// child-case relationship set via the case PATCH parentId field). Not yet
 	// available in the backing service.
 	ParentID *string `json:"parentId"`
+	// ProjectOnboardingStatuses filters to cases whose parent project's onboarding
+	// status is one of these values (optional; free-text SN choice labels, e.g.
+	// "Completed", "Not-Applicable" -- not a closed enum at this layer).
+	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses"`
+	// ProjectTypeIDs filters to cases whose parent project's type is one of these
+	// project-type UUIDs (optional).
+	ProjectTypeIDs []string `json:"projectTypeIds"`
+	// IntegrationCsTeamIDs filters to cases whose parent account's integration CS
+	// team is one of these team UUIDs (optional).
+	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds"`
+	// Unassigned, when true, filters to cases with no assigned engineer. false and
+	// omitted are treated identically (optional).
+	Unassigned bool `json:"unassigned"`
+	// ResolutionNotesEmpty, when true, filters to cases with empty resolution notes.
+	// false and omitted are treated identically (optional).
+	ResolutionNotesEmpty bool `json:"resolutionNotesEmpty"`
 }
 
 // SearchCasesRequest is the input for a case search operation.
