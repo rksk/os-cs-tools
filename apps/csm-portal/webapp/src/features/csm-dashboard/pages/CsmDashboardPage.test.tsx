@@ -56,6 +56,7 @@ vi.mock("@features/csm-dashboard/api/useDashboardList", () => ({
 // the real API client, which throws under vitest (no runtime config).
 vi.mock("@features/csm-dashboard/api/useTeams", () => ({
   useTeams: vi.fn(() => ({ data: undefined })),
+  abtFamilyForDashboardType: vi.fn(() => undefined),
 }));
 
 vi.mock("@context/current-user/CurrentUserContext", () => ({

@@ -32,6 +32,11 @@ type Pagination struct {
 // SearchFilters holds the optional filter criteria both catalogues accept.
 type SearchFilters struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
+	// Family restricts POST /teams/search to teams whose TeamResult.Family
+	// exactly matches (case-insensitive) — e.g. "cre-abt" for the ABT
+	// dashboard's team picker. Ignored by SearchRoles. A team with no family
+	// configured never matches a non-empty filter.
+	Family string `json:"family,omitempty"`
 }
 
 // SearchRequest is the body of POST /teams/search and POST /roles/search.
@@ -46,9 +51,9 @@ type TeamResult struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Family may be empty: not every team is classified into a family. It is
-	// what a discipline-scoped team picker would filter on (an SRE dashboard
-	// offering only sre-abt teams), but nothing filters on it yet -- the
-	// dashboard picker renders every team this endpoint returns.
+	// what SearchRequest.Filters.Family filters on -- a discipline-scoped
+	// picker (e.g. an SRE dashboard offering only sre-abt teams) requests it
+	// via the frontend's own dashboard-type -> family mapping.
 	Family string `json:"family,omitempty"`
 	// GroupID is the backing group's id in this platform's UUID form, suitable
 	// for the case-search integrationCsTeam filter. Omitted when the registry
@@ -80,8 +85,11 @@ type SearchRolesResponse struct {
 }
 
 // SearchTeams serves the team catalogue entirely from the startup-resolved
-// index: no upstream call, on this request or any other. Matching is a
-// case-insensitive substring of either the display name or the key.
+// index: no upstream call, on this request or any other. SearchQuery matching
+// is a case-insensitive substring of either the display name or the key;
+// Family matching is a case-insensitive exact match against TeamResult.Family
+// (a discipline-scoped picker, e.g. an SRE dashboard, passes "sre-abt" to
+// exclude every other family, including teams with no family at all).
 func (d *Directory) SearchTeams(req SearchRequest) SearchTeamsResponse {
 	teams := d.teamResults
 	if q := strings.TrimSpace(req.Filters.SearchQuery); q != "" {
@@ -90,6 +98,15 @@ func (d *Directory) SearchTeams(req SearchRequest) SearchTeamsResponse {
 		for _, t := range teams {
 			if strings.Contains(strings.ToLower(t.Name), needle) ||
 				strings.Contains(strings.ToLower(t.ID), needle) {
+				filtered = append(filtered, t)
+			}
+		}
+		teams = filtered
+	}
+	if fam := strings.TrimSpace(req.Filters.Family); fam != "" {
+		filtered := make([]TeamResult, 0, len(teams))
+		for _, t := range teams {
+			if strings.EqualFold(t.Family, fam) {
 				filtered = append(filtered, t)
 			}
 		}

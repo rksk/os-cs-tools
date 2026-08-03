@@ -18,7 +18,7 @@ import { Box, FormControl, MenuItem, Select, Typography } from "@wso2/oxygen-ui"
 import { type JSX } from "react";
 import type { BeDashboardListItem } from "@api/backend/types";
 import type { DashboardKey } from "@features/csm-dashboard/types/abtDashboard";
-import { useTeams } from "@features/csm-dashboard/api/useTeams";
+import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
 
 interface AbtDashboardHeaderProps {
   dashboardKey: DashboardKey;
@@ -38,7 +38,10 @@ interface AbtDashboardHeaderProps {
 
 /**
  * Dashboard header: title, the dashboard switcher, and (for a dashboard
- * flagged `isTeamBased`) a team selector sourced from `POST /teams/search`.
+ * flagged `isTeamBased`) a team selector sourced from `POST /teams/search`,
+ * scoped to the current dashboard's family (`abtFamilyForDashboardType`) —
+ * a `cre` dashboard's picker offers only `cre-abt` teams, `sre` only
+ * `sre-abt`; a dashboard with no `type` gets every team, unfiltered.
  * Both the selected dashboard and the selected team are owned by the parent
  * (`CsmDashboardPage`), which keeps them in sync with the URL (a fragment,
  * not a query param) so a specific dashboard/team view is shareable. The
@@ -59,8 +62,9 @@ export default function AbtDashboardHeader({
 }: AbtDashboardHeaderProps): JSX.Element {
   const currentOption = dashboardList.find((o) => o.id === dashboardKey);
   const isTeamBased = currentOption?.isTeamBased ?? false;
+  const family = abtFamilyForDashboardType(currentOption?.type);
 
-  const teams = useTeams(isTeamBased);
+  const teams = useTeams(isTeamBased, family);
 
   return (
     <Box

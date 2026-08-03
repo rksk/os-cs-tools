@@ -278,6 +278,36 @@ func TestSearchTeams_FiltersOnNameOrKey(t *testing.T) {
 	}
 }
 
+func TestSearchTeams_FiltersOnFamily(t *testing.T) {
+	dir := mustDirectory(t, registryFixture, "")
+
+	if got := dir.SearchTeams(SearchRequest{Filters: SearchFilters{Family: "cre-abt"}}); got.Total != 1 || got.Teams[0].ID != "alpha" {
+		t.Fatalf("family=cre-abt matched %+v, want just alpha", got.Teams)
+	}
+	// Case-insensitive: the registry row spelled it "CRE-ABT" (see
+	// registryFixture), and parseFamily normalizes storage to lowercase, but a
+	// caller filtering with either case must match.
+	if got := dir.SearchTeams(SearchRequest{Filters: SearchFilters{Family: "CRE-ABT"}}); got.Total != 1 {
+		t.Errorf("family=CRE-ABT (uppercase) matched %d teams, want 1", got.Total)
+	}
+	if got := dir.SearchTeams(SearchRequest{Filters: SearchFilters{Family: "sre-abt"}}); got.Total != 1 || got.Teams[0].ID != "beta" {
+		t.Fatalf("family=sre-abt matched %+v, want just beta", got.Teams)
+	}
+	// gamma has no family at all -- a family filter must exclude it, not treat
+	// an empty Family field as a wildcard match.
+	if got := dir.SearchTeams(SearchRequest{Filters: SearchFilters{Family: "cre"}}); got.Total != 0 {
+		t.Errorf("family=cre matched %d teams, want 0 (none of alpha/beta/gamma is plain cre)", got.Total)
+	}
+	// No family filter at all: every team, same as before this field existed.
+	if got := dir.SearchTeams(SearchRequest{}); got.Total != 3 {
+		t.Errorf("no family filter matched %d teams, want all 3", got.Total)
+	}
+	// Combined with searchQuery: both must match.
+	if got := dir.SearchTeams(SearchRequest{Filters: SearchFilters{SearchQuery: "beta", Family: "cre-abt"}}); got.Total != 0 {
+		t.Errorf("searchQuery=beta AND family=cre-abt matched %d teams, want 0 (beta is sre-abt)", got.Total)
+	}
+}
+
 // A returned page must not alias the startup snapshot, or a caller appending to
 // it would corrupt every later response.
 func TestSearchTeams_PageDoesNotAliasTheSnapshot(t *testing.T) {

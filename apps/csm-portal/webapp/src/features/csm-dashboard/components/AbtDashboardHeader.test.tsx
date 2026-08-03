@@ -31,6 +31,7 @@ import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardH
 const DASHBOARD_LIST = [
   { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
   { id: "team_performance", displayName: "Team performance", isDefault: false, isTeamBased: true },
+  { id: "abt", displayName: "ABT Dashboard", type: "cre" as const, isDefault: false, isTeamBased: true },
 ];
 
 function renderWithClient(ui: ReactNode) {
@@ -121,5 +122,44 @@ describe("AbtDashboardHeader", () => {
     fireEvent.click(await within(listbox).findByText("CS Team Leads"));
 
     expect(onTeamChange).toHaveBeenCalledWith("cs_team_leads");
+  });
+
+  it("scopes the team query to the dashboard's family for a typed dashboard", () => {
+    postMock.mockResolvedValue({
+      teams: [{ id: "castor", name: "Castor", family: "cre-abt" }],
+    });
+
+    renderWithClient(
+      <AbtDashboardHeader
+        dashboardKey="abt"
+        onDashboardChange={vi.fn()}
+        dashboardList={DASHBOARD_LIST}
+        selectedTeamId={undefined}
+        onTeamChange={vi.fn()}
+      />,
+    );
+
+    expect(postMock).toHaveBeenCalledWith("/teams/search", {
+      filters: { family: "cre-abt" },
+      pagination: { offset: 0, limit: 100 },
+    });
+  });
+
+  it("does not scope the team query for an untyped team-based dashboard", () => {
+    postMock.mockResolvedValue({ teams: [] });
+
+    renderWithClient(
+      <AbtDashboardHeader
+        dashboardKey="team_performance"
+        onDashboardChange={vi.fn()}
+        dashboardList={DASHBOARD_LIST}
+        selectedTeamId={undefined}
+        onTeamChange={vi.fn()}
+      />,
+    );
+
+    expect(postMock).toHaveBeenCalledWith("/teams/search", {
+      pagination: { offset: 0, limit: 100 },
+    });
   });
 });

@@ -25,7 +25,7 @@ vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: postMock }),
 }));
 
-import { useTeams } from "@features/csm-dashboard/api/useTeams";
+import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
@@ -62,5 +62,56 @@ describe("useTeams", () => {
   it("does not fetch when disabled", () => {
     renderHook(() => useTeams(false), { wrapper });
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("passes filters.family through when given", async () => {
+    postMock.mockResolvedValue({
+      teams: [{ id: "castor", name: "Castor", family: "cre-abt" }],
+    });
+
+    const { result } = renderHook(() => useTeams(true, "cre-abt"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith("/teams/search", {
+      filters: { family: "cre-abt" },
+      pagination: { offset: 0, limit: 100 },
+    });
+  });
+
+  it("uses a distinct query key per family so a family-scoped and an unscoped fetch don't share a cache entry", async () => {
+    postMock
+      .mockResolvedValueOnce({ teams: [{ id: "castor", name: "Castor" }] })
+      .mockResolvedValueOnce({
+        teams: [
+          { id: "castor", name: "Castor" },
+          { id: "iam_us", name: "IAM-US" },
+        ],
+      });
+
+    const scoped = renderHook(() => useTeams(true, "cre-abt"), { wrapper });
+    const unscoped = renderHook(() => useTeams(true), { wrapper });
+
+    await waitFor(() => expect(scoped.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(unscoped.result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(scoped.result.current.data).toHaveLength(1);
+    expect(unscoped.result.current.data).toHaveLength(2);
+  });
+});
+
+describe("abtFamilyForDashboardType", () => {
+  it("maps cre to cre-abt", () => {
+    expect(abtFamilyForDashboardType("cre")).toBe("cre-abt");
+  });
+
+  it("maps sre to sre-abt", () => {
+    expect(abtFamilyForDashboardType("sre")).toBe("sre-abt");
+  });
+
+  it("returns undefined for cs and for an untyped dashboard", () => {
+    expect(abtFamilyForDashboardType("cs")).toBeUndefined();
+    expect(abtFamilyForDashboardType(undefined)).toBeUndefined();
   });
 });

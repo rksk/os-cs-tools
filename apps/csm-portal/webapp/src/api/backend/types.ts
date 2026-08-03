@@ -2867,6 +2867,12 @@ export interface BeDashboardWidget {
 export interface BeDashboardListItem {
   id: string;
   displayName: string;
+  /** Who the dashboard is built for. Drives which team `family` the team
+   * picker requests (see `abtFamilyForDashboardType` in `useTeams.ts`) —
+   * `cre` teams see only `cre-abt` teams, `sre` only `sre-abt`. Omitted only
+   * for a definition that predates the field (the deprecated single-variable
+   * configuration path). */
+  type?: "cre" | "sre" | "cs";
   isDefault: boolean;
   /** Whether this dashboard should show a team selector (from
    * `POST /teams/search`) alongside the dashboard switcher when selected —

@@ -66,13 +66,14 @@ export default function CsmDashboardPage(): JSX.Element {
   // isDefault and isTeamBased must match (not isTeamBased alone, and not
   // isDefault alone) — see the module doc comment above.
   //
-  // Deliberately type-blind: `type` is not on `BeDashboardListItem` at all
-  // yet, so this cannot key off it. The backend loader is held to ONE
-  // isDefault dashboard in total to match — without that, a second typed
-  // default would be perfectly valid config and which one a user landed on
-  // would come down to the backend's filename ordering. Making this
-  // type-aware and loosening the loader to one default per type are the same
-  // change; do not do either alone.
+  // Deliberately type-blind: `type` IS on `BeDashboardListItem` now (added
+  // for the team picker's family filter, see abtFamilyForDashboardType in
+  // useTeams.ts), but default-dashboard selection still isn't keyed off it.
+  // The backend loader is held to ONE isDefault dashboard in total to match
+  // — without that, a second typed default would be perfectly valid config
+  // and which one a user landed on would come down to the backend's filename
+  // ordering. Making this type-aware and loosening the loader to one default
+  // per type are the same change; do not do either alone.
   const preferredEntry = userHasTeam
     ? list?.find((d) => d.isDefault && d.isTeamBased)
     : list?.find((d) => d.isDefault && !d.isTeamBased);
@@ -118,10 +119,15 @@ export default function CsmDashboardPage(): JSX.Element {
     isTeamBased && !hashTeamId && userHasTeam ? currentUser.user?.team?.teamKey : undefined;
   const selectedTeamId = hashTeamId ?? defaultTeamId;
 
-  // Every team, for resolving the selected team's `groupId` (the
-  // `__current_team__` filter placeholder's real value) — same query
-  // AbtDashboardHeader's own team selector uses; react-query dedupes the
-  // fetch since both share the same query key.
+  // Every team, unfiltered, for resolving the selected team's `groupId` (the
+  // `__current_team__` filter placeholder's real value). Deliberately NOT
+  // scoped to the current dashboard's family the way AbtDashboardHeader's own
+  // picker query is (see abtFamilyForDashboardType): the signed-in user's own
+  // team can be outside that family (e.g. a `cre` non-ABT team member viewing
+  // a `cre` dashboard, whose picker only offers `cre-abt` teams), and
+  // `defaultTeamId` still needs it resolved to a real groupId. A separate,
+  // differently-scoped query from the header's — react-query no longer
+  // dedupes these into one fetch.
   const teams = useTeams(isTeamBased);
   const selectedTeamGroupId = teams.data?.find((t) => t.id === selectedTeamId)?.groupId;
 

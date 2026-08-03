@@ -6150,10 +6150,9 @@ components:
             Team family classification. The `-abt` variants are account-based teams; the
             bare variants classify a member of the same discipline who is not on an
             account-based team. Omitted when the team is not classified into a family:
-            not every team is. This is the field a discipline-scoped team picker *can*
-            filter on: it is what would let an SRE-scoped dashboard offer only
-            `sre-abt` teams. Nothing does so yet. Today's picker renders every team
-            this endpoint returns, and the scoping is a follow-up.
+            not every team is. This is the field a discipline-scoped team picker filters
+            on via `SearchTeamsRequest.filters.family` — an SRE-scoped dashboard's picker
+            requests `sre-abt` and gets only those teams back.
         groupId:
           type: string
           description: >
@@ -6170,6 +6169,13 @@ components:
           properties:
             searchQuery:
               type: string
+            family:
+              type: string
+              enum: [cre-abt, cre, sre-abt, sre]
+              description: >
+                Restrict results to teams whose family exactly matches (case-insensitive).
+                A team with no family configured never matches. Used by a discipline-scoped
+                picker, e.g. a `cre`-type dashboard's team selector passes `cre-abt`.
         pagination:
           $ref: '#/components/schemas/UserPagination'
 
