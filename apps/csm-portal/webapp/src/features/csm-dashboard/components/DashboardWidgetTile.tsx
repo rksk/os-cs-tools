@@ -15,8 +15,8 @@
 // under the License.
 
 import { Box, Button, Card, IconButton, Skeleton, Tooltip, Typography, alpha, useTheme } from "@wso2/oxygen-ui";
-import { ArrowRight, RefreshCw } from "@wso2/oxygen-ui-icons-react";
-import type { JSX, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
+import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { Link as RouterLink, useNavigate } from "react-router";
 import type { BeDashboardPieSlice, BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
@@ -33,8 +33,12 @@ import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarCh
 interface DashboardWidgetTileProps {
   widgetId: string;
   displayName: string;
-  /** Explanatory subtitle shown under `displayName` — only rendered for
-   * shapes "pie"/"bar" today, but not shape-specific by design. */
+  /** Explanatory copy for this widget (`WidgetTemplate.Description`).
+   * Rendered as an inline subtitle under `displayName` for shape "pie"/"bar"
+   * (there's room), and as a keyboard-accessible info-icon tooltip for
+   * shape "count" (there isn't) — either way, only when actually set; an
+   * empty/absent one renders neither. Not surfaced for shape "list" (its own
+   * table already fills the space this would otherwise sit in). */
   description?: string;
   resourceType: BeWidgetResourceType;
   shape: BeWidgetShape;
@@ -91,7 +95,7 @@ export default function DashboardWidgetTile({
   // slice) — skip this one's own network call rather than wasting it, but
   // still call the hook unconditionally (rules of hooks; a widget's shape
   // never changes across this component's lifetime).
-  const { data, isLoading, isError, refetch } = useWidgetData(
+  const { data, isLoading, isError } = useWidgetData(
     widgetId,
     resourceType,
     filters,
@@ -133,33 +137,36 @@ export default function DashboardWidgetTile({
   const Icon = config.icon;
   const isListShape = shape === "list";
 
-  // Refetches just this tile's own data — the count/list query (disabled for
-  // pie/bar, see the useWidgetData call above) and the pie/bar per-slice
-  // queries (empty for count/list, see useWidgetPieData above) are both
-  // called unconditionally rather than branching on `shape`: whichever one
-  // this tile doesn't actually use is already disabled/empty, so refetching
-  // it is a no-op, not a wasted request.
-  const handleRefresh = (e: MouseEvent): void => {
-    // Count tiles render their whole Card as a router Link (see the `href`
-    // return below) — without stopping propagation, clicking refresh would
-    // also navigate to the tile's click-through destination.
-    e.preventDefault();
-    e.stopPropagation();
-    void refetch();
-    pieData.refetch();
-  };
+  // Shared hover idiom for every clickable tile (the count-shape anchor and
+  // the pie/bar tile-level click-through target below) — matches the
+  // customer-portal app's own clickable summary-card hover (see
+  // `UpdateCardBreakdown.tsx`): a border/background tint plus a small lift,
+  // no `boxShadow`. `border` is transparent at rest so the accent color only
+  // shows up on hover, without shifting layout (`border-box` sizing keeps
+  // the box the same size whether the border is drawn transparent or
+  // colored). One shared object so shape "count" and shape "pie"/"bar"
+  // never drift into two different hover looks.
+  const widgetHoverSx = {
+    border: "1px solid transparent",
+    transition: "border-color 0.2s ease, background-color 0.2s ease, transform 0.15s ease",
+    "&:hover": {
+      borderColor: theme.palette.primary.main,
+      bgcolor: alpha(theme.palette.primary.main, 0.06),
+      transform: "translateY(-1px)",
+    },
+  } as const;
 
-  // The skeleton (loading) state already occupies this same top-right corner
-  // in every shape's markup below, so showing the refresh button at the same
-  // time visually collides with it — only render it once this tile has
-  // settled into either real data or an error.
-  const isTileLoading = shape === "pie" || shape === "bar" ? pieData.isLoading : isLoading;
-  const refreshButton = !isTileLoading && (
-    <Tooltip title="Refresh this widget">
+  // Count tiles only — a list-shape tile's real table already has its own
+  // header row and border right where this would otherwise sit, and a
+  // pie/bar tile already shows its own `description` as an inline subtitle
+  // (see the pie/bar branch below), so an icon there would just duplicate
+  // it. Renders only when this widget actually has a `description` to show
+  // — an empty/absent one means there's nothing to disclose.
+  const infoIcon = shape === "count" && description && (
+    <Tooltip title={description}>
       <IconButton
         size="small"
-        onClick={handleRefresh}
-        aria-label={`Refresh ${displayName}`}
+        aria-label={`About ${displayName}`}
         sx={{
           position: "absolute",
           top: 8,
@@ -168,7 +175,7 @@ export default function DashboardWidgetTile({
           color: "text.secondary",
         }}
       >
-        <RefreshCw size={13} />
+        <Info size={13} />
       </IconButton>
     </Tooltip>
   );
@@ -200,7 +207,6 @@ export default function DashboardWidgetTile({
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
     return (
       <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
-        {refreshButton}
         {header}
         {isLoading ? (
           <Skeleton variant="rounded" height={28 * (listLimit ?? 4) + 40} sx={{ mt: 1 }} />
@@ -253,18 +259,16 @@ export default function DashboardWidgetTile({
     //
     // That tile-level target keeps its role="button"/Enter+Space keyboard
     // handling (a real <a> only activates on Enter, not Space, and this
-    // control has always supported both) -- but it is now a SIBLING of the
-    // refresh button and the chart, not their ancestor: an element with an
-    // interactive role makes its descendants' own roles presentational to
-    // assistive tech, so nesting the refresh IconButton and the chart's own
-    // role="button" legend rows inside it would hide them from screen
-    // readers even though they're still clickable. The target is absolutely
-    // positioned to fill the card and sits behind (`zIndex: 0`) a
+    // control has always supported both) -- but it is a SIBLING of the
+    // chart, not its ancestor: an element with an interactive role makes its
+    // descendants' own roles presentational to assistive tech, so nesting
+    // the chart's own role="button" legend rows inside it would hide them
+    // from screen readers even though they're still clickable. The target is
+    // absolutely positioned to fill the card and sits behind (`zIndex: 0`) a
     // `pointerEvents: "none"` content layer, so it only ever receives clicks
     // that land on genuine background -- pointer events are switched back on
-    // (`pointerEvents: "auto"`) for the refresh button and the chart
-    // specifically, letting their own click and keyboard handling work
-    // exactly as before.
+    // (`pointerEvents: "auto"`) for the chart specifically, letting its own
+    // click and keyboard handling work exactly as before.
     const ChartComponent = shape === "pie" ? DashboardPieChart : DashboardBarChart;
     const tileHref = config.buildHref(resolveTeamPlaceholder(filters, selectedTeamGroupId));
     const handleTileClick = (): void => {
@@ -297,7 +301,7 @@ export default function DashboardWidgetTile({
             zIndex: 0,
             borderRadius: "inherit",
             cursor: "pointer",
-            "&:hover": { bgcolor: "action.hover" },
+            ...widgetHoverSx,
             "&:focus-visible": {
               outline: "2px solid",
               outlineColor: "primary.main",
@@ -306,7 +310,6 @@ export default function DashboardWidgetTile({
           }}
         />
         <Box sx={{ position: "relative", zIndex: 1, height: "100%", pointerEvents: "none" }}>
-          <Box sx={{ pointerEvents: "auto" }}>{refreshButton}</Box>
           {/* The header's own bottom padding — not just a top margin on the
               chart below it — so the chart's top edge (and, at the size this
               chart renders at, its tooltip) never sits flush against/behind
@@ -376,7 +379,7 @@ export default function DashboardWidgetTile({
             sx={{
               mt: 0.5,
               lineHeight: 1.1,
-              fontWeight: 700,
+              fontWeight: 400,
               fontSize: "3.25rem",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -391,9 +394,9 @@ export default function DashboardWidgetTile({
 
   return (
     // Same sibling-target restructuring as the pie/bar branch above: the
-    // whole-card click-through used to BE the refresh IconButton's own
-    // ancestor (`Card component={RouterLink}`), which hides a nested
-    // interactive control from assistive tech exactly like a nested
+    // whole-card click-through used to BE the (now-removed) refresh
+    // IconButton's own ancestor (`Card component={RouterLink}`), which hides
+    // a nested interactive control from assistive tech exactly like a nested
     // role="button" does. The anchor here is a background sibling instead;
     // see the pie/bar branch's comment for the pointer-events layering.
     <Card
@@ -421,16 +424,12 @@ export default function DashboardWidgetTile({
           cursor: "pointer",
           color: "inherit",
           textDecoration: "none",
-          transition: "box-shadow 0.2s ease, transform 0.15s ease",
-          "&:hover": {
-            boxShadow: `0 0 0 1px ${theme.palette.primary.main}, 0 4px 16px rgba(0,0,0,0.12)`,
-            transform: "translateY(-2px)",
-          },
+          ...widgetHoverSx,
           "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 },
         }}
       />
       <Box sx={{ position: "relative", zIndex: 1, height: "100%", pointerEvents: "none" }}>
-        <Box sx={{ pointerEvents: "auto" }}>{refreshButton}</Box>
+        <Box sx={{ pointerEvents: "auto" }}>{infoIcon}</Box>
         {body}
       </Box>
     </Card>
