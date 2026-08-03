@@ -18,6 +18,7 @@ package service
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -994,6 +995,99 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 	}
 	if len(gotBody.Filters.CreatedBy) != 0 {
 		t.Fatalf("expected CreatedBy to stay empty for the current-user placeholder, got %v", gotBody.Filters.CreatedBy)
+	}
+}
+
+// TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat is the guard
+// against the single most dangerous regression this rename could cause. The
+// PUBLIC contract's cross-field-OR key was renamed filters.orGroups ->
+// filters.anyOf (and each branch became an object with its own filters
+// array), but the ServiceNow WIRE format must not move: CaseUtils' Script
+// Include reads "orGroups" and silently ignores JSON keys it does not
+// recognise, so a renamed wire key returns an UNFILTERED count with no error
+// anywhere. This test therefore asserts on the raw outgoing JSON -- not a
+// typed decode, which would happily re-map a renamed key -- that the body
+// still carries "orGroups", still does NOT carry "anyOf", and that each
+// branch is still a flat named-field object (no nested "filters" array).
+func TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open"}},
+			},
+			AnyOf: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "severity", Op: "in", Values: []string{"catastrophic"}},
+					{Field: "workState", Op: "in", Values: []string{"ongoing"}},
+				}},
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "escalationLevel", Op: "in", Values: []string{"3"}},
+				}},
+			},
+		},
+	}
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		t.Fatalf("unmarshal raw request body: %v (body=%s)", err, rawBody)
+	}
+	filters, ok := body["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has no filters object: %s", rawBody)
+	}
+	if _, bad := filters["anyOf"]; bad {
+		t.Fatalf(`SN payload must NOT carry the public-API key "anyOf": %s`, rawBody)
+	}
+	groups, ok := filters["orGroups"].([]any)
+	if !ok {
+		t.Fatalf(`SN payload lost the "orGroups" wire key (ServiceNow would silently return an unfiltered count): %s`, rawBody)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("orGroups length = %d, want 2: %s", len(groups), rawBody)
+	}
+
+	first, ok := groups[0].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[0] is not an object: %s", rawBody)
+	}
+	if _, nested := first["filters"]; nested {
+		t.Fatalf(`orGroups[0] must stay a flat named-field object, not the public API's {"filters": [...]} branch shape: %s`, rawBody)
+	}
+	// severity "catastrophic" -> severityKeys, workState "in_progress" ->
+	// workStateKeys: the exact named-field branch shape CaseUtils reads.
+	if _, ok := first["severityKeys"].([]any); !ok {
+		t.Fatalf("orGroups[0].severityKeys missing: %s", rawBody)
+	}
+	if _, ok := first["workStateKeys"].([]any); !ok {
+		t.Fatalf("orGroups[0].workStateKeys missing: %s", rawBody)
+	}
+
+	second, ok := groups[1].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[1] is not an object: %s", rawBody)
+	}
+	levels, ok := second["escalationLevel"].([]any)
+	if !ok || len(levels) != 1 || levels[0] != "3" {
+		t.Fatalf("orGroups[1].escalationLevel = %v, want [\"3\"]: %s", second["escalationLevel"], rawBody)
 	}
 }
 

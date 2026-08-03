@@ -1379,14 +1379,22 @@ type CaseFieldFilter struct {
 type SearchCasesFilters struct {
 	SearchQuery string            `json:"searchQuery,omitempty"`
 	Filters     []CaseFieldFilter `json:"filters,omitempty"`
-	// OrGroups expresses cross-field OR: each inner array is a set of
-	// CaseFieldFilter predicates ANDed together (a "branch"); the branches
-	// themselves are OR'd against each other, and the whole OrGroups result is
-	// ANDed with Filters (if both are present). Only fields with a direct,
-	// non-subquery ServiceNow mapping are supported inside a branch -- see
+	// AnyOf expresses cross-field OR: each entry is a branch whose own
+	// Filters array is ANDed together; the branches themselves are OR'd
+	// against each other, and the whole AnyOf result is ANDed with Filters
+	// (if both are present). Only fields with a direct, non-subquery
+	// ServiceNow mapping are supported inside a branch -- see
 	// service.ParseCaseFieldFilterGroups for the exact supported field set.
 	// Requires ServiceNow data source.
-	OrGroups [][]CaseFieldFilter `json:"orGroups,omitempty"`
+	AnyOf []CaseFilterBranch `json:"anyOf,omitempty"`
+}
+
+// CaseFilterBranch is one branch of SearchCasesFilters.AnyOf: a set of
+// CaseFieldFilter predicates ANDed together. Wrapping the predicate array in
+// an object (rather than expressing a branch as a bare array) keeps the AND
+// semantics of the inner array explicit and named.
+type CaseFilterBranch struct {
+	Filters []CaseFieldFilter `json:"filters"`
 }
 
 // ParsedCaseFilters is the internal, named-field representation that
@@ -1460,12 +1468,12 @@ type ParsedCaseFilters struct {
 	// escalation, from the "escalation" filter field's isEmpty/isNotEmpty op
 	// (optional; nil means no filter on this field).
 	HasActiveEscalation *bool
-	// OrGroups: see SearchCasesFilters.OrGroups doc comment. Each entry is one
+	// OrGroups: see SearchCasesFilters.AnyOf doc comment. Each entry is one
 	// parsed, ANDed branch; branches are OR'd together by the SN adapter.
 	OrGroups []CaseFilterGroup
 }
 
-// CaseFilterGroup is one ANDed branch of a SearchCasesFilters.OrGroups entry.
+// CaseFilterGroup is one ANDed branch of a SearchCasesFilters.AnyOf entry.
 // Deliberately narrower than ParsedCaseFilters: only fields with a direct,
 // non-subquery ServiceNow field mapping are supported inside an OR branch (no
 // tags/excludeTags/taskSLAFilter/parentId/createdBy/date-range/
