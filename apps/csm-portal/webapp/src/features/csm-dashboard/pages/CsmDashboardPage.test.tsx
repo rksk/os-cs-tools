@@ -263,12 +263,16 @@ describe("CsmDashboardPage", () => {
   });
 
   describe("team-based default dashboard", () => {
+    // The preferred predicate requires BOTH isDefault AND isTeamBased on the
+    // SAME entry — team_performance carries both here, so a user with a
+    // resolved team matches it directly (not merely the first isTeamBased
+    // entry regardless of isDefault, which was the earlier, incorrect rule).
     const LIST_WITH_TEAM_DASHBOARD = [
       { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
-      { id: "team_performance", displayName: "Team performance", isDefault: false, isTeamBased: true },
+      { id: "team_performance", displayName: "Team performance", isDefault: true, isTeamBased: true },
     ];
 
-    it("defaults to the isTeamBased dashboard, with the user's own team auto-selected, when the user has a resolved team", () => {
+    it("defaults to the dashboard with isDefault AND isTeamBased both true, with the user's own team auto-selected, when the user has a resolved team", () => {
       mockListResult({ data: LIST_WITH_TEAM_DASHBOARD, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "cs_team_leads", teamName: "CS Team Leads" } },
@@ -288,7 +292,7 @@ describe("CsmDashboardPage", () => {
       expect(currentHash()).toBe("");
     });
 
-    it("keeps the BE isDefault entry when the user has no resolved team, even though an isTeamBased dashboard exists", () => {
+    it("keeps the isDefault+!isTeamBased entry when the user has no resolved team, even though an isDefault+isTeamBased dashboard exists", () => {
       mockListResult({ data: LIST_WITH_TEAM_DASHBOARD, isLoading: false });
       mockCurrentUser({ user: { team: undefined }, isLoading: false });
 
@@ -296,6 +300,47 @@ describe("CsmDashboardPage", () => {
 
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "agents_pilot",
+      );
+    });
+
+    it("falls back to the BE's own (any) isDefault entry when the user has a team but no dashboard has BOTH isDefault and isTeamBased set", () => {
+      // team_performance is isTeamBased but NOT isDefault here — the
+      // preferred predicate (isDefault && isTeamBased) matches nothing, so
+      // this must fall back to the BE's own isDefault entry (agents_pilot),
+      // not to team_performance just because it's isTeamBased.
+      mockListResult({
+        data: [
+          { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
+          { id: "team_performance", displayName: "Team performance", isDefault: false, isTeamBased: true },
+        ],
+        isLoading: false,
+      });
+      mockCurrentUser({
+        user: { team: { teamKey: "cs_team_leads", teamName: "CS Team Leads" } },
+        isLoading: false,
+      });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "agents_pilot",
+      );
+    });
+
+    it("falls back to the first dashboard in the list when the registry has no isDefault entry at all", () => {
+      mockListResult({
+        data: [
+          { id: "team_performance", displayName: "Team performance", isDefault: false, isTeamBased: true },
+          { id: "operations", displayName: "Operations", isDefault: false, isTeamBased: false },
+        ],
+        isLoading: false,
+      });
+      mockCurrentUser({ user: { team: undefined }, isLoading: false });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "team_performance",
       );
     });
 

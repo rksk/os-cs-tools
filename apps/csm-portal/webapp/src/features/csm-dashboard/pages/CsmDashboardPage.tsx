@@ -32,11 +32,14 @@ import {
  * Top-level CSM dashboard. The dashboard list is BE-driven (`GET
  * /dashboards`), and the initial selection depends on the signed-in user's
  * own ABT team membership (`GET /users/me`'s `team`, via `useCurrentUser`):
- * a user WITH a resolved team defaults to the first `isTeamBased` dashboard
- * in the list (with that team auto-selected — see `selectedTeamId` below);
- * a user with no team defaults to the BE's own `isDefault` entry, same as
- * before this distinction existed. The URL always wins over both defaults
- * when it names a (valid) dashboard — see `parseDashboardHash`.
+ * a user WITH a resolved team defaults to the first dashboard with BOTH
+ * `isDefault` and `isTeamBased` set (with that team auto-selected — see
+ * `selectedTeamId` below); a user with no team defaults to the first
+ * dashboard with `isDefault` set and `isTeamBased` NOT set. If no dashboard
+ * matches that preferred predicate, this falls back to the BE's own (any)
+ * `isDefault` entry, then to the first dashboard in the list — never to an
+ * empty selection. The URL always wins over all of that when it names a
+ * (valid) dashboard — see `parseDashboardHash`.
  *
  * Dashboards are selected purely by dropdown — there is no other
  * per-dashboard scoping control. Every dashboard in the registry has at
@@ -58,15 +61,23 @@ export default function CsmDashboardPage(): JSX.Element {
 
   const urlEntry = list?.find((d) => d.id === hashDashboardId);
 
-  const beDefaultEntry =
-    list && list.length > 0 ? (list.find((d) => d.isDefault) ?? list[0]) : undefined;
-  // The first isTeamBased dashboard in the list — the registry only ever
-  // configures one today, but nothing here assumes exactly one.
-  const teamBasedEntry = list?.find((d) => d.isTeamBased);
   const userHasTeam = Boolean(currentUser.user?.team);
+  // The preferred predicate per the user's own team membership: BOTH
+  // isDefault and isTeamBased must match (not isTeamBased alone, and not
+  // isDefault alone) — see the module doc comment above.
+  const preferredEntry = userHasTeam
+    ? list?.find((d) => d.isDefault && d.isTeamBased)
+    : list?.find((d) => d.isDefault && !d.isTeamBased);
+  // Fallback 1: the BE's own (any) isDefault entry, regardless of
+  // isTeamBased — covers a registry that has no isDefault+isTeamBased (or
+  // isDefault+!isTeamBased) combination configured at all.
+  const anyDefaultEntry = list?.find((d) => d.isDefault);
+  // Fallback 2: the first dashboard in the list — never render nothing just
+  // because the registry has no isDefault entry configured.
+  const firstEntry = list && list.length > 0 ? list[0] : undefined;
   // True only while we genuinely don't know yet whether this user has a
   // team — a failed profile fetch (isError) must not hang this forever, so
-  // it falls straight through to the BE default below instead.
+  // it falls straight through to the defaults below instead.
   const userProfilePending = currentUser.isLoading && !currentUser.isError;
 
   // The URL always wins when it names a dashboard actually in the loaded
@@ -78,10 +89,8 @@ export default function CsmDashboardPage(): JSX.Element {
   if (!currentEntry && list) {
     if (userProfilePending) {
       currentEntry = undefined;
-    } else if (userHasTeam && teamBasedEntry) {
-      currentEntry = teamBasedEntry;
     } else {
-      currentEntry = beDefaultEntry;
+      currentEntry = preferredEntry ?? anyDefaultEntry ?? firstEntry;
     }
   }
 
