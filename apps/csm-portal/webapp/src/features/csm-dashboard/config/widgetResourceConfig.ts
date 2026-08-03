@@ -163,7 +163,7 @@ function caseFilterEntry(
  * `projectType`, and the `createdOn`/`updatedOn`/`closedOn` date ranges,
  * which was the root cause of the click-through data-loss bug this function
  * exists to fix (a tile reading a filtered count landed on the org-wide
- * cases list because its filters had nowhere to go). Only `orGroups`,
+ * cases list because its filters had nowhere to go). Only `anyOf`,
  * `parentId`, and `resolutionNotes` remain genuinely dropped: no dashboard
  * widget uses them today, and `CasesFilters` has no equivalent to invent one
  * for without guessing at a UI treatment.

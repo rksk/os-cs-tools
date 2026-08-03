@@ -5340,16 +5340,16 @@ components:
           minimum: 1
           maximum: 12
           description: CSS grid columns out of 12 this widget should occupy
-        filters:
+        query:
           type: object
           additionalProperties: true
           description: >
-            Filter criteria for this widget, with any current-user
+            Search criteria for this widget, with any current-user
             placeholder already substituted. Pass this directly as the
             filters of that resourceType's own POST /{resourceType}s/search
             request to resolve the widget's data. For shapes "pie"/"bar"
             this is a shared base merged under every slices entry's own
-            filters (caller-side; slices entry keys win on conflict) rather
+            query (caller-side; slices entry keys win on conflict) rather
             than queried on its own.
         groupBy:
           type: string
@@ -5362,8 +5362,8 @@ components:
           description: >
             Only meaningful for shapes "pie"/"bar": one search per entry,
             each resolved via its own total, the same mechanism shape
-            "count" uses. Merge each entry's filters under this widget's
-            own filters (entry keys win on conflict) before searching.
+            "count" uses. Merge each entry's query under this widget's
+            own query (entry keys win on conflict) before searching.
           items:
             type: object
             properties:
@@ -5376,13 +5376,13 @@ components:
                   uses elsewhere in this system; not validated here, forwarded
                   verbatim. Falls back to a fixed rotation over the same
                   palette on the frontend if omitted.
-              filters:
+              query:
                 type: object
                 additionalProperties: true
                 description: >
                   This slice's own criteria only, with any current-user
                   placeholder already substituted — merge under the parent
-                  widget's own filters to resolve this slice's total.
+                  widget's own query to resolve this slice's total.
         section:
           type: string
           description: >

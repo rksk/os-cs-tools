@@ -163,7 +163,7 @@ export default function AgentsLandingPagePilot({
                   description={widget.description}
                   resourceType={widget.resourceType}
                   shape={widget.shape}
-                  filters={widget.filters}
+                  filters={widget.query}
                   listLimit={widget.listLimit}
                   slices={widget.slices}
                   selectedTeamGroupId={selectedTeamGroupId}

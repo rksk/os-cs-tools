@@ -65,7 +65,7 @@ const DASHBOARD_DETAIL = {
       resourceType: "case",
       shape: "count",
       gridWidth: 3,
-      filters: { assignedUserIds: ["user-1"], tags: ["patch"] },
+      query: { assignedUserIds: ["user-1"], tags: ["patch"] },
     },
     {
       widgetId: "my_reminders",
@@ -73,7 +73,7 @@ const DASHBOARD_DETAIL = {
       resourceType: "case",
       shape: "count",
       gridWidth: 3,
-      filters: { assignedUserIds: ["user-1"], states: ["awaiting_info"] },
+      query: { assignedUserIds: ["user-1"], states: ["awaiting_info"] },
     },
     {
       widgetId: "open_incident_team",
@@ -81,7 +81,7 @@ const DASHBOARD_DETAIL = {
       resourceType: "case",
       shape: "count",
       gridWidth: 3,
-      filters: { tags: ["s_dip"] },
+      query: { tags: ["s_dip"] },
     },
   ],
 };
@@ -201,7 +201,7 @@ describe("AgentsLandingPagePilot", () => {
           resourceType: "case",
           shape: "count",
           gridWidth: 6,
-          filters: {},
+          query: {},
         },
         {
           widgetId: "incident_wow",
@@ -210,7 +210,7 @@ describe("AgentsLandingPagePilot", () => {
           resourceType: "case",
           shape: "count",
           gridWidth: 6,
-          filters: {},
+          query: {},
         },
         {
           widgetId: "query_wow",
@@ -219,7 +219,7 @@ describe("AgentsLandingPagePilot", () => {
           resourceType: "case",
           shape: "count",
           gridWidth: 6,
-          filters: {},
+          query: {},
         },
       ],
     });

@@ -17,12 +17,15 @@
 import { isCaseFieldFilterArray, type WidgetCaseFieldFilterLike } from "./widgetPreviewUrl";
 
 /**
- * Merges a pie/bar widget's per-slice `filters` under its own base `filters`
+ * Merges a pie/bar widget's per-slice `query` under its own base `query`
  * (see `PieSlice`'s doc comment on the backend: "slice keys win on
  * conflict"), the way `useWidgetPieData`/`DashboardWidgetTile`'s click-through
- * both need.
+ * both need. Both arguments are criteria objects — the widget-config key
+ * that carries them was renamed `filters` -> `query`, but the criteria
+ * object's OWN inner `filters` array (the case-search DSL below) keeps its
+ * name, and so does the search request body's `filters` property.
  *
- * For every resourceType except `case`, filters are a flat
+ * For every resourceType except `case`, criteria are a flat
  * `{ [namedField]: values }` record, so a plain object spread already gives
  * "slice keys win on conflict" for free — the slice's own keys simply
  * overwrite the base's same-named keys, and every other base key survives.

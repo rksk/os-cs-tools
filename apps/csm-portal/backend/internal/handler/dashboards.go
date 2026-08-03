@@ -26,19 +26,19 @@ import (
 )
 
 // dashboardPieSliceView is one wedge of a Shape "pie" widget — see
-// dashboard.PieSlice. Filters is this slice's own criteria only (already
+// dashboard.PieSlice. Query is this slice's own criteria only (already
 // __current_user__-resolved), meant to be merged under the parent widget's
-// own (also resolved) Filters by the caller.
+// own (also resolved) Query by the caller.
 type dashboardPieSliceView struct {
-	Label   string         `json:"label"`
-	Color   string         `json:"color,omitempty"`
-	Filters map[string]any `json:"filters"`
+	Label string         `json:"label"`
+	Color string         `json:"color,omitempty"`
+	Query map[string]any `json:"query"`
 }
 
 // dashboardWidgetView is a single widget's filter criteria and display
 // metadata, returned as part of GET /dashboards/{dashboardId}. The caller
 // resolves each widget's own data by issuing its own POST /{resourceType}s/search
-// request (see ResourceType) with Filters.
+// request (see ResourceType), passing Query as that request's filters.
 type dashboardWidgetView struct {
 	WidgetID     string                  `json:"widgetId"`
 	DisplayName  string                  `json:"displayName"`
@@ -46,7 +46,7 @@ type dashboardWidgetView struct {
 	ResourceType dashboard.ResourceType  `json:"resourceType"`
 	Shape        dashboard.Shape         `json:"shape"`
 	GridWidth    int                     `json:"gridWidth"`
-	Filters      map[string]any          `json:"filters"`
+	Query        map[string]any          `json:"query"`
 	GroupBy      string                  `json:"groupBy,omitempty"`
 	ListLimit    int                     `json:"listLimit,omitempty"`
 	Slices       []dashboardPieSliceView `json:"slices,omitempty"`
@@ -168,9 +168,9 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 			slices = make([]dashboardPieSliceView, 0, len(tpl.Slices))
 			for _, slice := range tpl.Slices {
 				slices = append(slices, dashboardPieSliceView{
-					Label:   slice.Label,
-					Color:   slice.Color,
-					Filters: dashboard.ResolveSliceFilters(slice, currentUserID),
+					Label: slice.Label,
+					Color: slice.Color,
+					Query: dashboard.ResolveSliceFilters(slice, currentUserID),
 				})
 			}
 		}
@@ -181,7 +181,7 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 			ResourceType: tpl.ResourceType,
 			Shape:        tpl.Shape,
 			GridWidth:    tpl.GridWidth,
-			Filters:      dashboard.ResolveFilters(tpl, currentUserID),
+			Query:        dashboard.ResolveFilters(tpl, currentUserID),
 			GroupBy:      tpl.GroupBy,
 			ListLimit:    tpl.ListLimit,
 			Slices:       slices,

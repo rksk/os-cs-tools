@@ -50,8 +50,8 @@ describe("useWidgetPieData", () => {
     const { result } = renderHook(
       () =>
         useWidgetPieData("case", { states: ["open"] }, [
-          { label: "Critical", filters: { severities: "critical" } },
-          { label: "High", filters: { severities: "high" } },
+          { label: "Critical", query: { severities: "critical" } },
+          { label: "High", query: { severities: "high" } },
         ]),
       { wrapper },
     );
@@ -68,8 +68,8 @@ describe("useWidgetPieData", () => {
       pagination: { offset: 0, limit: 1 },
     });
     expect(result.current.slices).toEqual([
-      { label: "Critical", filters: { severities: "critical" }, value: 1 },
-      { label: "High", filters: { severities: "high" }, value: 3 },
+      { label: "Critical", query: { severities: "critical" }, value: 1 },
+      { label: "High", query: { severities: "high" }, value: 3 },
     ]);
     expect(result.current.total).toBe(4);
   });
@@ -94,7 +94,7 @@ describe("useWidgetPieData", () => {
           [
             {
               label: "My team",
-              filters: {
+              query: {
                 filters: [
                   { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
@@ -134,7 +134,7 @@ describe("useWidgetPieData", () => {
           [
             {
               label: "My team",
-              filters: {
+              query: {
                 filters: [
                   { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
@@ -164,8 +164,8 @@ describe("useWidgetPieData", () => {
     const { result } = renderHook(
       () =>
         useWidgetPieData("case", {}, [
-          { label: "A", filters: { a: "1" } },
-          { label: "B", filters: { b: "2" } },
+          { label: "A", query: { a: "1" } },
+          { label: "B", query: { b: "2" } },
         ]),
       { wrapper },
     );
