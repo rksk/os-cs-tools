@@ -327,7 +327,7 @@ export default function DashboardWidgetTile({
                 navigate(
                   config.buildHref(
                     resolveTeamPlaceholder(
-                      mergeWidgetFilters(filters, slice.filters),
+                      mergeWidgetFilters(filters, slice.query),
                       selectedTeamGroupId,
                     ),
                   ),

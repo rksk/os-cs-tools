@@ -45,20 +45,20 @@ import (
 // just with the config supplied in-process instead of via the environment.
 const testDashboardsConfigJSON = `[
   {"id":"sample-dashboard","displayName":"Sample Dashboard","isDefault":true,"targetTeam":"sample-team","widgets":[
-    {"id":"my-open-cases","displayName":"My Open Cases","resourceType":"case","shape":"count","gridWidth":3,"filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["open","work_in_progress"]}]}},
-    {"id":"recent-cases","displayName":"Recent Cases","resourceType":"case","shape":"list","gridWidth":6,"listLimit":5,"filters":{"filters":[{"field":"tag","op":"in","values":["example-tag"]},{"field":"tag","op":"notIn","values":["excluded-example-tag"]}]}},
-    {"id":"pending-time-cards","displayName":"Pending Time Cards","resourceType":"time_card","shape":"count","gridWidth":3,"filters":{"states":["pending"]}},
-    {"id":"open-vulnerabilities","displayName":"Open Vulnerabilities","resourceType":"product_vulnerability","shape":"count","gridWidth":3,"filters":{"priority":"high"}}
+    {"id":"my-open-cases","displayName":"My Open Cases","resourceType":"case","shape":"count","gridWidth":3,"query":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["open","work_in_progress"]}]}},
+    {"id":"recent-cases","displayName":"Recent Cases","resourceType":"case","shape":"list","gridWidth":6,"listLimit":5,"query":{"filters":[{"field":"tag","op":"in","values":["example-tag"]},{"field":"tag","op":"notIn","values":["excluded-example-tag"]}]}},
+    {"id":"pending-time-cards","displayName":"Pending Time Cards","resourceType":"time_card","shape":"count","gridWidth":3,"query":{"states":["pending"]}},
+    {"id":"open-vulnerabilities","displayName":"Open Vulnerabilities","resourceType":"product_vulnerability","shape":"count","gridWidth":3,"query":{"priority":"high"}}
   ]},
   {"id":"sample-team-dashboard","displayName":"Sample Team Dashboard","targetTeam":"sample-team","isTeamBased":true,"widgets":[
-    {"id":"team-open-cases","displayName":"Team Open Cases","section":"Overview","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"severity","op":"in","values":["critical","high"]},{"field":"state","op":"in","values":["open","work_in_progress"]}]}},
-    {"id":"unassigned-cases","displayName":"Unassigned Cases","section":"Overview","resourceType":"case","shape":"count","gridWidth":4,"filters":{"filters":[{"field":"assignedUserId","op":"isEmpty"},{"field":"state","op":"in","values":["open"]}]}},
-    {"id":"cases-by-severity","displayName":"Cases by Severity","description":"Share of active cases at each severity level.","resourceType":"case","shape":"pie","gridWidth":4,"filters":{"filters":[{"field":"state","op":"in","values":["open","work_in_progress"]}]},"slices":[
-      {"label":"Critical","color":"error","filters":{"filters":[{"field":"severity","op":"in","values":["critical"]}]}},
-      {"label":"Mine","filters":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]}]}}
+    {"id":"team-open-cases","displayName":"Team Open Cases","section":"Overview","resourceType":"case","shape":"count","gridWidth":4,"query":{"filters":[{"field":"severity","op":"in","values":["critical","high"]},{"field":"state","op":"in","values":["open","work_in_progress"]}]}},
+    {"id":"unassigned-cases","displayName":"Unassigned Cases","section":"Overview","resourceType":"case","shape":"count","gridWidth":4,"query":{"filters":[{"field":"assignedUserId","op":"isEmpty"},{"field":"state","op":"in","values":["open"]}]}},
+    {"id":"cases-by-severity","displayName":"Cases by Severity","description":"Share of active cases at each severity level.","resourceType":"case","shape":"pie","gridWidth":4,"query":{"filters":[{"field":"state","op":"in","values":["open","work_in_progress"]}]},"slices":[
+      {"label":"Critical","color":"error","query":{"filters":[{"field":"severity","op":"in","values":["critical"]}]}},
+      {"label":"Mine","query":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]}]}}
     ]},
-    {"id":"escalated-incidents","displayName":"Escalated Incidents","section":"Escalations","resourceType":"incident","shape":"count","gridWidth":4,"filters":{}},
-    {"id":"pending-change-requests","displayName":"Pending Change Requests","resourceType":"change_request","shape":"count","gridWidth":4,"filters":{"states":["customer_approval"]}}
+    {"id":"escalated-incidents","displayName":"Escalated Incidents","section":"Escalations","resourceType":"incident","shape":"count","gridWidth":4,"query":{}},
+    {"id":"pending-change-requests","displayName":"Pending Change Requests","resourceType":"change_request","shape":"count","gridWidth":4,"query":{"states":["customer_approval"]}}
   ]}
 ]`
 
@@ -106,7 +106,7 @@ func TestMain(m *testing.M) {
 //
 // groupBy and listLimit are omitempty on the wire and are not included here;
 // widgets that set them are checked individually where relevant.
-var dashboardWidgetJSONKeys = []string{"widgetId", "displayName", "resourceType", "shape", "gridWidth", "filters"}
+var dashboardWidgetJSONKeys = []string{"widgetId", "displayName", "resourceType", "shape", "gridWidth", "query"}
 
 // dashboardListItemJSONKeys are the top-level JSON keys openapi.yaml's
 // DashboardListItem schema declares.
@@ -384,7 +384,7 @@ func TestGetDashboardDetail(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing widget %q in response", "my-open-cases")
 		}
-		assigned, present := filterValuesByField(result.Widgets[openIdx].Filters, "assignedUserId")
+		assigned, present := filterValuesByField(result.Widgets[openIdx].Query, "assignedUserId")
 		if !present {
 			t.Fatalf("widget my-open-cases filters has no assignedUserId field entry")
 		}
@@ -404,7 +404,7 @@ func TestGetDashboardDetail(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing widget %q in response", "recent-cases")
 		}
-		recentFilters := result.Widgets[recentIdx].Filters
+		recentFilters := result.Widgets[recentIdx].Query
 		if v, present := filterValuesByField(recentFilters, "assignedUserId"); present {
 			t.Errorf("widget recent-cases filters unexpectedly has an assignedUserId field entry: %v", v)
 		}
@@ -459,9 +459,9 @@ func TestGetDashboardDetail(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing widget %q in response", "pending-change-requests")
 		}
-		statesRaw, present := changeRequest.Filters["states"]
+		statesRaw, present := changeRequest.Query["states"]
 		if !present {
-			t.Fatalf("pending-change-requests filters has no states key: %v", changeRequest.Filters)
+			t.Fatalf("pending-change-requests query has no states key: %v", changeRequest.Query)
 		}
 		states, ok := statesRaw.([]any)
 		if !ok || len(states) != 1 || states[0] != "customer_approval" {
@@ -501,9 +501,9 @@ func TestGetDashboardDetail(t *testing.T) {
 		if vulns.ResourceType != dashboard.ResourceProductVulnerability {
 			t.Errorf("open-vulnerabilities resourceType = %q, want %q", vulns.ResourceType, dashboard.ResourceProductVulnerability)
 		}
-		priority, present := vulns.Filters["priority"]
+		priority, present := vulns.Query["priority"]
 		if !present {
-			t.Fatalf("open-vulnerabilities filters has no priority key: %v", vulns.Filters)
+			t.Fatalf("open-vulnerabilities query has no priority key: %v", vulns.Query)
 		}
 		if s, ok := priority.(string); !ok || s != "high" {
 			t.Errorf("open-vulnerabilities filters.priority = %v (%T), want string %q", priority, priority, "high")
@@ -555,14 +555,14 @@ func TestGetDashboardDetail(t *testing.T) {
 		if critical.Color != "error" {
 			t.Errorf("Critical slice Color = %q, want %q", critical.Color, "error")
 		}
-		if _, present := filterValuesByField(critical.Filters, "state"); present {
-			t.Errorf("Critical slice Filters must not carry the widget's own base filters, got %v", critical.Filters)
+		if _, present := filterValuesByField(critical.Query, "state"); present {
+			t.Errorf("Critical slice Query must not carry the widget's own base filters, got %v", critical.Query)
 		}
 
 		if mine == nil {
 			t.Fatalf("missing the %q slice in cases-by-severity.Slices", "Mine")
 		}
-		assigned, ok := filterValuesByField(mine.Filters, "assignedUserId")
+		assigned, ok := filterValuesByField(mine.Query, "assignedUserId")
 		if !ok || len(assigned) != 1 || assigned[0] != resolvedCurrentUserID {
 			t.Errorf("Mine slice assignedUserId = %v, want [%q] (resolved, not the raw placeholder)", assigned, resolvedCurrentUserID)
 		}
@@ -674,7 +674,7 @@ func TestResolveCurrentUserID_UsesEntityUsersMeNotJWTClaim(t *testing.T) {
 		byID[wd.WidgetID] = wd
 	}
 
-	assigned, ok := filterValuesByField(byID["my-open-cases"].Filters, "assignedUserId")
+	assigned, ok := filterValuesByField(byID["my-open-cases"].Query, "assignedUserId")
 	if !ok || len(assigned) != 1 {
 		t.Fatalf("my-open-cases assignedUserId values = %v, want a 1-element array", assigned)
 	}
@@ -708,7 +708,7 @@ func TestResolveCurrentUserID_FallsBackToJWTClaimOnEntityError(t *testing.T) {
 	for _, wd := range result.Widgets {
 		byID[wd.WidgetID] = wd
 	}
-	assigned, ok := filterValuesByField(byID["my-open-cases"].Filters, "assignedUserId")
+	assigned, ok := filterValuesByField(byID["my-open-cases"].Query, "assignedUserId")
 	if !ok || len(assigned) != 1 || assigned[0] != testUser.UserID {
 		t.Errorf("my-open-cases assignedUserId values = %v, want the JWT-claim fallback [%q]", assigned, testUser.UserID)
 	}

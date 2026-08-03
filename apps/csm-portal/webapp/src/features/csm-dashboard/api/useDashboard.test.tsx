@@ -56,7 +56,7 @@ describe("useDashboard", () => {
           resourceType: "case",
           shape: "count",
           gridWidth: 3,
-          filters: { assignedUserIds: ["user-1"], tags: ["patch"] },
+          query: { assignedUserIds: ["user-1"], tags: ["patch"] },
         },
       ],
     });
@@ -76,7 +76,7 @@ describe("useDashboard", () => {
         resourceType: "case",
         shape: "count",
         gridWidth: 3,
-        filters: { assignedUserIds: ["user-1"], tags: ["patch"] },
+        query: { assignedUserIds: ["user-1"], tags: ["patch"] },
       },
     ]);
   });

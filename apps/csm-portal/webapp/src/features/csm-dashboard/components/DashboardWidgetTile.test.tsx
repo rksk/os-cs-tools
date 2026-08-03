@@ -431,7 +431,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "My team",
-            filters: {
+            query: {
               filters: [
                 { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
               ],
@@ -472,12 +472,12 @@ describe("DashboardWidgetTile", () => {
           {
             label: "S1 · Critical",
             color: "error",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
           {
             label: "S2 · High",
             color: "warning",
-            filters: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
           },
         ]}
       />,
@@ -526,12 +526,12 @@ describe("DashboardWidgetTile", () => {
           {
             label: "S1 · Critical",
             color: "error",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
           {
             label: "S2 · High",
             color: "warning",
-            filters: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
           },
         ]}
       />,
@@ -575,7 +575,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -606,7 +606,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -634,7 +634,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -669,7 +669,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -699,7 +699,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -738,7 +738,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -767,7 +767,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -800,7 +800,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,
@@ -832,7 +832,7 @@ describe("DashboardWidgetTile", () => {
         slices={[
           {
             label: "Critical",
-            filters: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
           },
         ]}
       />,

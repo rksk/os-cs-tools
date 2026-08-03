@@ -38,8 +38,8 @@ export interface WidgetPieData {
 
 /**
  * Resolves a `shape: "pie"` widget's per-slice values: one independent
- * `POST {resourceType}/search` per slice — its own `filters` merged under
- * the widget's own base `filters` (slice keys win on conflict) — with
+ * `POST {resourceType}/search` per slice — its own `query` merged under
+ * the widget's own base `query` (slice keys win on conflict) — with
  * `pagination: { limit: 1 }`, reading `total` off each. The exact same
  * mechanism `shape: "count"` (see `useWidgetData`) uses, just fired once
  * per slice instead of once for the whole widget. An empty `slices` array
@@ -51,8 +51,8 @@ export function useWidgetPieData(
   slices: BeDashboardPieSlice[],
   /** The currently selected team's own `groupId`, for resolving a
    * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`)
-   * — applied AFTER `mergeWidgetFilters`, since a slice's own `filters` may
-   * carry the placeholder too, not just the widget's base `filters`. */
+   * — applied AFTER `mergeWidgetFilters`, since a slice's own `query` may
+   * carry the placeholder too, not just the widget's base `query`. */
   selectedTeamGroupId?: string,
 ): WidgetPieData {
   const api = useBackendApi();
@@ -61,7 +61,7 @@ export function useWidgetPieData(
   const queries = useQueries({
     queries: slices.map((slice) => {
       const filters = resolveTeamPlaceholder(
-        mergeWidgetFilters(baseFilters, slice.filters),
+        mergeWidgetFilters(baseFilters, slice.query),
         selectedTeamGroupId,
       );
       return {

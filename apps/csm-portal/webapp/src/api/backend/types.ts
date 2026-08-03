@@ -2804,22 +2804,23 @@ export type BeWidgetPaletteColor =
   | "warning";
 
 /** One wedge of a `shape: "pie"` widget. Resolved by issuing this
- * resourceType's own `POST /{resourceType}s/search` with `filters` merged
- * under the widget's own base `filters` (this slice's keys win on
- * conflict) and `pagination: { limit: 1 }`, reading `total` — the exact
+ * resourceType's own `POST /{resourceType}s/search` with this slice's
+ * `query` merged under the widget's own base `query` (this slice's keys win
+ * on conflict) and `pagination: { limit: 1 }`, reading `total` — the exact
  * same mechanism `shape: "count"` uses, just once per slice. */
 export interface BeDashboardPieSlice {
   label: string;
   /** Falls back to a fixed rotation over the same palette if omitted. */
   color?: BeWidgetPaletteColor;
-  filters: Record<string, unknown>;
+  query: Record<string, unknown>;
 }
 
 /**
  * A single widget template, embedded in {@link BeDashboard}: display metadata
- * plus its already-resolved filter criteria. The caller resolves the
- * widget's own data by issuing its own `POST /{resourceType}s/search` with
- * `filters` and reading `total` (or the item list) off the response.
+ * plus its already-resolved search criteria. The caller resolves the
+ * widget's own data by issuing its own `POST /{resourceType}s/search`,
+ * posting `query` as that request's `filters` and reading `total` (or the
+ * item list) off the response.
  */
 export interface BeDashboardWidget {
   widgetId: string;
@@ -2832,14 +2833,15 @@ export interface BeDashboardWidget {
   /** CSS grid columns out of 12 this widget should occupy. */
   gridWidth: number;
   /**
-   * Opaque filter criteria, with any current-user placeholder already
+   * Opaque search criteria, with any current-user placeholder already
    * substituted. Pass this directly as the `filters` of that
-   * `resourceType`'s own `POST /{resourceType}s/search` request. For
-   * shapes "pie"/"bar" this is a shared base merged under every slice's own
-   * `filters` (see {@link BeDashboardPieSlice}), rather than queried on
-   * its own.
+   * `resourceType`'s own `POST /{resourceType}s/search` request — the
+   * request-body key stays `filters`; only this widget-config key is
+   * `query`. For shapes "pie"/"bar" this is a shared base merged under
+   * every slice's own `query` (see {@link BeDashboardPieSlice}), rather
+   * than queried on its own.
    */
-  filters: Record<string, unknown>;
+  query: Record<string, unknown>;
   /** Present on the wire; unused today — `slices` is what actually drives
    * pie/bar grouping. */
   groupBy?: string;
