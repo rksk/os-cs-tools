@@ -44,11 +44,7 @@ func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
 
-	// The dashboard registry is config-driven and loaded once at startup; a
-	// missing or malformed DASHBOARDS_CONFIG logs an error (see
-	// ParseDashboardsConfig) and leaves it empty rather than failing
-	// startup, since no other endpoint depends on it.
-	dashboard.Dashboards = dashboard.ParseDashboardsConfig(os.Getenv("DASHBOARDS_CONFIG"))
+	dashboard.SetActive(loadDashboards())
 
 	// All upstream service clients (entity, updates, SCIM, and future notification
 	// channels) authenticate as the same OAuth2 client-credentials app; only the
@@ -256,6 +252,51 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("CSM Portal Backend stopped")
+}
+
+// loadDashboards builds the dashboard registry from configuration, and exits
+// the process on any failure. Every failure mode here is a misconfigured
+// deploy, and the alternative — starting up with dashboards silently missing
+// — is exactly the class of quiet failure this codebase keeps getting bitten
+// by. It is deliberately fatal even though no other endpoint depends on the
+// registry.
+//
+// Configuration, in precedence order:
+//
+//	DASHBOARDS_DIR         a directory of per-dashboard *.json files. Preferred.
+//	DASHBOARDS_CONFIG      DEPRECATED single-variable JSON array. Used only
+//	                       when DASHBOARDS_DIR is unset.
+//	DASHBOARDS_HOT_RELOAD  "true" re-reads DASHBOARDS_DIR on every request
+//	                       instead of serving the startup snapshot, so editing
+//	                       a definition needs no restart. Local development
+//	                       only; the default (unset/false) does the startup
+//	                       read once and never touches the disk again.
+//
+// Neither set is legal and yields no dashboards: a deployment that has not
+// configured any must still start and serve every other endpoint.
+func loadDashboards() *dashboard.Registry {
+	dir := strings.TrimSpace(os.Getenv("DASHBOARDS_DIR"))
+	if dir == "" {
+		dashboards, err := dashboard.ParseDashboardsConfig(os.Getenv("DASHBOARDS_CONFIG"))
+		if err != nil {
+			slog.Error("invalid DASHBOARDS_CONFIG", "err", err)
+			os.Exit(1)
+		}
+		return dashboard.NewStaticRegistry(dashboards)
+	}
+
+	hotReload := strings.EqualFold(strings.TrimSpace(os.Getenv("DASHBOARDS_HOT_RELOAD")), "true")
+	registry, err := dashboard.NewDirRegistry(dir, hotReload)
+	if err != nil {
+		slog.Error("invalid dashboard definitions", "dir", dir, "err", err)
+		os.Exit(1)
+	}
+	if hotReload {
+		slog.Warn("DASHBOARDS_HOT_RELOAD is on: dashboard definitions are re-read from disk on every request. Intended for local development only",
+			"dir", dir)
+	}
+	slog.Info("loaded dashboard definitions", "dir", dir, "count", len(registry.Dashboards()), "hotReload", hotReload)
+	return registry
 }
 
 func mustEnv(key string) string {

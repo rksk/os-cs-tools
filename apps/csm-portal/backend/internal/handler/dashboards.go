@@ -60,8 +60,14 @@ type dashboardWidgetView struct {
 type dashboardListItemView struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
-	IsDefault   bool   `json:"isDefault"`
-	IsTeamBased bool   `json:"isTeamBased"`
+	// Type classifies the dashboard's audience ("cre", "sre", "cs"). The
+	// frontend picks the dashboard to open from it plus the caller's own
+	// team family, so it has to be on the list view: the choice is made
+	// before any detail fetch. Omitted for a definition that predates the
+	// field (only possible via the deprecated DASHBOARDS_CONFIG).
+	Type        dashboard.Type `json:"type,omitempty"`
+	IsDefault   bool           `json:"isDefault"`
+	IsTeamBased bool           `json:"isTeamBased"`
 }
 
 // dashboardDetailView is a dashboard's full metadata plus its resolved
@@ -69,6 +75,7 @@ type dashboardListItemView struct {
 type dashboardDetailView struct {
 	ID          string                `json:"id"`
 	DisplayName string                `json:"displayName"`
+	Type        dashboard.Type        `json:"type,omitempty"`
 	IsDefault   bool                  `json:"isDefault"`
 	TargetTeam  string                `json:"targetTeam"`
 	IsTeamBased bool                  `json:"isTeamBased"`
@@ -131,11 +138,13 @@ func (h *DashboardHandler) GetDashboards(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	views := make([]dashboardListItemView, 0, len(dashboard.Dashboards))
-	for _, d := range dashboard.Dashboards {
+	dashboards := dashboard.All()
+	views := make([]dashboardListItemView, 0, len(dashboards))
+	for _, d := range dashboards {
 		views = append(views, dashboardListItemView{
 			ID:          d.ID,
 			DisplayName: d.DisplayName,
+			Type:        d.Type,
 			IsDefault:   d.IsDefault,
 			IsTeamBased: d.IsTeamBased,
 		})
@@ -153,7 +162,7 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 	}
 
 	dashboardID := r.PathValue("dashboardId")
-	d, ok := dashboard.DashboardByID(dashboardID)
+	d, ok := dashboard.ByID(dashboardID)
 	if !ok {
 		writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		return
@@ -192,6 +201,7 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 	writeJSONValue(w, http.StatusOK, dashboardDetailView{
 		ID:          d.ID,
 		DisplayName: d.DisplayName,
+		Type:        d.Type,
 		IsDefault:   d.IsDefault,
 		TargetTeam:  d.TargetTeam,
 		IsTeamBased: d.IsTeamBased,

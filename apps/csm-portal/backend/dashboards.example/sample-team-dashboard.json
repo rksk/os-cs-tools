@@ -1,0 +1,112 @@
+{
+  "id": "sample-team-dashboard",
+  "displayName": "Sample Team Dashboard",
+  "type": "cre",
+  "isDefault": true,
+  "targetTeam": "sample-team",
+  "isTeamBased": true,
+  "widgets": [
+    {
+      "id": "team-open-cases",
+      "displayName": "Team Open Cases",
+      "section": "Overview",
+      "resourceType": "case",
+      "shape": "count",
+      "gridWidth": 4,
+      "query": {
+        "filters": [
+          {
+            "field": "severity",
+            "op": "in",
+            "values": [
+              "critical",
+              "high"
+            ]
+          },
+          {
+            "field": "state",
+            "op": "in",
+            "values": [
+              "open",
+              "work_in_progress"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unassigned-cases",
+      "displayName": "Unassigned Cases",
+      "section": "Overview",
+      "resourceType": "case",
+      "shape": "count",
+      "gridWidth": 4,
+      "query": {
+        "filters": [
+          {
+            "field": "assignedUserId",
+            "op": "isEmpty"
+          },
+          {
+            "field": "state",
+            "op": "in",
+            "values": [
+              "open"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cases-by-severity",
+      "displayName": "Cases by Severity",
+      "description": "Share of active cases at each severity level.",
+      "resourceType": "case",
+      "shape": "pie",
+      "gridWidth": 4,
+      "query": {
+        "filters": [
+          {
+            "field": "state",
+            "op": "in",
+            "values": [
+              "open",
+              "work_in_progress"
+            ]
+          }
+        ]
+      },
+      "slices": [
+        {
+          "label": "Critical",
+          "color": "error",
+          "query": {
+            "filters": [
+              {
+                "field": "severity",
+                "op": "in",
+                "values": [
+                  "critical"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "label": "Mine",
+          "query": {
+            "filters": [
+              {
+                "field": "assignedUserId",
+                "op": "in",
+                "values": [
+                  "__current_user__"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

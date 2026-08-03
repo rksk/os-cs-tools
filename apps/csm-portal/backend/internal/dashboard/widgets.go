@@ -18,14 +18,18 @@
 // templates. Each widget resolves to a search against that ResourceType's own
 // /search endpoint (every resource's search payload shape is
 // {filters: {...}, pagination: {...}}) — there is no generic filter DSL and
-// no database backing this; the registry itself is loaded from the
-// DASHBOARDS_CONFIG environment variable at process startup (see
-// ParseDashboardsConfig and cmd/server/main.go).
+// no database backing this; the registry itself is loaded at process startup
+// from a directory of per-dashboard JSON files (DASHBOARDS_DIR — see LoadDir
+// and Registry in registry.go), or from the deprecated DASHBOARDS_CONFIG
+// environment variable when no directory is set (see ParseDashboardsConfig).
+// Both are wired up in cmd/server/main.go.
 package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // CurrentUserPlaceholder marks a filter value that must be resolved to the
@@ -158,7 +162,13 @@ func (w *WidgetTemplate) UnmarshalJSON(data []byte) error {
 type Dashboard struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
-	IsDefault   bool   `json:"isDefault"`
+	// Type classifies the dashboard's audience (see Type). It drives the
+	// frontend's automatic dashboard selection from the caller's team
+	// family. It deliberately does not replace IsDefault or IsTeamBased --
+	// all three coexist -- so the three can be set to states that
+	// contradict each other; validate rejects those at load time.
+	Type      Type `json:"type,omitempty"`
+	IsDefault bool `json:"isDefault"`
 	// TargetTeam is purely descriptive metadata (e.g. for a future FE team
 	// picker); it is not enforced anywhere. GET /dashboards still returns
 	// every dashboard to every caller regardless of team membership.
@@ -173,31 +183,42 @@ type Dashboard struct {
 	Widgets     []WidgetTemplate `json:"widgets"`
 }
 
-// Dashboards is the ordered registry of dashboards, populated once at process
-// startup from the DASHBOARDS_CONFIG environment variable (see
-// ParseDashboardsConfig, called from cmd/server/main.go). It is empty (nil)
-// until main() populates it; there is no file-watching or hot-reload — a
-// config change requires restarting the process. Order is deterministic and
-// is what the frontend's dashboard picker displays.
-var Dashboards []Dashboard
-
 // ParseDashboardsConfig decodes DASHBOARDS_CONFIG, a JSON array of Dashboard
 // objects (see the Dashboard and WidgetTemplate json tags for the expected
-// shape). A missing or malformed value logs an error and yields no
-// dashboards rather than failing startup, since callers always check
-// dashboard.Dashboards for emptiness (GET /dashboards simply returns an empty
-// list; GET /dashboards/{id} 404s) instead of crashing the process.
-func ParseDashboardsConfig(raw string) []Dashboard {
-	if raw == "" {
-		return nil
+// shape).
+//
+// DASHBOARDS_CONFIG is DEPRECATED in favour of DASHBOARDS_DIR (see LoadDir),
+// and is honoured only when no directory is configured. Cramming every
+// dashboard into one environment variable makes a definition unreviewable in
+// a diff and gives an error nothing to name; a directory of per-dashboard
+// files gives both back.
+//
+// An empty value yields no dashboards and no error — a deployment with
+// neither setting must still start. Anything else that fails is an error the
+// caller is expected to make fatal: this used to log and return nil, which
+// meant one stray character silently emptied every dashboard in the product
+// with a single log line to show for it.
+//
+// Cross-field validation is the same as the directory loader's, except that
+// "type" is not required here: values already deployed in this variable
+// predate the field. A definition without one gets a warning and is simply
+// invisible to automatic dashboard selection.
+func ParseDashboardsConfig(raw string) ([]Dashboard, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
+	slog.Warn("DASHBOARDS_CONFIG is deprecated; move each dashboard into its own JSON file and set DASHBOARDS_DIR instead")
+
 	var dashboards []Dashboard
 	if err := json.Unmarshal([]byte(raw), &dashboards); err != nil {
-		slog.Error("failed to parse DASHBOARDS_CONFIG; no dashboards will be available", "err", err)
-		return nil
+		return nil, fmt.Errorf("DASHBOARDS_CONFIG: parse: %w", err)
 	}
-	migrateLegacyWidgetKeys(dashboards)
-	return dashboards
+
+	loaded := make([]sourced, 0, len(dashboards))
+	for i, d := range dashboards {
+		loaded = append(loaded, sourced{dashboard: d, source: fmt.Sprintf("DASHBOARDS_CONFIG[%d]", i)})
+	}
+	return finalize(loaded, false)
 }
 
 // migrateLegacyWidgetKeys upgrades a pre-rename DASHBOARDS_CONFIG in place,
@@ -272,17 +293,6 @@ func migrateLegacyCriteriaKeys(query map[string]any, dashboardID, widgetID, slic
 		migrated = append(migrated, branch)
 	}
 	query["anyOf"] = migrated
-}
-
-// DashboardByID looks up a dashboard by id, returning ok=false if the id
-// isn't in the registry.
-func DashboardByID(id string) (Dashboard, bool) {
-	for _, d := range Dashboards {
-		if d.ID == id {
-			return d, true
-		}
-	}
-	return Dashboard{}, false
 }
 
 // ResolveFilters returns tpl's Query with CurrentUserPlaceholder substituted

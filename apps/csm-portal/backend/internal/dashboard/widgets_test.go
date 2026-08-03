@@ -19,14 +19,24 @@ package dashboard
 import "testing"
 
 func TestParseDashboardsConfig_Empty(t *testing.T) {
-	got := ParseDashboardsConfig("")
+	got, err := ParseDashboardsConfig("")
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig(\"\") returned error: %v", err)
+	}
 	if got != nil {
 		t.Errorf("ParseDashboardsConfig(\"\") = %v, want nil", got)
 	}
 }
 
+// TestParseDashboardsConfig_Malformed locks in the deliberate reversal of the
+// old behaviour: malformed config used to log and return nil, silently
+// emptying every dashboard in the product. It is now an error the caller
+// makes fatal.
 func TestParseDashboardsConfig_Malformed(t *testing.T) {
-	got := ParseDashboardsConfig("{not valid json")
+	got, err := ParseDashboardsConfig("{not valid json")
+	if err == nil {
+		t.Fatalf("ParseDashboardsConfig(malformed) returned no error, want a rejection")
+	}
 	if got != nil {
 		t.Errorf("ParseDashboardsConfig(malformed) = %v, want nil", got)
 	}
@@ -35,7 +45,10 @@ func TestParseDashboardsConfig_Malformed(t *testing.T) {
 func TestParseDashboardsConfig_MalformedShape(t *testing.T) {
 	// Valid JSON, but not an array of Dashboard objects — must not panic and
 	// must return nil, not a zero-value slice with garbage entries.
-	got := ParseDashboardsConfig(`{"id":"not-an-array"}`)
+	got, err := ParseDashboardsConfig(`{"id":"not-an-array"}`)
+	if err == nil {
+		t.Fatalf("ParseDashboardsConfig(wrong shape) returned no error, want a rejection")
+	}
 	if got != nil {
 		t.Errorf("ParseDashboardsConfig(wrong shape) = %v, want nil", got)
 	}
@@ -67,7 +80,10 @@ func TestParseDashboardsConfig_ValidRoundTrip(t *testing.T) {
 		}
 	]`
 
-	got := ParseDashboardsConfig(raw)
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
 	if len(got) != 1 {
 		t.Fatalf("len(ParseDashboardsConfig(raw)) = %d, want 1", len(got))
 	}
@@ -167,7 +183,10 @@ func TestParseDashboardsConfig_PieWidgetSlicesAndDescription(t *testing.T) {
 		}
 	]`
 
-	got := ParseDashboardsConfig(raw)
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
 	if len(got) != 1 || len(got[0].Widgets) != 1 {
 		t.Fatalf("ParseDashboardsConfig(raw) = %+v, want 1 dashboard with 1 widget", got)
 	}
@@ -242,7 +261,10 @@ func TestParseDashboardsConfig_LegacyKeys(t *testing.T) {
 		}
 	]`
 
-	got := ParseDashboardsConfig(raw)
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
 	if len(got) != 1 || len(got[0].Widgets) != 2 {
 		t.Fatalf("ParseDashboardsConfig(legacy) = %+v, want 1 dashboard with 2 widgets", got)
 	}
@@ -332,7 +354,10 @@ func TestParseDashboardsConfig_NewKeysWinOverLegacy(t *testing.T) {
 		}
 	]`
 
-	got := ParseDashboardsConfig(raw)
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
 	if len(got) != 1 || len(got[0].Widgets) != 1 {
 		t.Fatalf("ParseDashboardsConfig(mixed) = %+v, want 1 dashboard with 1 widget", got)
 	}
@@ -376,7 +401,10 @@ func TestParseDashboardsConfig_WidgetSection(t *testing.T) {
 		}
 	]`
 
-	got := ParseDashboardsConfig(raw)
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
 	if len(got) != 1 || len(got[0].Widgets) != 2 {
 		t.Fatalf("ParseDashboardsConfig(raw) = %+v, want 1 dashboard with 2 widgets", got)
 	}

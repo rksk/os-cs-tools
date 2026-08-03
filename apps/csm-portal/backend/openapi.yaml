@@ -1630,8 +1630,9 @@ paths:
       description: >
         Returns every dashboard registered in the config-driven pilot: its
         id, display name, and whether it is the default dashboard. This is a
-        registry loaded from the DASHBOARDS_CONFIG environment variable at
-        startup, not user-configurable at runtime.
+        registry loaded at startup from a directory of per-dashboard JSON
+        files (one file per dashboard, its filename irrelevant), held in
+        memory; not user-configurable at runtime.
       operationId: getDashboards
       responses:
         "200":
@@ -1671,8 +1672,9 @@ paths:
         endpoint (POST /{resourceType}s/search). The caller resolves each
         widget's own data by issuing that search itself; this endpoint does
         not read any resource data. This is a config-driven pilot: widget
-        templates are a registry loaded from the DASHBOARDS_CONFIG
-        environment variable at startup, not user-configurable at runtime.
+        templates are a registry loaded at startup from a directory of
+        per-dashboard JSON files, held in memory; not user-configurable at
+        runtime.
       operationId: getDashboardDetail
       parameters:
         - name: dashboardId
@@ -5400,6 +5402,19 @@ components:
           description: Static id of the dashboard
         displayName:
           type: string
+        type:
+          type: string
+          enum: [cre, sre, cs]
+          description: >
+            Who the dashboard is built for, and the field the frontend keys
+            automatic dashboard selection off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard, `sre-abt`/`sre`
+            on the default `sre` one, and a caller with no team on the default
+            `cs` one. `cre` and `sre` are team-scoped and always carry
+            isTeamBased true; `cs` is organisation-wide and always carries it
+            false — the loader rejects any other combination at startup.
+            Omitted only for a definition that predates the field, which is
+            possible solely via the deprecated single-variable configuration.
         isDefault:
           type: boolean
           description: Whether this is the default dashboard to show first
@@ -5419,6 +5434,19 @@ components:
           description: Static id of the dashboard
         displayName:
           type: string
+        type:
+          type: string
+          enum: [cre, sre, cs]
+          description: >
+            Who the dashboard is built for, and the field the frontend keys
+            automatic dashboard selection off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard, `sre-abt`/`sre`
+            on the default `sre` one, and a caller with no team on the default
+            `cs` one. `cre` and `sre` are team-scoped and always carry
+            isTeamBased true; `cs` is organisation-wide and always carries it
+            false — the loader rejects any other combination at startup.
+            Omitted only for a definition that predates the field, which is
+            possible solely via the deprecated single-variable configuration.
         isDefault:
           type: boolean
           description: Whether this is the default dashboard to show first
@@ -5986,8 +6014,12 @@ components:
         family:
           type: string
           description: >
-            Team family classification. May be empty: not every team is
-            classified into a family.
+            Team family classification: one of `cre-abt`, `cre`, `sre-abt`, `sre`. The
+            `-abt` variants are account-based teams; the bare variants classify a member
+            of the same discipline who is not on an account-based team. May be empty:
+            not every team is classified into a family. A team picker scoped to one
+            discipline filters on this — e.g. an SRE-scoped dashboard offers only
+            `sre-abt` teams.
 
     UserUpdatePayload:
       type: object
@@ -6093,6 +6125,13 @@ components:
           type: string
         family:
           type: string
+          description: >
+            Team family classification: one of `cre-abt`, `cre`, `sre-abt`, `sre`. The
+            `-abt` variants are account-based teams; the bare variants classify a member
+            of the same discipline who is not on an account-based team. May be empty:
+            not every team is classified into a family. A team picker scoped to one
+            discipline filters on this — e.g. an SRE-scoped dashboard offers only
+            `sre-abt` teams.
         groupId:
           type: string
           description: >
@@ -6147,6 +6186,13 @@ components:
           type: string
         family:
           type: string
+          description: >
+            Team family classification: one of `cre-abt`, `cre`, `sre-abt`, `sre`. The
+            `-abt` variants are account-based teams; the bare variants classify a member
+            of the same discipline who is not on an account-based team. May be empty:
+            not every team is classified into a family. A team picker scoped to one
+            discipline filters on this — e.g. an SRE-scoped dashboard offers only
+            `sre-abt` teams.
 
     UserProjectAccess:
       type: object

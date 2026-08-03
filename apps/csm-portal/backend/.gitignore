@@ -1,6 +1,12 @@
 # Environment
 .env
 
+# Live dashboard definitions (DASHBOARDS_DIR). Deployment configuration in the
+# same class as .env: environment-coupled (widget criteria reference record ids
+# that differ per environment) and organisation-specific. dashboards.example/ is
+# the committed, sanitised copy of the schema.
+/dashboards/
+
 # Build output
 /server
 /bin/

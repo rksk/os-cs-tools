@@ -38,7 +38,7 @@ import (
 // widget with empty filters and a "change_request"-typed widget) purely to
 // keep this file's resourceType-diversity and scalar-filter test coverage,
 // since the trimmed .env.example example doesn't need those shapes to make
-// its point. dashboard.Dashboards is populated from DASHBOARDS_CONFIG only in
+// its point. dashboard.All() is populated from DASHBOARDS_CONFIG only in
 // cmd/server/main.go, which tests never run, so TestMain below seeds it
 // directly via the same parse function production uses — every assertion in
 // this file exercises the real production parsing/lookup/resolution path,
@@ -85,15 +85,20 @@ func filterValuesByField(filters map[string]any, field string) ([]any, bool) {
 	return nil, false
 }
 
-// TestMain seeds dashboard.Dashboards before any test in this package runs.
-// In production it is populated once at process startup by cmd/server/main.go
-// from DASHBOARDS_CONFIG; tests never invoke main(), so they must seed it
-// themselves via the same ParseDashboardsConfig function.
+// TestMain installs the active dashboard registry before any test in this
+// package runs. In production it is installed once at process startup by
+// cmd/server/main.go, from DASHBOARDS_DIR or the deprecated DASHBOARDS_CONFIG;
+// tests never invoke main(), so they seed a static registry through the same
+// ParseDashboardsConfig decoder.
 func TestMain(m *testing.M) {
-	dashboard.Dashboards = dashboard.ParseDashboardsConfig(testDashboardsConfigJSON)
-	if len(dashboard.Dashboards) != 2 {
-		panic(fmt.Sprintf("TestMain: seeding dashboard.Dashboards failed, got %d dashboards, want 2", len(dashboard.Dashboards)))
+	dashboards, err := dashboard.ParseDashboardsConfig(testDashboardsConfigJSON)
+	if err != nil {
+		panic(fmt.Sprintf("TestMain: seeding the dashboard registry failed: %v", err))
 	}
+	if len(dashboards) != 2 {
+		panic(fmt.Sprintf("TestMain: seeding the dashboard registry failed, got %d dashboards, want 2", len(dashboards)))
+	}
+	dashboard.SetActive(dashboard.NewStaticRegistry(dashboards))
 	os.Exit(m.Run())
 }
 
@@ -189,8 +194,8 @@ func TestGetDashboards(t *testing.T) {
 		if err := json.Unmarshal(body, &results); err != nil {
 			t.Fatalf("decode response body: %v; raw: %s", err, body)
 		}
-		if len(results) != len(dashboard.Dashboards) {
-			t.Fatalf("len(results) = %d, want %d", len(results), len(dashboard.Dashboards))
+		if len(results) != len(dashboard.All()) {
+			t.Fatalf("len(results) = %d, want %d", len(results), len(dashboard.All()))
 		}
 
 		var raw []map[string]json.RawMessage
@@ -201,7 +206,7 @@ func TestGetDashboards(t *testing.T) {
 			assertJSONKeys(t, obj, dashboardListItemJSONKeys, fmt.Sprintf("result[%d]", i))
 		}
 
-		for i, want := range dashboard.Dashboards {
+		for i, want := range dashboard.All() {
 			got := results[i]
 			if got.ID != want.ID {
 				t.Errorf("result[%d].ID = %q, want %q (registry order must be preserved)", i, got.ID, want.ID)
@@ -249,10 +254,10 @@ func TestGetDashboards(t *testing.T) {
 // TestAllDashboardsHaveWidgets is the "no more mock/empty placeholders"
 // guarantee: every dashboard in the registry now has real widgets.
 func TestAllDashboardsHaveWidgets(t *testing.T) {
-	if len(dashboard.Dashboards) != 2 {
-		t.Fatalf("len(dashboard.Dashboards) = %d, want 2", len(dashboard.Dashboards))
+	if len(dashboard.All()) != 2 {
+		t.Fatalf("len(dashboard.All()) = %d, want 2", len(dashboard.All()))
 	}
-	for _, d := range dashboard.Dashboards {
+	for _, d := range dashboard.All() {
 		if len(d.Widgets) == 0 {
 			t.Errorf("dashboard %q has no widgets, want at least 1", d.ID)
 		}
@@ -624,7 +629,7 @@ func TestGetDashboardDetail(t *testing.T) {
 
 	t.Run("every dashboard in the registry now has at least one widget", func(t *testing.T) {
 		h := NewDashboardHandler(&mockEntityUserClient{})
-		for _, d := range dashboard.Dashboards {
+		for _, d := range dashboard.All() {
 			r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/"+d.ID, nil), d.ID))
 			w := httptest.NewRecorder()
 			h.GetDashboardDetail(w, r)
