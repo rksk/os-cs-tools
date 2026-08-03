@@ -55,6 +55,7 @@ type Config struct {
 	ServiceNowIntegrationServiceScopes       string
 	// TeamRegistry is the raw CSM_TEAM_REGISTRY value: the curated ABT team
 	// registry as "teamKey|Display Name|FAMILY|groupSysID,..." rows, where
+	// FAMILY is one of CRE-ABT, CRE, SRE-ABT or SRE (case insensitive) and
 	// FAMILY and groupSysID are both optional (groupSysID requires FAMILY's
 	// field to be present, even empty, since it cannot be supplied without
 	// it). Parsed and installed at startup by domain.ParseAbtTeamRegistry /

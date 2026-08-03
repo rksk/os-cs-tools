@@ -23,17 +23,43 @@ import (
 	"sync"
 )
 
-// AbtFamily classifies an ABT (Account-Based Team) as either a customer
-// renewal/expansion team (CRE) or a site reliability team (SRE). Not every
-// team has a family assigned -- it is empty for the unclassified teams.
+// AbtFamily classifies a team along two axes at once: its discipline
+// (customer renewal/expansion vs site reliability) and whether it is an
+// account-based team (ABT) or the wider non-ABT organisation. Not every team
+// has a family assigned -- it is empty for the unclassified teams.
+//
+// The "-abt" variants are the ones a dashboard team picker offers: a
+// dashboard scoped to a discipline lists only that discipline's ABTs. The
+// bare variants classify a member of the discipline who is not on an ABT.
 type AbtFamily string
 
 const (
-	// AbtFamilyCRE identifies a Customer Renewal & Expansion team.
+	// AbtFamilyCREAbt identifies a Customer Renewal & Expansion
+	// account-based team.
+	AbtFamilyCREAbt AbtFamily = "cre-abt"
+	// AbtFamilyCRE identifies a Customer Renewal & Expansion team that is
+	// not an account-based team.
 	AbtFamilyCRE AbtFamily = "cre"
-	// AbtFamilySRE identifies a Site Reliability Engineering team.
+	// AbtFamilySREAbt identifies a Site Reliability Engineering
+	// account-based team.
+	AbtFamilySREAbt AbtFamily = "sre-abt"
+	// AbtFamilySRE identifies a Site Reliability Engineering team that is
+	// not an account-based team.
 	AbtFamilySRE AbtFamily = "sre"
 )
+
+// validAbtFamilies is the closed set of family values the registry accepts.
+// It is closed deliberately: consumers branch on the family (a dashboard's
+// team picker filters to "sre-abt", the default-dashboard choice keys off
+// "cre"/"sre"), so a typo like "sre_abt" would not error anywhere -- it would
+// just make the team invisible in every picker. Failing the deploy is the
+// only place that mistake is cheap to catch.
+var validAbtFamilies = map[AbtFamily]bool{
+	AbtFamilyCREAbt: true,
+	AbtFamilyCRE:    true,
+	AbtFamilySREAbt: true,
+	AbtFamilySRE:    true,
+}
 
 // AbtTeam is one of WSO2's Account-Based Teams. Team names are organisation
 // vocabulary and are never hardcoded in this repo: the registry is supplied as
@@ -184,7 +210,11 @@ func ParseAbtTeamRegistry(raw string) ([]AbtTeam, error) {
 
 		team := AbtTeam{TeamKey: fields[0], DisplayName: fields[1]}
 		if len(fields) >= 3 {
-			team.Family = normalizeAbtFamily(fields[2])
+			family, err := parseAbtFamily(fields[2])
+			if err != nil {
+				return nil, fmt.Errorf("team registry row %d (%q): %w", i+1, strings.TrimSpace(row), err)
+			}
+			team.Family = family
 		}
 		if len(fields) == 4 {
 			team.GroupSysID = fields[3]
@@ -195,17 +225,26 @@ func ParseAbtTeamRegistry(raw string) ([]AbtTeam, error) {
 	return teams, nil
 }
 
-// normalizeAbtFamily normalizes the configured "CRE"/"SRE" (in any case) into
-// this package's lowercase AbtFamily constants. Any other value (including the
-// empty case) is passed through lowercased rather than rejected, so an
-// unclassified team or a future family value never blocks a deploy.
-func normalizeAbtFamily(family string) AbtFamily {
-	switch strings.ToUpper(family) {
-	case "CRE":
-		return AbtFamilyCRE
-	case "SRE":
-		return AbtFamilySRE
-	default:
-		return AbtFamily(strings.ToLower(family))
+// parseAbtFamily normalizes a configured family value (in any case, e.g.
+// "SRE-ABT") into this package's lowercase AbtFamily constants. An empty
+// value is legal and yields the empty family: not every team is classified.
+//
+// Any other value is an error rather than being passed through, which is a
+// deliberate reversal of this parser's earlier behaviour. Passing an unknown
+// value through was safe while nothing branched on the family; now that the
+// dashboard team picker and default-dashboard selection both do, an
+// unrecognised family silently removes a team from every picker instead of
+// erroring anywhere. A rejected deploy is the cheaper failure.
+func parseAbtFamily(family string) (AbtFamily, error) {
+	trimmed := strings.TrimSpace(family)
+	if trimmed == "" {
+		return "", nil
 	}
+	normalized := AbtFamily(strings.ToLower(trimmed))
+	if !validAbtFamilies[normalized] {
+		return "", fmt.Errorf(
+			"unknown family %q: expected one of %q, %q, %q, %q, or empty",
+			trimmed, AbtFamilyCREAbt, AbtFamilyCRE, AbtFamilySREAbt, AbtFamilySRE)
+	}
+	return normalized, nil
 }

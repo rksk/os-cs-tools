@@ -123,9 +123,11 @@ fatal**, so a typo stops a deploy instead of silently emptying a page.
 | CSM_USER_ROLES      | No       | the built-in role list | Assignable-role allow-list, comma-separated.                          |
 
 ```bash
-# Rows are `teamKey|Display Name` or `teamKey|Display Name|FAMILY`.
+# Rows are `teamKey|Display Name` or `teamKey|Display Name|FAMILY`, where
+# FAMILY is one of CRE-ABT, CRE, SRE-ABT, SRE (case insensitive). Any other
+# family value fails startup naming the offending row.
 # The names below are placeholders — supply the real ones per environment.
-CSM_TEAM_REGISTRY="alpha|Alpha Team|CRE,beta|Beta Team|SRE,gamma|Gamma Team"
+CSM_TEAM_REGISTRY="alpha|Alpha Team|CRE-ABT,beta|Beta Team|SRE-ABT,gamma|Gamma Team"
 
 CSM_USER_ROLES="agent,admin,commenter,customer,customer_admin,partner,partner_admin,internal,external,timecard_approver"
 ```

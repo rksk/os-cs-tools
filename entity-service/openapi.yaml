@@ -3029,10 +3029,13 @@ components:
           type: string
           description: >
             Team family, lowercased, when the team is classified. Absent or empty for the
-            teams the registry leaves unclassified. Deliberately not an enum: the registry
-            is owned upstream and its family vocabulary is open, so any value it publishes
-            is passed through rather than rejected. `cre` and `sre` are the values in use
-            today; a new one must not break registry parsing or invalidate this contract.
+            teams the registry leaves unclassified. The classified values are a closed
+            set — `cre-abt`, `cre`, `sre-abt`, `sre` — validated when the registry is
+            parsed at startup, so an unrecognised family fails the deploy rather than
+            reaching this response. The `-abt` variants are account-based teams; the bare
+            variants are members of the same discipline who are not on an account-based
+            team. Widening the set is a coordinated change to the registry parser and
+            this contract together.
 
     GetUserMeResponse:
       type: object
@@ -3331,7 +3334,11 @@ components:
           type: string
         family:
           type: string
-          description: Team family, when classified.
+          description: >
+            Team family, when classified: one of `cre-abt`, `cre`, `sre-abt`, `sre`.
+            Omitted for a team the registry leaves unclassified. A team picker scoped to
+            one discipline filters on this — e.g. an SRE-scoped dashboard offers only
+            `sre-abt` teams.
         groupId:
           type: string
           description: >
@@ -3387,6 +3394,8 @@ components:
           type: string
         family:
           type: string
+          description: >
+            Team family, when classified: one of `cre-abt`, `cre`, `sre-abt`, `sre`.
 
     UserProjectAccess:
       type: object

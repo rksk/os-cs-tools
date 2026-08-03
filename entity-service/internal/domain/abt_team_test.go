@@ -310,3 +310,77 @@ func TestSetAbtTeams_CopiesInput(t *testing.T) {
 		t.Fatalf("registry = %+v after the caller mutated its slice; want DisplayName \"Alpha Team\"", got)
 	}
 }
+
+// TestParseAbtTeamRegistry_AllFourFamilies covers the widened family enum.
+// The two legacy values ("cre", "sre") must keep parsing exactly as before --
+// registries already deployed carry them -- while the two ABT variants are
+// new. Case is irrelevant on every one of them.
+func TestParseAbtTeamRegistry_AllFourFamilies(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want AbtFamily
+	}{
+		{"cre-abt", AbtFamilyCREAbt},
+		{"CRE-ABT", AbtFamilyCREAbt},
+		{"Cre-Abt", AbtFamilyCREAbt},
+		{"cre", AbtFamilyCRE},
+		{"CRE", AbtFamilyCRE},
+		{"sre-abt", AbtFamilySREAbt},
+		{"SRE-ABT", AbtFamilySREAbt},
+		{"sre", AbtFamilySRE},
+		{"SRE", AbtFamilySRE},
+		{"", ""},
+		{"  ", ""},
+	}
+
+	for _, tc := range cases {
+		teams, err := ParseAbtTeamRegistry("key|Display Name|" + tc.raw)
+		if err != nil {
+			t.Fatalf("ParseAbtTeamRegistry(family=%q) returned error: %v", tc.raw, err)
+		}
+		if len(teams) != 1 {
+			t.Fatalf("ParseAbtTeamRegistry(family=%q) returned %d teams, want 1", tc.raw, len(teams))
+		}
+		if teams[0].Family != tc.want {
+			t.Fatalf("family %q parsed to %q, want %q", tc.raw, teams[0].Family, tc.want)
+		}
+	}
+}
+
+// TestParseAbtTeamRegistry_RejectsUnknownFamily locks in the reversal of the
+// old pass-through behaviour: an unrecognised family now fails the deploy,
+// naming the row, rather than producing a team no picker will ever show.
+func TestParseAbtTeamRegistry_RejectsUnknownFamily(t *testing.T) {
+	for _, raw := range []string{"sre_abt", "abt", "cre-abts", "platform"} {
+		row := "key|Display Name|" + raw
+		_, err := ParseAbtTeamRegistry(row)
+		if err == nil {
+			t.Fatalf("ParseAbtTeamRegistry(%q) returned no error, want a rejection", row)
+		}
+		if !strings.Contains(err.Error(), raw) {
+			t.Fatalf("error %q does not name the offending value %q", err, raw)
+		}
+		if !strings.Contains(err.Error(), "row 1") {
+			t.Fatalf("error %q does not name the offending row", err)
+		}
+	}
+}
+
+// TestParseAbtTeamRegistry_FourFieldAbtFamily proves the widened values still
+// work in the four-field shape, where family sits between the display name
+// and the backing group sysid.
+func TestParseAbtTeamRegistry_FourFieldAbtFamily(t *testing.T) {
+	teams, err := ParseAbtTeamRegistry("alpha|Alpha Team|sre-abt|d1e42a1234567890abcdef1234567890")
+	if err != nil {
+		t.Fatalf("ParseAbtTeamRegistry returned error: %v", err)
+	}
+	if len(teams) != 1 {
+		t.Fatalf("got %d teams, want 1", len(teams))
+	}
+	if teams[0].Family != AbtFamilySREAbt {
+		t.Fatalf("family = %q, want %q", teams[0].Family, AbtFamilySREAbt)
+	}
+	if teams[0].GroupSysID != "d1e42a1234567890abcdef1234567890" {
+		t.Fatalf("groupSysID = %q, want the configured sysid", teams[0].GroupSysID)
+	}
+}
