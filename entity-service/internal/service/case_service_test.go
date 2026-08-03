@@ -198,13 +198,13 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 			wantMsg: `field "escalation" is not supported by this data source`,
 		},
 		{
-			name: "orGroups",
+			name: "anyOf",
 			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
-				OrGroups: [][]domain.CaseFieldFilter{
-					{{Field: "state", Op: "in", Values: []string{"open"}}},
+				AnyOf: []domain.CaseFilterBranch{
+					{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}}},
 				},
 			}},
-			wantMsg: "orGroups is not supported by this data source",
+			wantMsg: "anyOf is not supported by this data source",
 		},
 		{
 			name:    "groupBy",

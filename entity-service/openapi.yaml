@@ -4987,6 +4987,23 @@ components:
           matches cases with no active escalation, isNotEmpty matches cases
           with an active escalation.
 
+    CaseFilterBranch:
+      type: object
+      description: >-
+        One branch of SearchCasesFilters.anyOf: a set of CaseFieldFilter
+        predicates ANDed together. The predicate array is wrapped in an
+        object rather than expressed as a bare array so the branch's AND
+        semantics are explicit and named.
+      properties:
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseFieldFilter'
+          description: >-
+            The predicates ANDed together within this branch -- see
+            CaseFieldFilter.
+      required: [filters]
+
     SearchCasesFilters:
       type: object
       properties:
@@ -4998,16 +5015,14 @@ components:
           items:
             $ref: '#/components/schemas/CaseFieldFilter'
           description: The generic filter expression array -- see CaseFieldFilter.
-        orGroups:
+        anyOf:
           type: array
           items:
-            type: array
-            items:
-              $ref: '#/components/schemas/CaseFieldFilter'
+            $ref: '#/components/schemas/CaseFilterBranch'
           description: >-
-            Cross-field OR: each inner array is a set of CaseFieldFilter
-            predicates ANDed together (a "branch"); the branches themselves
-            are OR'd against each other, and the whole orGroups result is
+            Cross-field OR: each entry is a branch whose own filters array is
+            ANDed together; the branches themselves are OR'd against each
+            other, and the whole anyOf result is
             ANDed with filters (if both are present). Only fields with a
             direct, non-subquery ServiceNow mapping are supported inside a
             branch: type, state, severity, engagementType, issueType,

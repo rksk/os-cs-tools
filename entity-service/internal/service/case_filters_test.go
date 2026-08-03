@@ -371,7 +371,7 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseCaseFieldFilterGroups([][]domain.CaseFieldFilter{tc.group})
+			_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{{Filters: tc.group}})
 			if err == nil {
 				t.Fatalf("expected an error, got nil")
 			}
@@ -383,7 +383,7 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 			if !errors.As(err, &ve) {
 				t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
 			}
-			const want = `orGroups: field "createdBy" is not supported inside an OR group`
+			const want = `anyOf: field "createdBy" is not supported inside an OR group`
 			if ve.Msg != want {
 				t.Errorf("Msg = %q, want %q", ve.Msg, want)
 			}
@@ -393,9 +393,9 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 
 // The sentinel caller email must never leak into a parsed group.
 func TestParseCaseFieldFilterGroups_SupportedFieldsParse(t *testing.T) {
-	groups, err := ParseCaseFieldFilterGroups([][]domain.CaseFieldFilter{
-		{{Field: "state", Op: "in", Values: []string{"open", "closed"}}},
-		{{Field: "severity", Op: "in", Values: []string{"high"}}},
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{
+		{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open", "closed"}}}},
+		{Filters: []domain.CaseFieldFilter{{Field: "severity", Op: "in", Values: []string{"high"}}}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

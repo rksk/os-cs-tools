@@ -355,7 +355,12 @@ type snCaseFilters struct {
 	// IsEscalated: a *bool (not bool) so that an explicit false is still sent on
 	// the wire -- omitempty on a pointer only drops a nil, not a false value.
 	IsEscalated *bool `json:"isEscalated,omitempty"`
-	// OrGroups: see domain.SearchCasesFilters.OrGroups doc comment.
+	// OrGroups is the ServiceNow wire field name, deliberately unchanged:
+	// ServiceNow's CaseUtils Script Include reads "orGroups" and silently
+	// ignores JSON keys it does not recognise (returning an unfiltered count
+	// rather than erroring), so this key must NOT be renamed to track the
+	// public API's domain.SearchCasesFilters.AnyOf. See that doc comment for
+	// the semantics.
 	OrGroups []snCaseFilterGroup `json:"orGroups,omitempty"`
 }
 
@@ -1983,47 +1988,47 @@ func (s *snCaseService) DeleteCaseAttachment(ctx context.Context, req domain.Del
 	return domain.DeleteAttachmentResponse{Message: snResp.Message}, nil
 }
 
-// validateOrGroupEnums validates one OrGroups branch's enum-valued fields
+// validateOrGroupEnums validates one AnyOf branch's enum-valued fields
 // against the same validXxx maps the top-level (AND-only) filters use,
 // mirroring that validation exactly (unrecognized values would otherwise be
 // silently dropped by domainStatesToSNIDs/etc's omitempty behavior).
 func validateOrGroupEnums(i int, group domain.CaseFilterGroup) error {
 	for _, t := range group.Types {
 		if _, ok := snCaseTypeMap[t]; !ok {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: type contains invalid value: %s", i, t)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: type contains invalid value: %s", i, t)}
 		}
 	}
 	for _, st := range group.States {
 		if !validCaseState[st] {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: state contains invalid value: %s", i, st)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: state contains invalid value: %s", i, st)}
 		}
 	}
 	for _, sv := range group.Severities {
 		if !validCaseSeverity[sv] {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: severity contains invalid value: %s", i, sv)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: severity contains invalid value: %s", i, sv)}
 		}
 	}
 	for _, it := range group.IssueTypes {
 		if !validCaseIssueType[it] {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: issueType contains invalid value: %s", i, it)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: issueType contains invalid value: %s", i, it)}
 		}
 	}
 	for _, et := range group.EngagementTypes {
 		if !validEngagementType[et] {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: engagementType contains invalid value: %s", i, et)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: engagementType contains invalid value: %s", i, et)}
 		}
 	}
 	for _, ws := range group.WorkStates {
 		if ws != domain.CaseWorkStateOngoing && ws != domain.CaseWorkStatePaused {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: workState contains invalid value: %s", i, ws)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: workState contains invalid value: %s", i, ws)}
 		}
 	}
 	for _, lvl := range group.EscalationLevels {
 		if !validEscalationLevel[lvl] {
-			return &apierror.ValidationError{Msg: fmt.Sprintf("orGroups[%d]: escalationLevel contains invalid value: %s", i, lvl)}
+			return &apierror.ValidationError{Msg: fmt.Sprintf("anyOf[%d]: escalationLevel contains invalid value: %s", i, lvl)}
 		}
 	}
-	if err := validateUUIDs(fmt.Sprintf("orGroups[%d].assignedUserId", i), group.AssignedUserIDs); err != nil {
+	if err := validateUUIDs(fmt.Sprintf("anyOf[%d].assignedUserId", i), group.AssignedUserIDs); err != nil {
 		return err
 	}
 	return nil
@@ -2135,7 +2140,7 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 	}
 	req.Parsed = parsed
 
-	orGroups, err := ParseCaseFieldFilterGroups(req.Filters.OrGroups)
+	orGroups, err := ParseCaseFieldFilterGroups(req.Filters.AnyOf)
 	if err != nil {
 		return domain.SearchCasesResponse{}, err
 	}

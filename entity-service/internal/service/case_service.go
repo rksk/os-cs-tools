@@ -474,8 +474,8 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if parsed.HasActiveEscalation != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalation" is not supported by this data source`}
 	}
-	if len(req.Filters.OrGroups) > 0 {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "orGroups is not supported by this data source"}
+	if len(req.Filters.AnyOf) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "anyOf is not supported by this data source"}
 	}
 	if req.GroupBy != "" {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "groupBy is not supported by this data source"}
