@@ -16,6 +16,7 @@
 
 import {
   Box,
+  Button,
   CircularProgress,
   Dialog,
   DialogContent,
@@ -24,7 +25,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
 import { getAttachmentPreviewKind } from "@features/csm-cases/utils/attachmentPreview";
 
@@ -43,12 +44,13 @@ interface AttachmentPreviewDialogProps {
 }
 
 /**
- * Inline preview for image/PDF attachments (the two families in the
- * backend's safe-content-type allowlist that make sense to render inline —
- * see {@link getAttachmentPreviewKind}). Fetches the attachment's
- * bytes via `fetchContent` (the same authenticated content endpoint the
- * download action uses) and renders them from a `blob:` object URL, which is
- * revoked on close/unmount to avoid leaking memory.
+ * Preview for image/PDF attachments (the two families in the backend's
+ * safe-content-type allowlist that make sense to preview — see
+ * {@link getAttachmentPreviewKind}). Fetches the attachment's bytes via
+ * `fetchContent` (the same authenticated content endpoint the download
+ * action uses) and turns them into a `blob:` object URL, which is revoked on
+ * close/unmount to avoid leaking memory. Images render inline; PDFs open in
+ * a new browser tab instead (see the PDF-branch comment below for why).
  */
 export default function AttachmentPreviewDialog({
   attachment,
@@ -58,6 +60,9 @@ export default function AttachmentPreviewDialog({
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Guards the auto-open effect below so a PDF is only opened in a new tab
+  // once per loaded object URL, not on every re-render.
+  const pdfAutoOpenedUrlRef = useRef<string | null>(null);
 
   // Track which attachment the state above belongs to, and reconcile it
   // *synchronously during render* the moment `attachment` changes (React's
@@ -74,6 +79,7 @@ export default function AttachmentPreviewDialog({
     setObjectUrl(null);
     setError(null);
     setLoading(!!attachment);
+    pdfAutoOpenedUrlRef.current = null;
   }
 
   useEffect(() => {
@@ -109,6 +115,24 @@ export default function AttachmentPreviewDialog({
 
   const kind = attachment ? getAttachmentPreviewKind(attachment.contentType) : null;
   const open = !!attachment;
+
+  // PDFs used to render inline in a sandboxed iframe pointed at the blob
+  // URL, but Chrome's built-in PDF viewer refuses to render at all inside a
+  // sandboxed iframe (https://crbug.com/413851) and shows its own
+  // "blocked by Chrome" interstitial instead of the PDF, regardless of which
+  // sandbox flags are set. There is no fix that keeps the preview inline
+  // without either dropping the sandbox (unsafe for attacker-controlled
+  // bytes) or shipping a pdf.js renderer, so PDFs are opened in a new tab
+  // instead. This fires once automatically as soon as the blob is ready;
+  // the button below is the fallback for when the browser's popup blocker
+  // swallows that automatic call (it runs from a user click, so it is never
+  // blocked).
+  useEffect(() => {
+    if (kind !== "pdf" || !objectUrl) return;
+    if (pdfAutoOpenedUrlRef.current === objectUrl) return;
+    pdfAutoOpenedUrlRef.current = objectUrl;
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+  }, [kind, objectUrl]);
 
   return (
     <Dialog
@@ -168,26 +192,28 @@ export default function AttachmentPreviewDialog({
           />
         ) : objectUrl && kind === "pdf" ? (
           <Box
-            component="iframe"
-            src={objectUrl}
-            title={attachment?.filename}
-            // The PDF bytes come from an uploaded attachment, so treat this
-            // as untrusted content even though it is served from a
-            // same-origin `blob:` URL. `allow-same-origin` is required for
-            // Chrome/Firefox's built-in PDF viewer to render at all inside a
-            // sandboxed iframe (verified: without it the viewer shows a
-            // broken-plugin placeholder instead of the PDF). Deliberately NOT
-            // combined with `allow-scripts`: `allow-same-origin` +
-            // `allow-scripts` together is a known sandbox-defeating pattern
-            // (the frame gets both a real origin and the ability to run
-            // script, so any embedded PDF JS action could reach this page's
-            // own origin/session). The browser's built-in PDF viewer is a
-            // native renderer, not scripted web content, so it doesn't need
-            // `allow-scripts` to display/scroll/zoom a PDF; `allow-forms`
-            // isn't needed for a read-only preview either.
-            sandbox="allow-same-origin"
-            sx={{ width: "100%", height: "70vh", border: 0 }}
-          />
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 2,
+              textAlign: "center",
+              p: 3,
+            }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              PDF attachments open in a new browser tab.
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() =>
+                window.open(objectUrl, "_blank", "noopener,noreferrer")
+              }
+            >
+              Open {attachment?.filename}
+            </Button>
+          </Box>
         ) : null}
       </DialogContent>
     </Dialog>
