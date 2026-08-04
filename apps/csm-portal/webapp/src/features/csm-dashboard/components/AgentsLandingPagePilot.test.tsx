@@ -226,4 +226,32 @@ describe("AgentsLandingPagePilot", () => {
     // section, they don't each get their own repeated heading.
     expect(screen.getAllByText("SLA Violation")).toHaveLength(1);
   });
+
+  it("resolves the {{currentTeam}} text token in a section heading, same as a widget's own displayName", async () => {
+    getMock.mockResolvedValue({
+      id: "team_performance",
+      displayName: "Team performance",
+      isDefault: false,
+      widgets: [
+        {
+          widgetId: "team_open_cases",
+          displayName: "Team Open P0/P1",
+          section: "Overall - {{currentTeam}}",
+          resourceType: "case",
+          shape: "count",
+          gridWidth: 6,
+          query: {},
+        },
+      ],
+    });
+    postMock.mockResolvedValue(searchResponseFor(1));
+
+    renderWithClient(
+      <AgentsLandingPagePilot dashboardId="team_performance" selectedTeamLabel="Castor" />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Team Open P0/P1")).toBeInTheDocument());
+    expect(screen.getByText("Overall - Castor")).toBeInTheDocument();
+    expect(screen.queryByText(/{{currentTeam}}/)).not.toBeInTheDocument();
+  });
 });

@@ -23,6 +23,7 @@ import { useDashboard } from "@features/csm-dashboard/api/useDashboard";
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import SectionCard from "@features/csm-dashboard/components/SectionCard";
 import RefreshButton from "@features/csm-dashboard/components/RefreshButton";
+import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
 
 /** Placeholder tile count while the dashboard detail is in flight. */
 const PILOT_TILE_COUNT = 3;
@@ -202,6 +203,11 @@ export default function AgentsLandingPagePilot({
 
                 const sectionKey = group.section ?? `__default_${i}`;
                 const sectionWidgetIds = new Set(group.widgets.map((w) => w.widgetId));
+                // Section titles support the same {{currentTeam}} text token as
+                // an individual widget's own displayName/description (see
+                // widgetTextPlaceholder.ts) — resolve it once here so both the
+                // visible heading and the refresh button's label stay in sync.
+                const resolvedSectionTitle = resolveWidgetText(group.section, selectedTeamLabel);
 
                 return (
                   <Fragment key={sectionKey}>
@@ -211,20 +217,20 @@ export default function AgentsLandingPagePilot({
                         sx={{
                           display: "flex",
                           alignItems: "center",
-                          justifyContent: group.section ? "space-between" : "flex-end",
+                          justifyContent: resolvedSectionTitle ? "space-between" : "flex-end",
                         }}
                       >
-                        {group.section && (
+                        {resolvedSectionTitle && (
                           <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                            {group.section}
+                            {resolvedSectionTitle}
                           </Typography>
                         )}
                         <RefreshButton
                           onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
                           isFetching={refreshingSections.has(sectionKey)}
                           label={
-                            group.section
-                              ? `Refresh ${group.section}`
+                            resolvedSectionTitle
+                              ? `Refresh ${resolvedSectionTitle}`
                               : "Refresh section"
                           }
                         />
