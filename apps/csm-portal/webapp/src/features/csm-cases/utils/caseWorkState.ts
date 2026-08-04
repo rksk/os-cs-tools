@@ -48,7 +48,7 @@ export function publicCommentGateReason(
 ): string | null {
   if (caseAcceptsPublicComments(state, workState)) return null;
   if (state === "work_in_progress" && workState === "paused") {
-    return "This case is paused — customer replies are disabled. Resume work to reply to the customer.";
+    return "This case is paused — public replies are disabled. Resume work to reply to the customer.";
   }
   return "Customer replies are disabled unless the case is actively in progress.";
 }

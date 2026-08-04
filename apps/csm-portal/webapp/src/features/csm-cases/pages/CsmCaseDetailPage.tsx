@@ -955,7 +955,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
               onSuccess: () =>
                 setFeedback({
                   message:
-                    "Work paused — customer replies are disabled until you resume.",
+                    "Work paused — you can't post public replies until you resume.",
                   severity: "warning",
                   sticky: true,
                 }),
