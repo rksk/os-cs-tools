@@ -38,7 +38,6 @@ import {
   Eye,
   History,
   Link as LinkIcon,
-  MapPin,
   Paperclip,
   Plus,
   Search,
@@ -241,23 +240,11 @@ export function CustomerContextWidget({
           )}
         </Typography>
       </MetaRow>
-      <MetaRow label="Account Manager">
-        <Typography variant="body2">{ctx.accountManager}</Typography>
-      </MetaRow>
       {ctx.technicalOwner && (
         <MetaRow label="Technical Owner">
           <Typography variant="body2">{ctx.technicalOwner}</Typography>
         </MetaRow>
       )}
-      <MetaRow label="Region">
-        <Typography
-          variant="body2"
-          sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
-        >
-          <MapPin size={12} />
-          {ctx.region}
-        </Typography>
-      </MetaRow>
       {(ctx.creTeam || ctx.sreTeam) && (
         <MetaRow label="CRE / SRE team">
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
