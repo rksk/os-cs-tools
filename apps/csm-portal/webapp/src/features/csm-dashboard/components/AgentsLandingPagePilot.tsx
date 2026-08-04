@@ -106,44 +106,50 @@ export default function AgentsLandingPagePilot({
   selectedTeamGroupId,
 }: AgentsLandingPagePilotProps): JSX.Element {
   const queryClient = useQueryClient();
-  const { data, isLoading, isError, isFetching, refetch } =
-    useDashboard(dashboardId);
-  // Separate from `isFetching` (which only covers the dashboard's own
-  // metadata refetch): each tile resolves its own count/list data via its
-  // own `useWidgetData` query, so a "refresh" click has to also invalidate
-  // those — tracked here so the skeleton grid stays up across the whole
-  // round trip, not just the metadata half of it.
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { data, isLoading, isError } = useDashboard(dashboardId);
+  // Per-section refresh (below) tracks its own in-flight state, keyed by
+  // section, independently of the dashboard-metadata refresh above — a
+  // section refresh never touches `useDashboard`'s own refetch (config is
+  // not re-pulled), only that section's own widgets' data queries.
+  const [refreshingSections, setRefreshingSections] = useState<Set<string>>(new Set());
 
-  const handleRefresh = async (): Promise<void> => {
-    setIsRefreshing(true);
+  /**
+   * Invalidates only the widget-data queries belonging to `widgetIds` —
+   * both shapes' query keys carry a widget id, just at a different
+   * position: `[KEY, widgetId, ...]` for count/list (see `useWidgetData`),
+   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar (see
+   * `useWidgetPieData`). Never touches `useDashboard`'s own metadata query.
+   */
+  const invalidateWidgets = (widgetIds: Set<string>): Promise<void> =>
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey;
+        if (key[0] !== ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA) return false;
+        const widgetId = key[1] === "pie-slice" ? key[2] : key[1];
+        return typeof widgetId === "string" && widgetIds.has(widgetId);
+      },
+    });
+
+  const handleSectionRefresh = async (sectionKey: string, widgetIds: Set<string>): Promise<void> => {
+    setRefreshingSections((prev) => new Set(prev).add(sectionKey));
     try {
-      await Promise.all([
-        refetch(),
-        queryClient.invalidateQueries({
-          queryKey: [ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA],
-        }),
-      ]);
+      await invalidateWidgets(widgetIds);
     } finally {
-      setIsRefreshing(false);
+      setRefreshingSections((prev) => {
+        const next = new Set(prev);
+        next.delete(sectionKey);
+        return next;
+      });
     }
   };
 
   return (
-    <SectionCard
-      action={
-        <RefreshButton
-          onRefresh={() => void handleRefresh()}
-          isFetching={isFetching || isRefreshing}
-          label="Refresh widget pilot"
-        />
-      }
-    >
+    <SectionCard>
       {isError ? (
         <Typography variant="body2" color="text.secondary">
           Could not load the widget pilot.
         </Typography>
-      ) : isLoading || isRefreshing ? (
+      ) : isLoading ? (
         <Box sx={WIDGET_GRID_SX}>
           {Array.from({ length: PILOT_TILE_COUNT }, (_, i) => (
             <Card key={i} variant="outlined" sx={{ p: 1.75, gridColumn: "span 4" }}>
@@ -184,15 +190,35 @@ export default function AgentsLandingPagePilot({
                 const chartWidgets = group.widgets.filter((w) => w.shape === "pie" || w.shape === "bar");
                 if (mainWidgets.length === 0 && chartWidgets.length === 0) return null;
 
+                const sectionKey = group.section ?? `__default_${i}`;
+                const sectionWidgetIds = new Set(group.widgets.map((w) => w.widgetId));
+
                 return (
-                  <Fragment key={group.section ?? `__default_${i}`}>
+                  <Fragment key={sectionKey}>
                     {i > 0 && <Divider />}
                     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                      {group.section && (
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                          {group.section}
-                        </Typography>
-                      )}
+                      <Box
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: group.section ? "space-between" : "flex-end",
+                        }}
+                      >
+                        {group.section && (
+                          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            {group.section}
+                          </Typography>
+                        )}
+                        <RefreshButton
+                          onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
+                          isFetching={refreshingSections.has(sectionKey)}
+                          label={
+                            group.section
+                              ? `Refresh ${group.section}`
+                              : "Refresh section"
+                          }
+                        />
+                      </Box>
                       {mainWidgets.length > 0 && (
                         <Box sx={WIDGET_GRID_SX}>{mainWidgets.map(renderTile)}</Box>
                       )}

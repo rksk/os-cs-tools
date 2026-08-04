@@ -106,6 +106,7 @@ export default function DashboardWidgetTile({
     selectedTeamGroupId,
   );
   const pieData = useWidgetPieData(
+    widgetId,
     resourceType,
     filters,
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],

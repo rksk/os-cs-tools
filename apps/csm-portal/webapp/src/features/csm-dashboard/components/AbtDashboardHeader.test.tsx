@@ -86,7 +86,9 @@ describe("AbtDashboardHeader", () => {
       pagination: { offset: 0, limit: 100 },
     });
 
-    const [teamSelect] = screen.getAllByRole("combobox");
+    // Dashboard order is: dashboard selector, then team selector — see
+    // AbtDashboardHeader's layout.
+    const [, teamSelect] = screen.getAllByRole("combobox");
     fireEvent.mouseDown(teamSelect);
     const listbox = await screen.findByRole("listbox");
     // The teams query resolves asynchronously; retry (findByText) rather
@@ -116,7 +118,9 @@ describe("AbtDashboardHeader", () => {
       />,
     );
 
-    const [teamSelect] = screen.getAllByRole("combobox");
+    // Dashboard order is: dashboard selector, then team selector — see
+    // AbtDashboardHeader's layout.
+    const [, teamSelect] = screen.getAllByRole("combobox");
     fireEvent.mouseDown(teamSelect);
     const listbox = await screen.findByRole("listbox");
     fireEvent.click(await within(listbox).findByText("CS Team Leads"));

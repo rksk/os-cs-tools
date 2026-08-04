@@ -43,6 +43,7 @@ export interface WidgetPieData {
  * fires no queries at all.
  */
 export function useWidgetPieData(
+  widgetId: string,
   resourceType: BeWidgetResourceType,
   baseFilters: Record<string, unknown>,
   slices: BeDashboardPieSlice[],
@@ -65,6 +66,7 @@ export function useWidgetPieData(
         queryKey: [
           ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA,
           "pie-slice",
+          widgetId,
           resourceType,
           filters,
         ],

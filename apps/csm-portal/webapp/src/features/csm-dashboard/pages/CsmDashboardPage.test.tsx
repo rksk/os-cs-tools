@@ -242,10 +242,11 @@ describe("CsmDashboardPage", () => {
 
     renderAt("/dashboard#team_performance.cs_team_leads");
 
-    // Two comboboxes render for a team-based dashboard (team + dashboard);
-    // the dashboard switcher is always the second.
+    // Two comboboxes render for a team-based dashboard (dashboard + team);
+    // the dashboard switcher is always the first — see AbtDashboardHeader's
+    // layout (dashboard selector, then team selector).
     const selects = screen.getAllByRole("combobox");
-    const select = selects[selects.length - 1];
+    const select = selects[0];
     fireEvent.mouseDown(select);
     fireEvent.click(within(screen.getByRole("listbox")).getByText("Operations"));
 

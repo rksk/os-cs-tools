@@ -83,6 +83,20 @@ export default function AbtDashboardHeader({
         </Typography>
       </Box>
       <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <Select
+            value={dashboardKey}
+            onChange={(e) => onDashboardChange(e.target.value as DashboardKey)}
+            displayEmpty
+            aria-label="Select dashboard"
+          >
+            {dashboardList.map((o) => (
+              <MenuItem key={o.id} value={o.id}>
+                {o.displayName}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         {isTeamBased && (
           <FormControl size="small" sx={{ minWidth: 180 }}>
             <Select
@@ -99,20 +113,6 @@ export default function AbtDashboardHeader({
             </Select>
           </FormControl>
         )}
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <Select
-            value={dashboardKey}
-            onChange={(e) => onDashboardChange(e.target.value as DashboardKey)}
-            displayEmpty
-            aria-label="Select dashboard"
-          >
-            {dashboardList.map((o) => (
-              <MenuItem key={o.id} value={o.id}>
-                {o.displayName}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
       </Box>
     </Box>
   );

@@ -49,7 +49,7 @@ describe("useWidgetPieData", () => {
 
     const { result } = renderHook(
       () =>
-        useWidgetPieData("case", { states: ["open"] }, [
+        useWidgetPieData("widget-1", "case", { states: ["open"] }, [
           { label: "Critical", query: { severities: "critical" } },
           { label: "High", query: { severities: "high" } },
         ]),
@@ -75,7 +75,7 @@ describe("useWidgetPieData", () => {
   });
 
   it("fires no queries and returns a zero total for an empty slices array", () => {
-    const { result } = renderHook(() => useWidgetPieData("case", {}, []), { wrapper });
+    const { result } = renderHook(() => useWidgetPieData("widget-1", "case", {}, []), { wrapper });
 
     expect(postMock).not.toHaveBeenCalled();
     expect(result.current.slices).toEqual([]);
@@ -89,6 +89,7 @@ describe("useWidgetPieData", () => {
     const { result } = renderHook(
       () =>
         useWidgetPieData(
+          "widget-1",
           "case",
           { filters: [{ field: "state", op: "in", values: ["open"] }] },
           [
@@ -129,6 +130,7 @@ describe("useWidgetPieData", () => {
     renderHook(
       () =>
         useWidgetPieData(
+          "widget-1",
           "case",
           { filters: [{ field: "state", op: "in", values: ["open"] }] },
           [
@@ -163,7 +165,7 @@ describe("useWidgetPieData", () => {
 
     const { result } = renderHook(
       () =>
-        useWidgetPieData("case", {}, [
+        useWidgetPieData("widget-1", "case", {}, [
           { label: "A", query: { a: "1" } },
           { label: "B", query: { b: "2" } },
         ]),
