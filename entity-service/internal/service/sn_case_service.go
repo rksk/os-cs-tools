@@ -75,8 +75,18 @@ type snCase struct {
 	LinkedServiceRequests []snLinkedServiceRequestRef `json:"linkedServiceRequests"`
 	// ChangeRequests carries the change requests raised from this case, keyed as
 	// `changeRequests` upstream. Only populated for service-request cases.
+	//
+	// Deprecated: the upstream `changeRequests` field is filtered to a subset of change
+	// request states by the backing service. Case mapping below reads ChangeRequestsAll
+	// instead, which is unfiltered. This field is kept only because it is still present
+	// on the upstream response; nothing in this service reads it.
 	ChangeRequests []snLinkedChangeRequestRef `json:"changeRequests"`
-	ResolutionCode *struct {
+	// ChangeRequestsAll carries the same change requests as ChangeRequests but unfiltered by
+	// state, keyed as `changeRequestsAll` upstream. Same item shape as `changeRequests`. Case
+	// mapping reads this field so linked change requests in New/Assess/Authorize states are
+	// no longer silently dropped before they reach the outward `linkedChangeRequests` field.
+	ChangeRequestsAll []snLinkedChangeRequestRef `json:"changeRequestsAll"`
+	ResolutionCode    *struct {
 		ID    json.Number `json:"id"`
 		Label string      `json:"label"`
 	} `json:"resolutionCode"`
@@ -844,9 +854,9 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 		}
 		cv.LinkedServiceRequests = lsr
 	}
-	if len(c.ChangeRequests) > 0 {
-		lcr := make([]domain.LinkedChangeRequestRef, 0, len(c.ChangeRequests))
-		for _, r := range c.ChangeRequests {
+	if len(c.ChangeRequestsAll) > 0 {
+		lcr := make([]domain.LinkedChangeRequestRef, 0, len(c.ChangeRequestsAll))
+		for _, r := range c.ChangeRequestsAll {
 			// An absent upstream subject becomes null, not "" — see the note on
 			// LinkedChangeRequestRef.Name.
 			var name *string
