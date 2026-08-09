@@ -1809,10 +1809,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   t.id !== "time" &&
                   t.id !== "call-requests")),
           ).map((t) => {
-            // Counts shown only where the tab IS the list (unambiguous). Not
-            // shown for "related" — ChildCasesWidget runs its own scoped
-            // query for the child-case list, so no count is available here
-            // without an extra fetch.
+            // Counts shown only where the tab IS the list (unambiguous), or
+            // where the parent case-detail object already has the list in
+            // hand. "related" sums linkedChangeRequests + linkedServiceRequests
+            // (both already present on `c`); ChildCasesWidget is still
+            // excluded since it runs its own scoped query and would need an
+            // extra fetch to get a count.
             const count =
               t.id === "watchers"
                 ? c.watchers.length
@@ -1826,7 +1828,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
                         ? callRequests?.length
                         : t.id === "tasks"
                           ? caseTasks?.total
-                          : undefined;
+                          : t.id === "related"
+                            ? (c.linkedChangeRequests?.length ?? 0) +
+                              (c.linkedServiceRequests?.length ?? 0)
+                            : undefined;
             return (
               <Tab
                 key={t.id}
