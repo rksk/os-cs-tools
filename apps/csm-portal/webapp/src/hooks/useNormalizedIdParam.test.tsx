@@ -92,6 +92,7 @@ describe("useNormalizedIdParam", () => {
       <MemoryRouter
         initialEntries={[{ pathname: `/cases/${DASHLESS_ID}`, state }]}
       >
+        <LocationProbe />
         <Routes>
           <Route
             path="/cases/:caseId"
@@ -108,11 +109,14 @@ describe("useNormalizedIdParam", () => {
 
     expect(screen.getByTestId("hook-result")).toHaveTextContent(DASHED_ID);
 
-    await waitFor(() =>
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/cases/${DASHED_ID}`,
+      );
       expect(screen.getByTestId("state-probe")).toHaveTextContent(
         JSON.stringify(state),
-      ),
-    );
+      );
+    });
   });
 
   it("returns an already-dashed id unchanged and does not navigate", () => {
