@@ -17,41 +17,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import type { JSX } from "react";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import WorkItemsTab from "@features/csm-projects/components/WorkItemsTab";
-
-function renderWorkItemsTab(projectId = "proj-1") {
-  return render(
-    <MemoryRouter initialEntries={["/customers/projects/proj-1?tab=workItems"]}>
-      <WorkItemsTab projectId={projectId} />
-    </MemoryRouter>,
-  );
-}
-
-/** Destination probe: exposes the current URL search string so a test can
- * assert on it after a sub-tab switch. */
-function LocationSearchProbe() {
-  const location = useLocation();
-  return <div data-testid="search-probe">{location.search}</div>;
-}
-
-function renderWorkItemsTabWithLocationProbe(initialEntry: string) {
-  return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route
-          path="/customers/projects/:id"
-          element={
-            <>
-              <WorkItemsTab projectId="proj-1" />
-              <LocationSearchProbe />
-            </>
-          }
-        />
-      </Routes>
-    </MemoryRouter>,
-  );
-}
 
 const mockCsmIssuesView = vi.fn();
 
@@ -65,6 +33,50 @@ vi.mock("@features/csm-cases/components/CsmIssuesView", () => ({
 vi.mock("@features/csm-projects/components/ConversationsTab", () => ({
   default: ({ projectId }: { projectId: string }) => <div>Conversations for {projectId}</div>,
 }));
+
+// The sub-tab strip is now a real URL path segment (`usePathTabs`), which
+// calls `useNavTransition`; bridge it to the real router's `useNavigate` so a
+// simulated sub-tab click actually drives the URL — same pattern as
+// CsmChangeRequestDetailPage.test.tsx.
+const navigateMock = vi.fn();
+vi.mock("@hooks/useNavTransition", () => ({
+  useNavTransition: () => navigateMock,
+}));
+
+function NavigateBridge(): null {
+  const navigate = useNavigate();
+  navigateMock.mockImplementation(
+    (...args: Parameters<typeof navigate>) => navigate(...args),
+  );
+  return null;
+}
+
+function LocationProbe(): JSX.Element {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
+function renderWorkItemsTab(
+  initialEntry = "/customers/projects/proj-1/work-items",
+): ReturnType<typeof render> {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <NavigateBridge />
+      <LocationProbe />
+      <Routes>
+        <Route
+          path="/customers/projects/:id/work-items/:tab?"
+          element={
+            <WorkItemsTab
+              projectId="proj-1"
+              basePath="/customers/projects/proj-1/work-items"
+            />
+          }
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
 
 describe("WorkItemsTab", () => {
   it("defaults to the Cases sub-tab, locked to this project's case-type cases", () => {
@@ -129,28 +141,46 @@ describe("WorkItemsTab", () => {
   it("switches to the Conversations sub-tab", () => {
     renderWorkItemsTab();
 
+    fireEvent.click(screen.getByText("Chats"));
+
+    expect(screen.getByText("Conversations for proj-1")).toBeInTheDocument();
+  });
+});
+
+describe("WorkItemsTab — sub-tab is a real URL path segment", () => {
+  it("clicking a sub-tab navigates to that sub-tab's own URL", () => {
+    renderWorkItemsTab();
+
     fireEvent.click(screen.getByText("Conversations"));
 
-    expect(screen.getByText("Conversations for proj-1")).toBeInTheDocument();
-  });
-
-  // Regression tests: the sub-tab used to be plain component state, so a
-  // create-flow round trip back to the project always reset it to Cases.
-  // It's now kept in the URL (`?subTab=`) instead.
-  it("writes the selected sub-tab to the URL's ?subTab= param", () => {
-    renderWorkItemsTabWithLocationProbe("/customers/projects/proj-1?tab=workItems");
-
-    fireEvent.click(screen.getByText("Engagements"));
-
-    expect(screen.getByTestId("search-probe")).toHaveTextContent("subTab=engagements");
-  });
-
-  it("restores the sub-tab named in the URL on mount, instead of always defaulting to Cases", () => {
-    renderWorkItemsTabWithLocationProbe(
-      "/customers/projects/proj-1?tab=workItems&subTab=conversations",
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1/work-items/conversations",
     );
+    expect(screen.getByRole("tab", { name: "Conversations" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
 
-    expect(screen.getByText("Conversations for proj-1")).toBeInTheDocument();
-    expect(screen.queryByText(/IssuesView/)).not.toBeInTheDocument();
+  it("loading the page directly at a sub-tab's URL opens on that sub-tab", () => {
+    renderWorkItemsTab("/customers/projects/proj-1/work-items/engagements");
+
+    expect(screen.getByRole("tab", { name: "Engagements" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("IssuesView: engagements")).toBeInTheDocument();
+  });
+
+  it("falls back to Cases for an unknown sub-tab segment, without redirecting the URL", () => {
+    renderWorkItemsTab("/customers/projects/proj-1/work-items/bogus-tab");
+
+    expect(screen.getByRole("tab", { name: "Cases" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1/work-items/bogus-tab",
+    );
   });
 });

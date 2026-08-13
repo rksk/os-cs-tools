@@ -17,14 +17,28 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import type { JSX } from "react";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  type NavigateOptions,
+  type To,
+} from "react-router";
+import type { UseQueryResult } from "@tanstack/react-query";
 import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
 
-const mockUseGetProject = vi.fn();
-vi.mock("@features/csm-projects/api/useGetProject", () => ({
-  useGetProject: (...args: unknown[]) => mockUseGetProject(...args),
-}));
+const navigateMock = vi.fn();
+const useGetProjectMock = vi.fn();
 
+vi.mock("@hooks/useNavTransition", () => ({
+  useNavTransition: () => navigateMock,
+}));
+vi.mock("@features/csm-projects/api/useGetProject", () => ({
+  useGetProject: () => useGetProjectMock(),
+}));
 vi.mock("@features/csm-projects/components/DeploymentsTab", () => ({
   default: ({ projectId }: { projectId: string }) => <div>Deployments for {projectId}</div>,
 }));
@@ -32,96 +46,200 @@ vi.mock("@features/csm-projects/components/ProjectContactsTab", () => ({
   default: ({ projectId }: { projectId: string }) => <div>Contacts for {projectId}</div>,
 }));
 vi.mock("@features/csm-projects/components/WorkItemsTab", () => ({
-  default: ({ projectId }: { projectId: string }) => <div>Work items for {projectId}</div>,
+  default: ({ projectId, basePath }: { projectId: string; basePath: string }) => (
+    <div>
+      Work items for {projectId} at {basePath}
+    </div>
+  ),
 }));
 
+// Imported after the mocks above so the module picks them up.
 import CsmProjectDetailPage from "@features/csm-projects/pages/CsmProjectDetailPage";
 
-const PROJECT: ProjectDetails = {
-  id: "proj-1",
-  account: {
-    id: "acct-1",
-    name: "Acme",
-    activationDate: null,
-    tier: "gold",
-    agentEnabled: true,
-    kbReferencesEnabled: true,
-  },
-  sfId: "SF-1",
-  name: "Acme Subscription",
-  key: "ACME",
-  subscriptionType: "managed_cloud_subscription",
-  startDate: null,
-  endDate: null,
-  createdOn: "2025-01-01T00:00:00Z",
-  updatedOn: "2025-06-01T00:00:00Z",
-  closureState: null,
-};
-
-/** Destination probe: shows the pathname+search and the state.from a click
- * actually navigated with, so tests assert on real router navigation. */
-function LocationProbe() {
-  const location = useLocation();
-  return (
-    <>
-      <div data-testid="location-probe">{location.pathname + location.search}</div>
-      <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>
-    </>
+// `useNavTransition` is mocked module-wide (above); this page's tab strip is
+// a real URL path segment (`usePathTabs`), so the mock is bridged to the real
+// `useNavigate` from this render tree — same pattern as
+// CsmChangeRequestDetailPage.test.tsx's `NavigateBridge` — so a simulated tab
+// click actually drives the router instead of being a no-op.
+function NavigateBridge(): null {
+  const navigate = useNavigate();
+  navigateMock.mockImplementation((to: To, options?: NavigateOptions) =>
+    navigate(to, options),
   );
+  return null;
 }
 
-function renderPage(initialEntry = "/customers/projects/proj-1") {
+function LocationProbe(): JSX.Element {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
+function renderPage(
+  initialEntry = "/customers/projects/proj-1",
+): ReturnType<typeof render> {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
+      <NavigateBridge />
+      <LocationProbe />
       <Routes>
-        <Route path="/customers/projects/:id" element={<CsmProjectDetailPage />} />
-        <Route path="/cases/new" element={<LocationProbe />} />
+        <Route
+          path="/customers/projects/:id/:tab?"
+          element={<CsmProjectDetailPage />}
+        />
+        <Route
+          path="/customers/projects/:id/work-items/:tab?"
+          element={<CsmProjectDetailPage />}
+        />
       </Routes>
     </MemoryRouter>,
   );
 }
 
-describe("CsmProjectDetailPage — tab state", () => {
-  beforeEach(() => {
-    mockUseGetProject.mockReturnValue({
-      data: PROJECT,
-      isLoading: false,
-      isError: false,
-    });
-  });
+const BASE_PROJECT: ProjectDetails = {
+  id: "proj-1",
+  account: {
+    id: "acc-1",
+    name: "Acme Corp",
+    activationDate: "2020-01-01T00:00:00Z",
+    tier: "Enterprise",
+    agentEnabled: true,
+    kbReferencesEnabled: true,
+  },
+  sfId: "SF-001",
+  name: "Acme Platform",
+  key: "ACME-PLAT",
+  subscriptionType: "subscription",
+  startDate: "2020-01-01T00:00:00Z",
+  endDate: null,
+  createdOn: "2020-01-01T00:00:00Z",
+  updatedOn: "2026-01-01T00:00:00Z",
+  closureState: "open",
+};
 
-  it("defaults to the Overview tab when the URL carries no ?tab=", () => {
+function mockQueryResult(
+  overrides: Partial<UseQueryResult<ProjectDetails | null, Error>>,
+): void {
+  useGetProjectMock.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
+    ...overrides,
+  });
+}
+
+beforeEach(() => {
+  navigateMock.mockClear();
+  useGetProjectMock.mockReset();
+  mockQueryResult({ data: BASE_PROJECT });
+});
+
+describe("CsmProjectDetailPage — tab is a real URL path segment", () => {
+  function goToTab(name: string): void {
+    fireEvent.click(screen.getByRole("tab", { name }));
+  }
+
+  it("defaults to the Overview tab when the URL carries no tab segment", () => {
     renderPage();
-    expect(screen.getByText("Project key")).toBeInTheDocument();
-    expect(screen.queryByText("Work items for proj-1")).not.toBeInTheDocument();
-  });
-
-  it("renders the tab named in the URL's ?tab= param, not always Overview", () => {
-    renderPage("/customers/projects/proj-1?tab=workItems");
-    expect(screen.getByText("Work items for proj-1")).toBeInTheDocument();
-    expect(screen.queryByText("Project key")).not.toBeInTheDocument();
-  });
-
-  // Regression test: activeTab used to be plain component state, so a
-  // create-flow round trip back to this page always reset it to Overview
-  // even if the engineer had been on Work items. It's now kept in the URL.
-  it("switches tabs by updating the URL's ?tab= param, not local state", () => {
-    renderPage();
-    fireEvent.click(screen.getByRole("tab", { name: "Work items" }));
-    expect(screen.getByText("Work items for proj-1")).toBeInTheDocument();
-  });
-
-  it("passes the current pathname+search as the create page's return state", () => {
-    renderPage("/customers/projects/proj-1?tab=workItems&subTab=engagements");
-
-    fireEvent.click(screen.getByRole("button", { name: /create/i }));
-    fireEvent.click(screen.getByText("Create case"));
-
-    expect(screen.getByTestId("location-probe")).toHaveTextContent("/cases/new");
-    expect(screen.getByTestId("location-state-probe")).toHaveTextContent(
-      JSON.stringify({
-        from: "/customers/projects/proj-1?tab=workItems&subTab=engagements",
-      }),
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
+    expect(screen.getByText("Project key")).toBeInTheDocument();
+  });
+
+  it("clicking a tab navigates to that tab's own URL", () => {
+    renderPage();
+
+    goToTab("Deployments");
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1/deployments",
+    );
+    expect(screen.getByRole("tab", { name: "Deployments" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Deployments for proj-1")).toBeInTheDocument();
+  });
+
+  it("loading the page directly at a tab's URL opens on that tab", () => {
+    renderPage("/customers/projects/proj-1/contacts");
+    expect(screen.getByRole("tab", { name: "Project contacts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Contacts for proj-1")).toBeInTheDocument();
+  });
+
+  it("falls back to Overview for an unknown tab segment, without redirecting the URL", () => {
+    renderPage("/customers/projects/proj-1/bogus-tab");
+
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1/bogus-tab",
+    );
+  });
+});
+
+describe("CsmProjectDetailPage — Work items nested sub-tab route", () => {
+  it("clicking Work items navigates to the nested work-items base path", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Work items" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1/work-items",
+    );
+    expect(
+      screen.getByText("Work items for proj-1 at /customers/projects/proj-1/work-items"),
+    ).toBeInTheDocument();
+  });
+
+  it("loading the page directly at a nested work-items sub-tab URL shows the Work items tab", () => {
+    renderPage("/customers/projects/proj-1/work-items/conversations");
+
+    expect(screen.getByRole("tab", { name: "Work items" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Work items for proj-1 at /customers/projects/proj-1/work-items"),
+    ).toBeInTheDocument();
+  });
+
+  it("loading the page directly at the bare work-items path shows the Work items tab", () => {
+    renderPage("/customers/projects/proj-1/work-items");
+
+    expect(screen.getByRole("tab", { name: "Work items" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Work items for proj-1 at /customers/projects/proj-1/work-items"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("CsmProjectDetailPage — loading/error/not-found states", () => {
+  it("shows a skeleton while loading", () => {
+    mockQueryResult({ isLoading: true });
+    renderPage();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  it("shows an error message when the query fails", () => {
+    mockQueryResult({ isError: true });
+    renderPage();
+    expect(screen.getByText(/could not load project/i)).toBeInTheDocument();
+  });
+
+  it("shows a not-found message when there is no data", () => {
+    mockQueryResult({ data: null });
+    renderPage();
+    expect(screen.getByText("Project not found")).toBeInTheDocument();
   });
 });

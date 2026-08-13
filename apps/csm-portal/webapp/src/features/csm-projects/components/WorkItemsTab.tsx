@@ -16,30 +16,33 @@
 
 import { Box, Tab, Tabs } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
-import { useSearchParams } from "react-router";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
+import { usePathTabs } from "@hooks/useSectionTabs";
 
 type WorkItemSubTab =
   | "cases"
-  | "serviceRequests"
-  | "securityReports"
+  | "service-requests"
+  | "security-reports"
   | "engagements"
   | "conversations";
 
-const WORK_ITEM_SUB_TABS: readonly WorkItemSubTab[] = [
+// Every known sub-tab id, for `usePathTabs` to validate an incoming URL
+// segment against.
+const WORK_ITEM_SUB_TAB_IDS: readonly WorkItemSubTab[] = [
   "cases",
-  "serviceRequests",
-  "securityReports",
+  "service-requests",
+  "security-reports",
   "engagements",
   "conversations",
 ];
-function isWorkItemSubTab(value: string | null): value is WorkItemSubTab {
-  return !!value && (WORK_ITEM_SUB_TABS as readonly string[]).includes(value);
-}
 
 interface WorkItemsTabProps {
   projectId: string;
+  /** Resolved base path for this sub-tab strip, e.g.
+   * `/customers/projects/:id/work-items` — supplied by the parent page,
+   * which owns the `:id` segment (same convention as `usePathTabs` itself). */
+  basePath: string;
 }
 
 /**
@@ -53,28 +56,23 @@ interface WorkItemsTabProps {
  * chat sessions (`ConversationsTab`), included here as its own sub-tab rather
  * than as a separate top-level project tab.
  */
-export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Element {
-  // Kept in the URL (`?subTab=`), not local state, alongside the parent
-  // page's own `?tab=` -- see CsmProjectDetailPage.tsx's `projectPath` -- so
-  // a create-flow round trip back to this project restores the exact sub-tab
-  // the engineer was on, not just the Work items tab in general.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const rawSubTab = searchParams.get("subTab");
-  const subTab: WorkItemSubTab = isWorkItemSubTab(rawSubTab) ? rawSubTab : "cases";
-  const setSubTab = (next: WorkItemSubTab): void => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev);
-      params.set("subTab", next);
-      return params;
-    });
-  };
+export default function WorkItemsTab({
+  projectId,
+  basePath,
+}: WorkItemsTabProps): JSX.Element {
+  // Sub-tab is a real URL path segment (`${basePath}/<subTab>`, i.e.
+  // `/customers/projects/:id/work-items/:tab?`) so a link to a specific
+  // sub-tab is shareable/bookmarkable, same convention as the parent page's
+  // own top-level tabs.
+  const { activeTab: subTab, setActiveTab: setSubTab } =
+    usePathTabs<WorkItemSubTab>(basePath, WORK_ITEM_SUB_TAB_IDS, "cases");
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Tabs value={subTab} onChange={(_, v) => setSubTab(v as WorkItemSubTab)}>
         <Tab value="cases" label="Cases" />
-        <Tab value="serviceRequests" label="Service requests" />
-        <Tab value="securityReports" label="Security reports" />
+        <Tab value="service-requests" label="Service requests" />
+        <Tab value="security-reports" label="Security reports" />
         <Tab value="engagements" label="Engagements" />
         <Tab value="conversations" label="Conversations" />
       </Tabs>
@@ -89,7 +87,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
         />
       )}
 
-      {subTab === "serviceRequests" && (
+      {subTab === "service-requests" && (
         <CsmIssuesView
           entityNoun="service requests"
           lockedFilters={{ projects: [projectId], caseTypes: ["service_request"] }}
@@ -100,7 +98,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
         />
       )}
 
-      {subTab === "securityReports" && (
+      {subTab === "security-reports" && (
         <CsmIssuesView
           entityNoun="security reports"
           lockedFilters={{ projects: [projectId], caseTypes: ["security_report_analysis"] }}
