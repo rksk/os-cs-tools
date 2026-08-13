@@ -437,7 +437,7 @@ export default function App(): JSX.Element {
                   />
                   <Route path="cases" element={<CsmCasesPage />} />
                   <Route path="cases/new" element={<CsmCaseCreatePage />} />
-                  <Route path="cases/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route path="cases/:caseId/:tab?" element={<CsmCaseDetailPage />} />
 
                   <Route path="operations" element={<OperationsPage />} />
                   <Route
@@ -445,7 +445,7 @@ export default function App(): JSX.Element {
                     element={<CreateServiceRequestPage />}
                   />
                   <Route
-                    path="operations/service-requests/:caseId"
+                    path="operations/service-requests/:caseId/:tab?"
                     element={<CsmCaseDetailPage />}
                   />
                   <Route
@@ -453,7 +453,7 @@ export default function App(): JSX.Element {
                     element={<CreateChangeRequestPage />}
                   />
                   <Route
-                    path="operations/change-requests/:id"
+                    path="operations/change-requests/:id/:tab?"
                     element={<CsmChangeRequestDetailPage />}
                   />
                   <Route
@@ -461,7 +461,7 @@ export default function App(): JSX.Element {
                     element={<CreateIncidentPage />}
                   />
                   <Route
-                    path="operations/incidents/:id"
+                    path="operations/incidents/:id/:tab?"
                     element={<CsmIncidentDetailPage />}
                   />
                   <Route
@@ -475,7 +475,7 @@ export default function App(): JSX.Element {
 
                   <Route path="engagements" element={<CsmEngagementsPage />} />
                   <Route path="engagements/new" element={<CsmEngagementCreatePage />} />
-                  <Route path="engagements/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route path="engagements/:caseId/:tab?" element={<CsmCaseDetailPage />} />
                   <Route path="updates" element={<CsmUpdatesPage />} />
                   <Route path="security-center" element={<CsmSecurityCenterPage />} />
                   <Route
@@ -487,13 +487,13 @@ export default function App(): JSX.Element {
                     element={<ProductVulnerabilityDetailPage />}
                   />
                   <Route
-                    path="security-center/security-reports/:caseId"
+                    path="security-center/security-reports/:caseId/:tab?"
                     element={<CsmCaseDetailPage />}
                   />
                   <Route path="time-cards" element={<CsmTimeCardsPage />} />
                   <Route path="announcements" element={<CsmAnnouncementsPage />} />
                   <Route
-                    path="announcements/:caseId"
+                    path="announcements/:caseId/:tab?"
                     element={<CsmCaseDetailPage />}
                   />
                 </Route>
