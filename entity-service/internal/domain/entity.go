@@ -3038,6 +3038,17 @@ type CallRequestSort struct {
 type SearchAllCallRequestsFilters struct {
 	AssignedUserIDs []string               `json:"assignedUserIds"`
 	States          []CallRequestStateType `json:"states"`
+	// CaseStates filters to call requests whose parent case is in one of these
+	// states (optional). Uses the same case-state enum as the case search's
+	// States filter.
+	CaseStates []CaseState `json:"caseStates"`
+	// ExcludeCaseStates filters to call requests whose parent case is NOT in
+	// any of these states (optional). Inverse of CaseStates, and the two are
+	// independent: a request may carry either, both, or neither.
+	ExcludeCaseStates []CaseState `json:"excludeCaseStates"`
+	// AssignmentTeamIDs filters to call requests whose parent case is assigned
+	// to one of these teams (optional). Same UUID convention as AssignedUserIDs.
+	AssignmentTeamIDs []string `json:"assignmentTeamIds"`
 }
 
 // SearchAllCallRequestsRequest is the input for POST /call-requests/search-all.

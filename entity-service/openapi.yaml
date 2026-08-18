@@ -7251,6 +7251,27 @@ components:
               - notes_pending
               - concluded
           description: Filter by one or more call request states.
+        caseStates:
+          type: array
+          items:
+            type: string
+            enum: [open, work_in_progress, waiting_on_wso2, awaiting_info, reopened, solution_proposed, closed]
+          description: Filter to call requests whose parent case is in one of these states.
+        excludeCaseStates:
+          type: array
+          items:
+            type: string
+            enum: [open, work_in_progress, waiting_on_wso2, awaiting_info, reopened, solution_proposed, closed]
+          description: >-
+            Filter to call requests whose parent case is NOT in any of these states.
+            Inverse of caseStates; the two are independent and either, both, or
+            neither may be supplied.
+        assignmentTeamIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Filter by the parent case's assigned team(s).
 
     SearchAllCallRequestsRequest:
       type: object
