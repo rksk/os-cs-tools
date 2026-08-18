@@ -33,7 +33,7 @@ import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
  */
 export function decisionSummary(card: CsmTimeCard): string | null {
   if (card.state === "approved") {
-    return card.approvedByName ? `Approved by ${card.approvedByName}` : "Approved";
+    return card.approvedByName ? `Approved by: ${card.approvedByName}` : "Approved";
   }
   if (card.state === "rejected") {
     return card.rejectionReason ? `Rejected: ${card.rejectionReason}` : "Rejected";

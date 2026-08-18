@@ -38,7 +38,7 @@ function card(overrides: Partial<CsmTimeCard> = {}): CsmTimeCard {
 describe("decisionSummary", () => {
   it("names the approver on an approved card", () => {
     expect(decisionSummary(card({ state: "approved", approvedByName: "Lead Person" }))).toBe(
-      "Approved by Lead Person",
+      "Approved by: Lead Person",
     );
   });
 

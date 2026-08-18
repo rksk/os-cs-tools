@@ -84,15 +84,17 @@ export default function TimeCardDetailModal({ card, onClose }: TimeCardDetailMod
 
           <Field label="State" value={<Box sx={{ mt: 0.5 }}><TimeCardStatusChip state={card.state} /></Box>} />
 
-          {decision && (
+          {card.state === "submitted" && card.approvers && card.approvers.length > 0 && (
             <Field
-              label="Decision"
-              value={
-                <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                  {decision}
-                </Typography>
-              }
+              label="Approvers"
+              value={card.approvers.map((approver) => approver.name).join(", ")}
             />
+          )}
+
+          {decision && (
+            <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+              {decision}
+            </Typography>
           )}
         </Box>
       </DialogContent>
