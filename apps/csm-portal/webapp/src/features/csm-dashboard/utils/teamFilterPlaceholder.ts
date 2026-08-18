@@ -94,10 +94,42 @@ export const SRE_TEAM_FILTER_FIELD = "sreTeam";
  * here" and doesn't.
  *
  * Every other filter entry, and every other resourceType's filters shape
- * (this only touches the case-search generic field/op/values DSL), passes
- * through unchanged.
+ * that does not carry `assignmentTeamIds`, passes through unchanged.
+ *
+ * As of 2026-08-18 this also resolves the placeholder on the other filter
+ * shape a non-case resourceType can carry it in: a flat `assignmentTeamIds`
+ * array (e.g. the `call_request` resourceType's `POST /call-requests/search`
+ * filters, `{ assignmentTeamIds: [...] }` — never the case-search DSL).
+ * Migration teams are treated as CRE for this purpose: `assignmentTeamIds`
+ * only ever resolves from `selectedTeamCreGroupId`, the exact same argument
+ * already used for `creTeam` case filters — there is no separate SRE path
+ * for this flat shape, and no new generic/fallback team-id concept. The two
+ * shapes (`filters.filters` case DSL, and flat `filters.assignmentTeamIds`)
+ * are resolved independently of one another — a filters object could in
+ * principle carry either (never both, since a single widget's `filters`
+ * belongs to exactly one resourceType), and resolving one never affects the
+ * other's output. The same fail-safe drop policy applies here too: when
+ * `selectedTeamCreGroupId` is `undefined` or an array (the "All ABTs"
+ * sentinel), `assignmentTeamIds` is dropped from the returned filters object
+ * entirely rather than sent with the literal placeholder or an empty array —
+ * see the reasoning above, which applies unchanged. A literal team id
+ * already present in `assignmentTeamIds` (i.e. not the placeholder) is left
+ * alone, same as a literal value alongside the placeholder in the case DSL.
  */
 export function resolveTeamPlaceholder(
+  filters: Record<string, unknown>,
+  selectedTeamCreGroupId: string | string[] | undefined,
+  selectedTeamSreGroupId: string | string[] | undefined,
+): Record<string, unknown> {
+  const withCaseFieldFiltersResolved = resolveCaseFieldFilterPlaceholder(
+    filters,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
+  );
+  return resolveAssignmentTeamIdsPlaceholder(withCaseFieldFiltersResolved, selectedTeamCreGroupId);
+}
+
+function resolveCaseFieldFilterPlaceholder(
   filters: Record<string, unknown>,
   selectedTeamCreGroupId: string | string[] | undefined,
   selectedTeamSreGroupId: string | string[] | undefined,
@@ -134,4 +166,34 @@ export function resolveTeamPlaceholder(
 
   if (!changed) return filters;
   return { ...filters, filters: resolved };
+}
+
+/**
+ * Resolves {@link CURRENT_TEAM_PLACEHOLDER} on a flat `assignmentTeamIds`
+ * array — see the widened doc comment on {@link resolveTeamPlaceholder}.
+ */
+function resolveAssignmentTeamIdsPlaceholder(
+  filters: Record<string, unknown>,
+  selectedTeamCreGroupId: string | string[] | undefined,
+): Record<string, unknown> {
+  const assignmentTeamIds = filters.assignmentTeamIds;
+  if (!Array.isArray(assignmentTeamIds) || !assignmentTeamIds.includes(CURRENT_TEAM_PLACEHOLDER)) {
+    return filters;
+  }
+
+  const replacementCreGroupId =
+    typeof selectedTeamCreGroupId === "string" ? selectedTeamCreGroupId : undefined;
+
+  if (replacementCreGroupId === undefined) {
+    // Drop the field entirely — see the doc comment above.
+    const { assignmentTeamIds: _dropped, ...rest } = filters;
+    return rest;
+  }
+
+  return {
+    ...filters,
+    assignmentTeamIds: assignmentTeamIds.flatMap((v) =>
+      v === CURRENT_TEAM_PLACEHOLDER ? [replacementCreGroupId] : [v],
+    ),
+  };
 }
