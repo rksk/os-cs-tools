@@ -181,12 +181,12 @@ function IncidentWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.
         isLoading={isLoading}
         emptyMessage="No incidents match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Number", width: "minmax(90px, 0.7fr)" },
           { label: "Subject", width: "minmax(160px, 2fr)" },
           { label: "State", width: "minmax(90px, 1fr)" },
           { label: "Priority", width: "minmax(90px, 1fr)" },
           { label: "Updated", width: "minmax(90px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={incidents.map((incident, i) => {
           const href = incident.id ? `/operations/incidents/${incident.id}` : undefined;
@@ -195,6 +195,7 @@ function IncidentWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.
             key: incident.id ?? `incident-${i}`,
             onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
             cells: [
+              previewCell(label, () => setPreviewIncident(incident)),
               <Typography key="number" variant="body2" noWrap>
                 {incident.number || "—"}
               </Typography>,
@@ -230,7 +231,6 @@ function IncidentWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.
               <Typography key="updated" variant="caption" color="text.secondary" noWrap>
                 {formatDate(incident.updatedOn)}
               </Typography>,
-              previewCell(label, () => setPreviewIncident(incident)),
             ],
           };
         })}
@@ -252,12 +252,12 @@ function ChangeRequestWidgetList({ items, isLoading }: WidgetListRendererProps):
         isLoading={isLoading}
         emptyMessage="No change requests match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Number", width: "minmax(90px, 0.7fr)" },
           { label: "Subject", width: "minmax(160px, 2fr)" },
           { label: "State", width: "minmax(100px, 1fr)" },
           { label: "Impact", width: "minmax(90px, 1fr)" },
           { label: "Updated", width: "minmax(90px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={changeRequests.map((cr, i) => {
           const href = cr.id ? `/operations/change-requests/${cr.id}` : undefined;
@@ -266,6 +266,7 @@ function ChangeRequestWidgetList({ items, isLoading }: WidgetListRendererProps):
             key: cr.id ?? `cr-${i}`,
             onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
             cells: [
+              previewCell(label, () => setPreviewChangeRequest(cr)),
               <Typography key="number" variant="body2" noWrap>
                 {cr.number || "—"}
               </Typography>,
@@ -301,7 +302,6 @@ function ChangeRequestWidgetList({ items, isLoading }: WidgetListRendererProps):
               <Typography key="updated" variant="caption" color="text.secondary" noWrap>
                 {formatDate(cr.updatedOn)}
               </Typography>,
-              previewCell(label, () => setPreviewChangeRequest(cr)),
             ],
           };
         })}
@@ -325,11 +325,11 @@ function ProblemWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
         isLoading={isLoading}
         emptyMessage="No problems match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Number", width: "minmax(90px, 0.7fr)" },
           { label: "Subject", width: "minmax(160px, 2fr)" },
           { label: "State", width: "minmax(100px, 1fr)" },
           { label: "Assigned to", width: "minmax(100px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={problems.map((problem, i) => {
           const href = problem.id ? `/operations/problems/${problem.id}` : undefined;
@@ -338,6 +338,7 @@ function ProblemWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
             key: problem.id ?? `problem-${i}`,
             onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
             cells: [
+              previewCell(label, () => setPreviewProblem(problem)),
               <Typography key="number" variant="body2" noWrap>
                 {problem.number || "—"}
               </Typography>,
@@ -360,7 +361,6 @@ function ProblemWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
               <Typography key="assignedTo" variant="body2" noWrap>
                 {problem.assignedTo?.name || "—"}
               </Typography>,
-              previewCell(label, () => setPreviewProblem(problem)),
             ],
           };
         })}
@@ -439,10 +439,10 @@ function AccountWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
         isLoading={isLoading}
         emptyMessage="No accounts match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Name", width: "minmax(140px, 2fr)" },
           { label: "Tier", width: "minmax(90px, 1fr)" },
           { label: "Region", width: "minmax(90px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={accounts.map((a) => {
           const tier = resolveAccountTier(a);
@@ -450,6 +450,7 @@ function AccountWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
             key: a.id,
             onClick: () => navigate(`/customers/accounts/${a.id}`, { state: dashboardReturnState }),
             cells: [
+              previewCell(a.name, () => setPreviewAccount(a)),
               <Typography key="name" variant="body2" noWrap title={a.name}>
                 {a.name}
               </Typography>,
@@ -463,7 +464,6 @@ function AccountWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
               <Typography key="region" variant="body2" noWrap>
                 {a.region ?? "—"}
               </Typography>,
-              previewCell(a.name, () => setPreviewAccount(a)),
             ],
           };
         })}
@@ -484,15 +484,16 @@ function ProjectWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
         isLoading={isLoading}
         emptyMessage="No projects match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Name", width: "minmax(140px, 2fr)" },
           { label: "Project key", width: "minmax(90px, 1fr)" },
           { label: "State", width: "minmax(100px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={projects.map((p) => ({
           key: p.id,
           onClick: () => navigate(`/customers/projects/${p.id}`, { state: dashboardReturnState }),
           cells: [
+            previewCell(p.name, () => setPreviewProject(p)),
             <Typography key="name" variant="body2" noWrap title={p.name}>
               {p.name}
             </Typography>,
@@ -500,7 +501,6 @@ function ProjectWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
               {p.key}
             </Typography>,
             <ClosureStateChip key="state" closureState={p.closureState} emptyFallback="—" />,
-            previewCell(p.name, () => setPreviewProject(p)),
           ],
         }))}
       />
@@ -520,10 +520,10 @@ function UserWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Elem
         isLoading={isLoading}
         emptyMessage="No users match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "User", width: "minmax(140px, 2fr)" },
           { label: "Email", width: "minmax(140px, 2fr)" },
           { label: "Status", width: "minmax(80px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={users.map((u) => ({
           key: u.id,
@@ -536,6 +536,7 @@ function UserWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Elem
           // is already the link (with state), matching every sibling widget's
           // "name" cell (see AccountWidgetList/ProjectWidgetList above).
           cells: [
+            previewCell(u.name || u.userName, () => setPreviewUser(u)),
             <Typography key="user" variant="body2" noWrap>
               {u.userName}
             </Typography>,
@@ -545,7 +546,6 @@ function UserWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Elem
             <Typography key="status" variant="body2">
               {u.active === undefined ? "—" : u.active ? "Active" : "Inactive"}
             </Typography>,
-            previewCell(u.name || u.userName, () => setPreviewUser(u)),
           ],
         }))}
       />
@@ -566,10 +566,10 @@ function ProductVulnerabilityWidgetList({ items, isLoading }: WidgetListRenderer
         isLoading={isLoading}
         emptyMessage="No vulnerabilities match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "CVE / ID", width: "minmax(100px, 1fr)" },
           { label: "Product", width: "minmax(120px, 2fr)" },
           { label: "Priority", width: "minmax(90px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={vulnerabilities.map((vuln) => {
           const label = vuln.cveId || vuln.vulnerabilityId || "vulnerability";
@@ -580,6 +580,7 @@ function ProductVulnerabilityWidgetList({ items, isLoading }: WidgetListRenderer
                 state: dashboardReturnState,
               }),
             cells: [
+              previewCell(label, () => setPreviewVulnerability(vuln)),
               <Typography key="cve" variant="body2" noWrap sx={{ fontFamily: "monospace" }}>
                 {vuln.cveId || vuln.vulnerabilityId || "—"}
               </Typography>,
@@ -599,7 +600,6 @@ function ProductVulnerabilityWidgetList({ items, isLoading }: WidgetListRenderer
                   —
                 </Typography>
               ),
-              previewCell(label, () => setPreviewVulnerability(vuln)),
             ],
           };
         })}
@@ -685,11 +685,11 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
         isLoading={isLoading}
         emptyMessage="No call requests match this widget's filters."
         columns={[
+          PREVIEW_COLUMN,
           { label: "Number", width: "minmax(90px, 0.7fr)" },
           { label: "Reason", width: "minmax(160px, 2fr)" },
           { label: "State", width: "minmax(100px, 1fr)" },
           { label: "Scheduled", width: "minmax(90px, 1fr)" },
-          PREVIEW_COLUMN,
         ]}
         rows={callRequests.map((cr, i) => {
           const href = cr.case?.id ? `/cases/${cr.case.id}` : undefined;
@@ -698,6 +698,7 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
             key: cr.id ?? `call-request-${i}`,
             onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
             cells: [
+              previewCell(label, () => setPreviewCallRequest(cr)),
               <Typography key="number" variant="body2" noWrap>
                 {cr.number || "—"}
               </Typography>,
@@ -714,7 +715,6 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
               <Typography key="scheduled" variant="caption" color="text.secondary" noWrap>
                 {formatDateTime(cr.scheduleTime)}
               </Typography>,
-              previewCell(label, () => setPreviewCallRequest(cr)),
             ],
           };
         })}
