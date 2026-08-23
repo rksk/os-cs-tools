@@ -115,71 +115,20 @@ function renderDialog(
   return { onSave, onClose };
 }
 
-// Queried lazily on each call rather than captured once, because these tests
-// toggle the switches and re-read their state after a re-render.
-
-/** The "Customer approved" switch. */
-const approvedSwitch = (): HTMLElement => screen.getByLabelText(/customer approved/i);
-/** The "Customer reviewed" switch — mutually exclusive with the one above. */
-const reviewedSwitch = (): HTMLElement => screen.getByLabelText(/customer reviewed/i);
 /** The dialog's Save button. */
 const saveButton = (): HTMLElement => screen.getByRole("button", { name: /save/i });
 
-describe("EditChangeRequestDialog — Customer approved / reviewed mutual exclusion", () => {
-  it("allows toggling only 'Customer approved' and saves just that field", () => {
-    const { onSave } = renderDialog();
-    fireEvent.click(approvedSwitch());
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
-  });
+// "Customer approved"/"Customer reviewed" are deliberately not rendered as
+// switches in this dialog — see EditChangeRequestDialog.tsx's doc comment for
+// why (they drive a gated SN state transition, not a boolean field, and the
+// "off" direction is destructive). This test file only covers what the
+// dialog actually renders.
 
-  it("allows toggling only 'Customer reviewed' and saves just that field", () => {
-    const { onSave } = renderDialog();
-    fireEvent.click(reviewedSwitch());
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerReviewed: true });
-  });
-
-  it("locks 'Customer reviewed' once 'Customer approved' has been changed, so both can never be sent together", () => {
+describe("EditChangeRequestDialog — Customer approved / reviewed are not editable here", () => {
+  it("renders no 'Customer approved' or 'Customer reviewed' control", () => {
     renderDialog();
-    fireEvent.click(approvedSwitch());
-    expect(reviewedSwitch()).toBeDisabled();
-    expect(approvedSwitch()).toBeEnabled();
-  });
-
-  it("locks 'Customer approved' once 'Customer reviewed' has been changed", () => {
-    renderDialog();
-    fireEvent.click(reviewedSwitch());
-    expect(approvedSwitch()).toBeDisabled();
-    expect(reviewedSwitch()).toBeEnabled();
-  });
-
-  it("explains why the other switch is locked", () => {
-    renderDialog();
-    fireEvent.click(approvedSwitch());
-    expect(
-      screen.getByText(/can't be changed in the same save/i),
-    ).toBeInTheDocument();
-  });
-
-  it("unlocks the other switch again once the change is undone", () => {
-    renderDialog();
-    fireEvent.click(approvedSwitch());
-    expect(reviewedSwitch()).toBeDisabled();
-    fireEvent.click(approvedSwitch());
-    expect(reviewedSwitch()).toBeEnabled();
-  });
-
-  it("never builds a patch containing both isCustomerApproved and isCustomerReviewed, even via the disabled control", () => {
-    const { onSave } = renderDialog();
-    fireEvent.click(approvedSwitch());
-    // Attempting to click the now-disabled control is a no-op in the DOM;
-    // this documents that expectation rather than relying on it silently.
-    fireEvent.click(reviewedSwitch());
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
-    const [patch] = onSave.mock.calls[0];
-    expect(patch).not.toHaveProperty("isCustomerReviewed");
+    expect(screen.queryByLabelText(/customer approved/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/customer reviewed/i)).not.toBeInTheDocument();
   });
 });
 
@@ -195,14 +144,14 @@ describe("EditChangeRequestDialog — save error surfacing", () => {
       <EditChangeRequestDialog
         cr={BASE_CR}
         isSaving={false}
-        saveError="isCustomerApproved, isCustomerReviewed, and requestApproval are mutually exclusive"
+        saveError="Could not update the change request."
         onClose={onClose}
         onSave={vi.fn()}
       />,
     );
     expect(
       screen.getByRole("alert"),
-    ).toHaveTextContent(/mutually exclusive/i);
+    ).toHaveTextContent(/could not update/i);
   });
 });
 
@@ -278,29 +227,6 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
       rollbackPlan: "<p>Roll the image back.</p>",
       testPlan: "<p>Run the regression suite.</p>",
     });
-  });
-
-  // The load-time rewrite makes this the sharp edge of the whole dialog: the
-  // editor's HTML never equals the stored HTML, so a naive string compare
-  // against `cr.rollbackPlan` would mark both plans dirty on open and patch
-  // fields nobody touched.
-  it("keeps an untouched plan out of the patch even when the CR already has one stored", () => {
-    const { onSave } = renderDialog({
-      rollbackPlan: "<p>Restore the previous release.</p>",
-      testPlan: "<p>Smoke the gateway health endpoint.</p>",
-    });
-    fireEvent.click(approvedSwitch());
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
-  });
-
-  it("keeps an untouched multi-paragraph plan out of the patch", () => {
-    const { onSave } = renderDialog({
-      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
-    });
-    fireEvent.click(approvedSwitch());
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
   });
 
   it("leaves Save disabled on open when a plan is already stored", () => {
@@ -394,7 +320,7 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
     });
     // Make the form dirty so Save would otherwise be enabled — this proves the
     // date check, not the dirty check, is what disables it.
-    fireEvent.click(approvedSwitch());
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p>dirty</p>" } });
     expect(
       screen.getByText(/planned end must be after planned start/i),
     ).toBeInTheDocument();
@@ -406,7 +332,7 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
       plannedStartOn: "2026-03-01 10:00:00",
       plannedEndOn: "2026-03-01 10:00:00",
     });
-    fireEvent.click(approvedSwitch());
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p>dirty</p>" } });
     expect(saveButton()).toBeDisabled();
   });
 
@@ -415,7 +341,7 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
       plannedStartOn: "2026-03-01 10:00:00",
       plannedEndOn: "2026-03-01 12:00:00",
     });
-    fireEvent.click(approvedSwitch());
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p>dirty</p>" } });
     expect(
       screen.queryByText(/planned end must be after planned start/i),
     ).not.toBeInTheDocument();
@@ -424,7 +350,7 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
 
   it("does not flag anything when only one end of the window is set", () => {
     renderDialog({ plannedStartOn: "2026-03-01 10:00:00" });
-    fireEvent.click(approvedSwitch());
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p>dirty</p>" } });
     expect(
       screen.queryByText(/planned end must be after planned start/i),
     ).not.toBeInTheDocument();

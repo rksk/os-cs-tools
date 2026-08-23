@@ -249,9 +249,9 @@ export function countActiveCRFilters(filters: ChangeRequestFilters): number {
 // and several fields the detail page can show have no create-time
 // equivalent at all. Concretely (verified against the entity service's own
 // request/response structs, not just the two frontend types):
-//   - `category`, `priority`, and `risk` are write-only — accepted by create,
-//     never present on the read response — so there is no source value to
-//     copy from, ever, regardless of how the form is wired.
+//   - `priority` is write-only — accepted by create, never present on the
+//     read response — so there is no source value to copy from, ever,
+//     regardless of how the form is wired.
 //   - `implementationPlan` and `riskImpactAnalysis` are write-only for the
 //     same reason.
 //   - `impactDescription`, `serviceOutage`, `communicationPlan`, and
@@ -259,13 +259,15 @@ export function countActiveCRFilters(filters: ChangeRequestFilters): number {
 //     for any of them.
 //   - `project`, `case`, `deployment`, `deployedProduct`, and `product` are
 //     read-only refs with no create-time field to set them from at all.
-//   - `serviceId`, `serviceOfferingId`, and `configurationItemId` are the
-//     mirror image: create accepts all three, and the read response carries no
-//     equivalent, so a clone always leaves them blank.
 //   - `assignedTeam` is read-only; create's nearest-sounding field
 //     (`groupId`, "Assignment group") is a *different* underlying reference
 //     with no confirmed equivalence to `assignedTeam` — mapping one into the
 //     other would be a guess, not a verified carry-over, so it's left alone.
+// (`category` and `risk` aren't in this gap analysis at all: `category` has
+// no editable control anywhere in this portal — see
+// `BeCreateChangeRequestPayload`'s doc comment — and `risk`/`serviceId`/
+// `serviceOfferingId`/`configurationItemId` were removed from the create form
+// entirely, since none of them exist on the real ServiceNow CR form.)
 // None of the above can be safely carried over without either fabricating
 // data or guessing at an unconfirmed field mapping, so this only clones the
 // fields that are genuinely the same field on both sides: `subject`,
@@ -327,7 +329,6 @@ export function buildCloneChangeRequestNavState(
  */
 export const CLONE_SOURCE_GAP_MESSAGE =
   "Copied the subject, description, justification, test plan, type, impact, and assigned engineer. " +
-  "Category, priority, risk, implementation plan, risk/impact analysis, backout plan, assignment group, " +
-  "linked project/case, affected product, service, service offering, and configuration item aren't " +
-  "available to copy and need to be re-entered. " +
+  "Priority, implementation plan, risk/impact analysis, backout plan, assignment group, " +
+  "linked project/case, and affected product aren't available to copy and need to be re-entered. " +
   "Deployment, schedule, and approval fields are intentionally left blank for you to set for the new environment.";

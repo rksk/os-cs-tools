@@ -144,7 +144,7 @@ describe("CreateChangeRequestPage — Clone prefill", () => {
     locationState = { sourceNumber: "CHG0009988", subject: "Upgrade the gateway cluster" };
     render(<CreateChangeRequestPage />);
     expect(screen.getByText(/cloned from chg0009988/i)).toBeInTheDocument();
-    expect(screen.getByText(/category, priority, risk/i)).toBeInTheDocument();
+    expect(screen.getByText(/priority, implementation plan/i)).toBeInTheDocument();
   });
 
   it("shows a generic banner when the source number is unavailable", () => {

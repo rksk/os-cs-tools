@@ -1998,23 +1998,6 @@ export type BeChangeRequestType =
 
 export type BeChangeRequestPriority = "critical" | "high" | "moderate" | "low";
 
-export type BeChangeRequestRisk = "high" | "moderate" | "low";
-
-export type BeChangeRequestCategory =
-  | "hardware"
-  | "software"
-  | "service"
-  | "system_software"
-  | "applications_software"
-  | "network"
-  | "telecom"
-  | "documentation"
-  | "other"
-  | "regular_release_cloud"
-  | "hotfix_release_cloud"
-  | "devops"
-  | "cloud_computing";
-
 /** List-item / shared shape for a change request (`POST /change-requests/search`). */
 export interface BeChangeRequestSearchView {
   id: string;
@@ -2112,29 +2095,33 @@ export interface BeChangeRequestApprovalDecisionResponse {
 
 /**
  * `POST /change-requests` body (ServiceNow data source only). `subject` is
- * the only required field; every ID field (`serviceId`, `serviceOfferingId`,
- * `configurationItemId`, `groupId`, `assignedEngineerId`, `requestedById`)
- * is a portal UUID resolved server-side against the backing data source, via
- * the matching `/*\/search` endpoint (see `AsyncEntitySelect` usages in
- * `CreateChangeRequestPage.tsx`). `state` accepts any valid lifecycle state,
- * but the create form restricts the selectable options to the pre-workflow
- * states (new/assess/authorize), defaulting to "new", so a CR can't be created
- * already past its own approval flow.
+ * the only required field; every ID field (`groupId`, `assignedEngineerId`,
+ * `requestedById`) is a portal UUID resolved server-side against the backing
+ * data source, via the matching `/*\/search` endpoint (see `AsyncEntitySelect`
+ * usages in `CreateChangeRequestPage.tsx`). `state` accepts any valid
+ * lifecycle state, but the create form restricts the selectable options to
+ * the pre-workflow states (new/assess/authorize), defaulting to "new", so a
+ * CR can't be created already past its own approval flow.
  * `plannedStartDate`/`plannedEndDate` are `YYYY-MM-DD HH:MM:SS` strings.
+ *
+ * `category`, `serviceId`, `serviceOfferingId`, `configurationItemId` and
+ * `risk` are deliberately not part of this type even though the backend
+ * still accepts them: the live ServiceNow CR form has no `Service`/
+ * `Service offering`/`Configuration item`/`Risk` fields at all, and
+ * `category` is left at its default on 99.9% of real change requests, so
+ * neither belongs as an editable control in this portal (see
+ * `notes/2026-08-19-sn-prod-cr-form-spec.md` and the field-usage census in
+ * the planning repo). The backend contract is left untouched — only the
+ * webapp stops sending them.
  */
 export interface BeCreateChangeRequestPayload {
   subject: string;
-  category?: BeChangeRequestCategory;
-  serviceId?: string;
-  serviceOfferingId?: string;
-  configurationItemId?: string;
   priority?: BeChangeRequestPriority;
   impact?: BeChangeRequestImpact;
   type?: BeChangeRequestType;
   state?: BeChangeRequestState;
   groupId?: string;
   assignedEngineerId?: string;
-  risk?: BeChangeRequestRisk;
   requestedById?: string;
   description?: string;
   justification?: string;

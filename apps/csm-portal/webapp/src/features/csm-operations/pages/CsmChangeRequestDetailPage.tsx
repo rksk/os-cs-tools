@@ -190,7 +190,7 @@ function PlanSection({ title, html }: { title: string; html?: string | null }): 
   );
 }
 
-type ChangeRequestTabId = "approval" | "details" | "comments" | "attachments";
+type ChangeRequestTabId = "approval" | "plan" | "comments" | "attachments";
 
 const TAB_DEFS: Array<{
   id: ChangeRequestTabId;
@@ -198,7 +198,7 @@ const TAB_DEFS: Array<{
   icon: JSX.Element;
 }> = [
   { id: "approval", label: "Approval", icon: <ClipboardCheck size={16} /> },
-  { id: "details", label: "Details", icon: <FileText size={16} /> },
+  { id: "plan", label: "Plan", icon: <FileText size={16} /> },
   { id: "comments", label: "Comments", icon: <MessageSquare size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
 ];
@@ -603,29 +603,36 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
         </Box>
       )}
 
-      {activeTab === "details" && (
+      {activeTab === "plan" && (
+        // Field order here mirrors the SRE change-review packet's reading
+        // order (description/justification first, then the impact and
+        // rollback/test detail, then the two fields the field-usage census
+        // found most often left "N/A" — service outage and communication
+        // plan — grouped last so a mostly-empty CR doesn't bury the fields
+        // that usually carry real content). This is a relabel/reorder only:
+        // the same seven fields the tab already showed, nothing added.
         [
           cr.description,
           cr.justification,
           cr.impactDescription,
-          cr.serviceOutage,
-          cr.communicationPlan,
           cr.rollbackPlan,
           cr.testPlan,
+          cr.serviceOutage,
+          cr.communicationPlan,
         ].some((v) => v && !isBlankHtml(v)) ? (
           <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2.5 }}>
-            <Typography variant="subtitle2">Details &amp; plans</Typography>
+            <Typography variant="subtitle2">Plan</Typography>
             <PlanSection title="Description" html={cr.description} />
             <PlanSection title="Justification" html={cr.justification} />
             <PlanSection title="Impact description" html={cr.impactDescription} />
-            <PlanSection title="Service outage" html={cr.serviceOutage} />
-            <PlanSection title="Communication plan" html={cr.communicationPlan} />
             <PlanSection title="Rollback plan" html={cr.rollbackPlan} />
             <PlanSection title="Test plan" html={cr.testPlan} />
+            <PlanSection title="Service outage" html={cr.serviceOutage} />
+            <PlanSection title="Communication plan" html={cr.communicationPlan} />
           </Card>
         ) : (
           <Typography variant="body2" color="text.secondary">
-            No details or plans have been recorded for this change request.
+            No plan has been recorded for this change request.
           </Typography>
         )
       )}

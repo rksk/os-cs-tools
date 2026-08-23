@@ -24,9 +24,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControlLabel,
   FormHelperText,
-  Switch,
   Typography,
 } from "@wso2/oxygen-ui";
 import { useCallback, useMemo, useState, type JSX } from "react";
@@ -149,9 +147,26 @@ function useRichTextPlanField(storedHtml?: string | null): RichTextPlanField {
 
 /**
  * Edit the change-request fields the BE allows updating: the planned window,
- * the assignment group, the customer approved / reviewed flags, and the
- * rollback and test plans. Only changed fields are sent, and the BE requires
- * at least one, so Save is disabled until something differs.
+ * the assignment group, and the rollback and test plans. Only changed fields
+ * are sent, and the BE requires at least one, so Save is disabled until
+ * something differs.
+ *
+ * `isCustomerApproved`/`isCustomerReviewed` are deliberately NOT exposed here
+ * even though the BE patch contract still accepts them (see
+ * `BePatchChangeRequestPayload`). Traced end to end (webapp -> BFF -> Go
+ * entity-service -> Ballerina -> the SN scripted API's dedicated
+ * `patchCustomerApproved`/`patchCustomerReviewed` handlers): both are gated
+ * (only accepted while the CR is already in the "Customer Approval"/
+ * "Customer Review" state) but flipping either is not a boolean-field edit —
+ * it drives a real state transition, and the "off" direction is destructive
+ * (`isCustomerApproved: false` moves the CR to Cancelled; `isCustomerReviewed:
+ * false` moves it to Rollback, a terminal dead end with no reason capture).
+ * A switch labelled "Customer approved"/"Customer reviewed" strongly implies
+ * a record-keeping boolean, not a one-way cancel/rollback action, so this is
+ * exactly the "inventing a capability the source system doesn't expose"
+ * pattern the CR approval-mechanics review warned about (no SN UI action
+ * exists for either state either). Removed as a UI affordance; the BE/Go
+ * plumbing is left in place since nothing else depends on removing it.
  */
 export default function EditChangeRequestDialog({
   cr,
@@ -171,8 +186,6 @@ export default function EditChangeRequestDialog({
   const initialAssignedTeamId = cr.assignedTeam?.id ?? "";
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
   const [plannedEnd, setPlannedEnd] = useState(initialPlannedEnd);
-  const [approved, setApproved] = useState(!!cr.hasCustomerApproved);
-  const [reviewed, setReviewed] = useState(!!cr.hasCustomerReviewed);
   const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
   const rollbackPlan = useRichTextPlanField(cr.rollbackPlan);
   const testPlan = useRichTextPlanField(cr.testPlan);
@@ -194,8 +207,6 @@ export default function EditChangeRequestDialog({
     if (plannedEnd !== initialPlannedEnd && plannedEnd) {
       next.plannedEndOn = toBackendDateTime(plannedEnd);
     }
-    if (approved !== !!cr.hasCustomerApproved) next.isCustomerApproved = approved;
-    if (reviewed !== !!cr.hasCustomerReviewed) next.isCustomerReviewed = reviewed;
     if (assignedTeamId !== initialAssignedTeamId && assignedTeamId) {
       next.assignedTeamId = assignedTeamId;
     }
@@ -211,16 +222,12 @@ export default function EditChangeRequestDialog({
     initialPlannedStart,
     plannedEnd,
     initialPlannedEnd,
-    approved,
-    reviewed,
     assignedTeamId,
     initialAssignedTeamId,
     rollbackPlan.isDirty,
     rollbackPlan.outgoing,
     testPlan.isDirty,
     testPlan.outgoing,
-    cr.hasCustomerApproved,
-    cr.hasCustomerReviewed,
   ]);
 
   const hasChanges = Object.keys(patch).length > 0;
@@ -228,17 +235,6 @@ export default function EditChangeRequestDialog({
   // but not forbidden (e.g. recording when it actually started), so this
   // only warns.
   const plannedStartIsPast = isPastDateTime(startDate);
-
-  // The backend rejects a patch containing both isCustomerApproved and
-  // isCustomerReviewed outright — they, and requestApproval, are mutually
-  // exclusive. Mirror that here: once one of the two has been changed away
-  // from its saved value, lock the other to its current value until this
-  // save goes through (or the first change is undone), so the dialog can
-  // never build the two-key payload the backend always refuses.
-  const approvedChanged = approved !== !!cr.hasCustomerApproved;
-  const reviewedChanged = reviewed !== !!cr.hasCustomerReviewed;
-  const approvedLocked = reviewedChanged;
-  const reviewedLocked = approvedChanged;
 
   // Rich-text plan field. The editor takes no `id`/native label, so the
   // visible label is a separate Typography tied to the control via
@@ -334,51 +330,6 @@ export default function EditChangeRequestDialog({
               }}
             />
           </LocalizationProvider>
-          <Box>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={approved}
-                  disabled={isSaving || approvedLocked}
-                  // Guard the handler too, not just the `disabled` attribute:
-                  // it's the actual mutual-exclusion enforcement, so it must
-                  // not depend on the DOM ignoring input while disabled.
-                  onChange={(e) => {
-                    if (approvedLocked) return;
-                    setApproved(e.target.checked);
-                  }}
-                />
-              }
-              label="Customer approved"
-            />
-            {approvedLocked && (
-              <FormHelperText>
-                Save the customer-reviewed change first — approved and
-                reviewed can&apos;t be changed in the same save.
-              </FormHelperText>
-            )}
-          </Box>
-          <Box>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={reviewed}
-                  disabled={isSaving || reviewedLocked}
-                  onChange={(e) => {
-                    if (reviewedLocked) return;
-                    setReviewed(e.target.checked);
-                  }}
-                />
-              }
-              label="Customer reviewed"
-            />
-            {reviewedLocked && (
-              <FormHelperText>
-                Save the customer-approved change first — approved and
-                reviewed can&apos;t be changed in the same save.
-              </FormHelperText>
-            )}
-          </Box>
           <AsyncEntitySelect<BeGroup>
             id="cr-edit-assigned-team"
             label="Assignment group"
