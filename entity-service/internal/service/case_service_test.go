@@ -201,6 +201,20 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 			wantMsg: `field "escalation" is not supported by this data source`,
 		},
 		{
+			name: "slaBreached",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}},
+			}},
+			wantMsg: `field "slaBreached" is not supported by this data source`,
+		},
+		{
+			name: "accountEscalationActive",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}},
+			}},
+			wantMsg: `field "accountEscalationActive" is not supported by this data source`,
+		},
+		{
 			name: "resolvedOn gte",
 			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
 				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "gte", Values: []string{"2026-01-01"}}},

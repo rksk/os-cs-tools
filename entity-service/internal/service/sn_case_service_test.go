@@ -1532,6 +1532,8 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 				{Field: "resolutionNotes", Op: "isEmpty"},
 				{Field: "createdBy", Op: "eq", Values: []string{currentUserFilterPlaceholder}},
 				{Field: "projectType", Op: "in", Values: []string{"Subscription", "Free Trial"}},
+				{Field: "slaBreached", Op: "eq", Values: []string{"true"}},
+				{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}},
 			},
 		},
 	}
@@ -1565,6 +1567,70 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 		gotBody.Filters.ProjectTypeNames[0] != "Subscription" ||
 		gotBody.Filters.ProjectTypeNames[1] != "Free Trial" {
 		t.Fatalf("ProjectTypeNames = %v, want [Subscription, Free Trial] passed through unchanged", gotBody.Filters.ProjectTypeNames)
+	}
+	if gotBody.Filters.SlaBreached == nil || !*gotBody.Filters.SlaBreached {
+		t.Fatalf("SlaBreached = %v, want pointer to true", gotBody.Filters.SlaBreached)
+	}
+	if gotBody.Filters.AccountEscalationActive == nil || !*gotBody.Filters.AccountEscalationActive {
+		t.Fatalf("AccountEscalationActive = %v, want pointer to true", gotBody.Filters.AccountEscalationActive)
+	}
+}
+
+// TestSNCaseService_SearchCases_SLABreachedAndAccountEscalationTravelOnTheirOwnWireKeys
+// pins the exact JSON wire keys for the two new plain-boolean filters --
+// "slaBreached" and "accountEscalationActive" -- distinct from the existing
+// case-level "isEscalated" key, and proves an explicit false is still sent on
+// the wire (not dropped by omitempty, since both fields are *bool).
+func TestSNCaseService_SearchCases_SLABreachedAndAccountEscalationTravelOnTheirOwnWireKeys(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "slaBreached", Op: "eq", Values: []string{"false"}},
+				{Field: "accountEscalationActive", Op: "eq", Values: []string{"false"}},
+			},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	slaBreachedRaw, ok := envelope.Filters["slaBreached"]
+	if !ok {
+		t.Fatalf("expected \"slaBreached\" key on the wire even for an explicit false, filters = %v", envelope.Filters)
+	}
+	if string(slaBreachedRaw) != "false" {
+		t.Fatalf("slaBreached = %s, want false", slaBreachedRaw)
+	}
+	accountEscalationRaw, ok := envelope.Filters["accountEscalationActive"]
+	if !ok {
+		t.Fatalf("expected \"accountEscalationActive\" key on the wire even for an explicit false, filters = %v", envelope.Filters)
+	}
+	if string(accountEscalationRaw) != "false" {
+		t.Fatalf("accountEscalationActive = %s, want false", accountEscalationRaw)
+	}
+	if _, ok := envelope.Filters["isEscalated"]; ok {
+		t.Fatalf("expected no \"isEscalated\" key: accountEscalationActive must not be conflated with the case-level escalation filter")
 	}
 }
 

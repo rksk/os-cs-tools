@@ -441,6 +441,13 @@ type snCaseFilters struct {
 	// IsEscalated: a *bool (not bool) so that an explicit false is still sent on
 	// the wire -- omitempty on a pointer only drops a nil, not a false value.
 	IsEscalated *bool `json:"isEscalated,omitempty"`
+	// SlaBreached: see domain.ParsedCaseFilters.HasBreachedSLA doc comment. A
+	// *bool for the same reason as IsEscalated above -- an explicit false must
+	// still reach ServiceNow, not be silently dropped.
+	SlaBreached *bool `json:"slaBreached,omitempty"`
+	// AccountEscalationActive: see domain.ParsedCaseFilters.HasActiveAccountEscalation
+	// doc comment. A *bool for the same reason as IsEscalated above.
+	AccountEscalationActive *bool `json:"accountEscalationActive,omitempty"`
 	// OrGroups is the ServiceNow wire field name, deliberately unchanged:
 	// ServiceNow's CaseUtils Script Include reads "orGroups" and silently
 	// ignores JSON keys it does not recognise (returning an unfiltered count
@@ -2409,6 +2416,8 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		TaskSLAFilter:                    buildSNTaskSLAFilter(parsed.TaskSLAFilter),
 		EscalationLevels:                 parsed.EscalationLevels,
 		IsEscalated:                      parsed.HasActiveEscalation,
+		SlaBreached:                      parsed.HasBreachedSLA,
+		AccountEscalationActive:          parsed.HasActiveAccountEscalation,
 		OrGroups:                         buildSNCaseFilterGroups(parsed.OrGroups),
 	}
 }

@@ -1448,6 +1448,22 @@ type ParsedCaseFilters struct {
 	// escalation, from the "escalation" filter field's isEmpty/isNotEmpty op
 	// (optional; nil means no filter on this field).
 	HasActiveEscalation *bool
+	// HasBreachedSLA filters cases to those with a currently-breached SLA
+	// against the 10 named SLA definitions, from the "slaBreached" filter
+	// field's eq value (optional; nil means no filter on this field). Wire
+	// field on the SN payload: "slaBreached". Requires ServiceNow data source.
+	HasBreachedSLA *bool
+	// HasActiveAccountEscalation filters cases to those whose parent ACCOUNT
+	// has an active escalation (active_account_escalation.state IN 100,101),
+	// from the "accountEscalationActive" filter field's eq value (optional;
+	// nil means no filter on this field). Wire field on the SN payload:
+	// "accountEscalationActive". Requires ServiceNow data source.
+	//
+	// Distinct from HasActiveEscalation above: HasActiveEscalation filters by
+	// whether the CASE ITSELF carries an active escalation; this field
+	// filters by whether the case's parent ACCOUNT has one, regardless of
+	// whether this specific case is escalated.
+	HasActiveAccountEscalation *bool
 	// OrGroups: see SearchCasesFilters.AnyOf doc comment. Each entry is one
 	// parsed, ANDed branch; branches are OR'd together by the SN adapter.
 	OrGroups []CaseFilterGroup

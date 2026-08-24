@@ -238,6 +238,48 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "slaBreached eq true maps to HasBreachedSLA",
+			in:   []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasBreachedSLA == nil || !*p.HasBreachedSLA {
+					t.Fatalf("HasBreachedSLA = %v, want pointer to true", p.HasBreachedSLA)
+				}
+			},
+		},
+		{
+			name: "slaBreached eq false maps to HasBreachedSLA",
+			in:   []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"false"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasBreachedSLA == nil || *p.HasBreachedSLA {
+					t.Fatalf("HasBreachedSLA = %v, want pointer to false", p.HasBreachedSLA)
+				}
+			},
+		},
+		{
+			name: "accountEscalationActive eq true maps to HasActiveAccountEscalation",
+			in:   []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasActiveAccountEscalation == nil || !*p.HasActiveAccountEscalation {
+					t.Fatalf("HasActiveAccountEscalation = %v, want pointer to true", p.HasActiveAccountEscalation)
+				}
+				// Distinct from the case-level escalation filter: setting
+				// accountEscalationActive must not also populate
+				// HasActiveEscalation.
+				if p.HasActiveEscalation != nil {
+					t.Fatalf("HasActiveEscalation = %v, want nil (accountEscalationActive is a distinct field)", p.HasActiveEscalation)
+				}
+			},
+		},
+		{
+			name: "accountEscalationActive eq false maps to HasActiveAccountEscalation",
+			in:   []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"false"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasActiveAccountEscalation == nil || *p.HasActiveAccountEscalation {
+					t.Fatalf("HasActiveAccountEscalation = %v, want pointer to false", p.HasActiveAccountEscalation)
+				}
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -268,6 +310,12 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
 		{name: "projectOnboardingStatus eq unsupported", in: []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "eq", Values: []string{"Completed"}}}},
 		{name: "accountId malformed UUID", in: []domain.CaseFieldFilter{{Field: "accountId", Op: "in", Values: []string{"not-a-uuid"}}}},
+		{name: "slaBreached with unsupported op", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "in", Values: []string{"true"}}}},
+		{name: "slaBreached with non-boolean value", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"yes"}}}},
+		{name: "slaBreached with more than one value", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true", "false"}}}},
+		{name: "accountEscalationActive with unsupported op", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "isNotEmpty"}}},
+		{name: "accountEscalationActive with non-boolean value", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"yes"}}}},
+		{name: "accountEscalationActive with more than one value", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true", "false"}}}},
 	}
 
 	for _, tc := range cases {
@@ -501,6 +549,43 @@ func TestParseCaseFieldFilterGroups_RejectsStateNotIn(t *testing.T) {
 	const want = `anyOf: field "state" (notIn) is not supported inside an OR group`
 	if ve.Msg != want {
 		t.Errorf("Msg = %q, want %q", ve.Msg, want)
+	}
+}
+
+// TestParseCaseFieldFilterGroups_RejectsSLAAndAccountEscalationFilters proves
+// slaBreached and accountEscalationActive -- like the pre-existing escalation
+// filter -- are rejected inside an OR-group branch: CaseFilterGroup does not
+// model either field, so silently accepting them inside a branch would drop
+// the predicate rather than apply it.
+func TestParseCaseFieldFilterGroups_RejectsSLAAndAccountEscalationFilters(t *testing.T) {
+	cases := []struct {
+		name   string
+		branch domain.CaseFilterBranch
+		want   string
+	}{
+		{
+			name:   "slaBreached",
+			branch: domain.CaseFilterBranch{Filters: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}}},
+			want:   `anyOf: field "slaBreached" is not supported inside an OR group`,
+		},
+		{
+			name:   "accountEscalationActive",
+			branch: domain.CaseFilterBranch{Filters: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}}},
+			want:   `anyOf: field "accountEscalationActive" is not supported inside an OR group`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{tc.branch})
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
+			}
+			if ve.Msg != tc.want {
+				t.Errorf("Msg = %q, want %q", ve.Msg, tc.want)
+			}
+		})
 	}
 }
 

@@ -509,6 +509,12 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if parsed.HasActiveEscalation != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalation" is not supported by this data source`}
 	}
+	if parsed.HasBreachedSLA != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "slaBreached" is not supported by this data source`}
+	}
+	if parsed.HasActiveAccountEscalation != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "accountEscalationActive" is not supported by this data source`}
+	}
 	if len(req.Filters.AnyOf) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "anyOf is not supported by this data source"}
 	}
