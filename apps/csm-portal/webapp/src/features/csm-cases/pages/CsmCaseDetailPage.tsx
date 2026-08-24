@@ -2468,11 +2468,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
               onLinkIncident={() => setLinkIncidentOpen(true)}
               linkDisabled={isClosed}
             />
-            {/* Content-relevance, not a data-source gate: shown whenever this is
-                a service request (the only case type that carries the link) or
-                the list already has entries — never checks the record's data
-                source. */}
-            {(isServiceRequest || (c.linkedChangeRequests?.length ?? 0) > 0) && (
+            {/* Change requests are only ever raised from a service request,
+                never directly from a plain case — gate solely on
+                `isServiceRequest` rather than falling back to
+                `linkedChangeRequests` having entries, which a plain case
+                should never carry anyway (see `linkedChangeRequests` doc
+                comment on the case-detail type). Not a data-source gate. */}
+            {isServiceRequest && (
               <LinkedChangeRequestsWidget changeRequests={c.linkedChangeRequests} />
             )}
             <LinkedServiceRequestsWidget

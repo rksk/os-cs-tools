@@ -398,7 +398,9 @@ vi.mock("@features/csm-cases/components/LinkedServiceRequestsWidget", () => ({
   LinkedServiceRequestsWidget: () => null,
 }));
 vi.mock("@features/csm-cases/components/LinkedChangeRequestsWidget", () => ({
-  LinkedChangeRequestsWidget: () => null,
+  LinkedChangeRequestsWidget: () => (
+    <div data-testid="linked-change-requests-widget-probe" />
+  ),
 }));
 vi.mock("@features/csm-cases/components/CreateGithubIssueDialog", () => ({
   CreateGithubIssueDialog: () => null,
@@ -1339,5 +1341,62 @@ describe("CsmCaseDetailPage — change case type", () => {
       { severity: "high" },
       expect.anything(),
     );
+  });
+});
+
+describe("CsmCaseDetailPage — Linked change requests widget only shows on service requests", () => {
+  it("does not render LinkedChangeRequestsWidget for a plain case, even one carrying stale linkedChangeRequests data", () => {
+    // A plain case should never carry `linkedChangeRequests` per the field's
+    // own doc comment (SR-only), but the guard must not rely on that alone —
+    // this proves the render gate itself, not just the data shape, keeps the
+    // widget off a plain case.
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id
+        ? {
+            ...buildCase(id),
+            caseType: "incident",
+            linkedChangeRequests: [{ id: "cr-1", number: "CR-1", name: "Stale link" }],
+          }
+        : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /linked items/i }));
+
+    expect(
+      screen.queryByTestId("linked-change-requests-widget-probe"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders LinkedChangeRequestsWidget for a service request", () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? { ...buildCase(id), caseType: "service_request" } : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+
+    // A service request's canonical route is /operations/service-requests/:id
+    // (see CASE_ROUTE_MOUNTS above) — mounting it on the plain /cases/:id
+    // route instead would trip the canonical-redirect skeleton rather than
+    // rendering the tabs.
+    renderPageAt(
+      "/operations/service-requests/case-1",
+      "/operations/service-requests/:caseId",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /linked items/i }));
+
+    expect(
+      screen.getByTestId("linked-change-requests-widget-probe"),
+    ).toBeInTheDocument();
   });
 });
