@@ -105,6 +105,12 @@ type snIncidentFilters struct {
 	// SlaViolated: see domain.SearchIncidentsFilters Filters "slaViolated" doc
 	// comment. nil (omitted) means the filter was not supplied.
 	SlaViolated *bool `json:"slaViolated,omitempty"`
+	// MadeSla: see domain.SearchIncidentsFilters Filters "madeSla" doc
+	// comment. nil (omitted) means the filter was not supplied. Deliberately
+	// kept separate from SlaViolated above -- this is ServiceNow's own raw,
+	// less-reliable `made_sla` field, carried through only for exact parity
+	// with SN's native incident dashboards; prefer SlaViolated otherwise.
+	MadeSla *bool `json:"madeSla,omitempty"`
 	// ProductNames: see domain.SearchIncidentsFilters Filters "productName"
 	// doc comment. Matched as a union against the incident's backing
 	// business_service name.
@@ -252,6 +258,7 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
 			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 			SlaViolated:        parsedFilters.SlaViolated,
+			MadeSla:            parsedFilters.MadeSla,
 			ProductNames:       parsedFilters.ProductNames,
 		},
 		SortBy:     snSortBy,
@@ -396,6 +403,7 @@ func (s *snIncidentService) AggregateIncidents(ctx context.Context, req domain.A
 			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
 			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 			SlaViolated:        parsedFilters.SlaViolated,
+			MadeSla:            parsedFilters.MadeSla,
 			ProductNames:       parsedFilters.ProductNames,
 		},
 		GroupBy:   req.GroupBy,

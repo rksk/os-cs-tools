@@ -3549,6 +3549,13 @@ type SearchIncidentsFilters struct {
 	//     case search's own "createdOn" filter.
 	//   - "slaViolated" (op eq): a single boolean value; restricts to
 	//     incidents with (or without) at least one breached SLA record.
+	//   - "madeSla" (op eq): a single boolean value; restricts to incidents
+	//     matching ServiceNow's raw `made_sla` field. Deliberately kept
+	//     separate from "slaViolated" above: "slaViolated" is derived from
+	//     task_sla.has_breached and is the reliable signal; "madeSla" is
+	//     ServiceNow's own less-reliable raw field, kept only for exact
+	//     parity with SN's native incident dashboards. Prefer "slaViolated"
+	//     unless dashboard parity is the explicit goal.
 	//   - "productName" (op in): one or more product names, matched as a
 	//     union against the incident's backing business_service name.
 	// See service.ParseIncidentFieldFilters.

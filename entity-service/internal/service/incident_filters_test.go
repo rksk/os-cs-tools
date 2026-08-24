@@ -86,6 +86,28 @@ func TestParseIncidentFieldFilters_SlaViolated(t *testing.T) {
 	}
 }
 
+func TestParseIncidentFieldFilters_MadeSla(t *testing.T) {
+	parsed, err := ParseIncidentFieldFilters([]domain.IncidentFieldFilter{
+		{Field: "madeSla", Op: "eq", Values: []string{"true"}},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.MadeSla == nil || !*parsed.MadeSla {
+		t.Fatalf("MadeSla = %v, want pointer to true", parsed.MadeSla)
+	}
+
+	parsed, err = ParseIncidentFieldFilters([]domain.IncidentFieldFilter{
+		{Field: "madeSla", Op: "eq", Values: []string{"false"}},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.MadeSla == nil || *parsed.MadeSla {
+		t.Fatalf("MadeSla = %v, want pointer to false", parsed.MadeSla)
+	}
+}
+
 func TestParseIncidentFieldFilters_ProductName(t *testing.T) {
 	parsed, err := ParseIncidentFieldFilters([]domain.IncidentFieldFilter{
 		{Field: "productName", Op: "in", Values: []string{"API Manager", "Choreo"}},
@@ -149,6 +171,18 @@ func TestParseIncidentFieldFilters_Rejections(t *testing.T) {
 		{
 			name:    "slaViolated with more than one value",
 			filters: []domain.IncidentFieldFilter{{Field: "slaViolated", Op: "eq", Values: []string{"true", "false"}}},
+		},
+		{
+			name:    "madeSla with unsupported op",
+			filters: []domain.IncidentFieldFilter{{Field: "madeSla", Op: "in", Values: []string{"true"}}},
+		},
+		{
+			name:    "madeSla with non-boolean value",
+			filters: []domain.IncidentFieldFilter{{Field: "madeSla", Op: "eq", Values: []string{"yes"}}},
+		},
+		{
+			name:    "madeSla with more than one value",
+			filters: []domain.IncidentFieldFilter{{Field: "madeSla", Op: "eq", Values: []string{"true", "false"}}},
 		},
 		{
 			name:    "productName with unsupported op",

@@ -337,6 +337,72 @@ func TestSNIncidentService_SearchIncidents_SlaViolatedInvalidValue(t *testing.T)
 	}
 }
 
+// TestSNIncidentService_SearchIncidents_MadeSlaPassedThrough verifies the
+// generic filters array's madeSla predicate reaches the outgoing payload
+// under the exact wire name Ballerina accepts, as a sibling to (and
+// independent of) slaViolated -- see domain.SearchIncidentsFilters Filters
+// "madeSla" doc comment for why the two are kept distinct.
+func TestSNIncidentService_SearchIncidents_MadeSlaPassedThrough(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"incidents": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowIncidentService(client)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "madeSla", Op: "eq", Values: []string{"false"}},
+			},
+		},
+	}
+	if _, err := svc.SearchIncidents(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+
+	if gotFilters["madeSla"] != false {
+		t.Fatalf("filters.madeSla: got %v, want false", gotFilters["madeSla"])
+	}
+	if _, present := gotFilters["slaViolated"]; present {
+		t.Fatalf("filters.slaViolated: got present with value %v, want omitted since it was not requested", gotFilters["slaViolated"])
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_MadeSlaInvalidValue verifies a
+// non-boolean madeSla filter value is rejected with a clean validation error
+// before any SN call.
+func TestSNIncidentService_SearchIncidents_MadeSlaInvalidValue(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "madeSla", Op: "eq", Values: []string{"not-a-bool"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // TestSNIncidentService_SearchIncidents_InvalidStateValue verifies an
 // unrecognized state filter value is rejected with a clean validation error
 // before any SN call.
