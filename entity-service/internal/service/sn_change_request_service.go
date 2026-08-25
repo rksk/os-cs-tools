@@ -98,6 +98,10 @@ type snChangeRequestFilters struct {
 	CreatedEndDate   string `json:"createdEndDate,omitempty"`
 	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
 	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// Approval: see domain.SearchChangeRequestsFilters.Filters doc comment
+	// ("approval" field). ServiceNow's raw task.approval value, passed
+	// through as-is -- not a key/enum mapping.
+	Approval string `json:"approval,omitempty"`
 }
 
 // snCRTypeIDMap maps domain ChangeRequestType enums to SN numeric type IDs.
@@ -322,6 +326,7 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
 			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
 			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			Approval:           stringPtrValue(parsedFilters.Approval),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -466,6 +471,7 @@ func (s *snChangeRequestService) AggregateChangeRequests(ctx context.Context, re
 			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
 			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
 			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			Approval:           stringPtrValue(parsedFilters.Approval),
 		},
 		GroupBy:   req.GroupBy,
 		MaxGroups: req.MaxGroups,

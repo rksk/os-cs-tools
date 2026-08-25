@@ -6549,9 +6549,10 @@ components:
           enum:
             - createdOn
             - assignmentGroupId
+            - approval
         op:
           type: string
-          enum: [gte, lte, in]
+          enum: [gte, lte, in, eq]
         values:
           type: array
           items:
@@ -6570,6 +6571,12 @@ components:
           its own gte bound is rejected with a validation error.
         - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
           assignment group by.
+        - **approval** (eq): ServiceNow's raw `task.approval` rollup on the
+          change request. Exactly one value, one of `"not requested"`,
+          `"requested"`, `"approved"`, `"rejected"`. Distinct from
+          `approvedBy`/`approvedOn` on ChangeRequestDetail, which are derived
+          from a narrower Customer-Approval-stage record, not this CR-wide
+          field.
 
     SearchChangeRequestsRequest:
       type: object
