@@ -42,9 +42,7 @@ func validAlertJSON() []byte {
 }
 
 func TestCreateAlert_Success(t *testing.T) {
-	store := &mockStore{enqueueFn: func(ctx context.Context, payload []byte) (string, error) {
-		return "buffered-id-1", nil
-	}}
+	store := &mockStore{}
 	h := NewAlertHandler(store, "caller-1")
 
 	r := httptest.NewRequest(http.MethodPost, "/alerts", bytes.NewReader(validAlertJSON()))
@@ -58,12 +56,19 @@ func TestCreateAlert_Success(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.ID != "buffered-id-1" {
-		t.Errorf("id = %q, want %q", body.ID, "buffered-id-1")
+	if body.ID == "" {
+		t.Fatal("response id is empty, want a generated id")
 	}
 
 	if len(store.enqueuedPayloads) != 1 {
 		t.Fatalf("Enqueue called %d times, want 1", len(store.enqueuedPayloads))
+	}
+	// The id returned to the caller must be the exact same id the row was
+	// persisted under — this is what lets internal/worker's later
+	// SearchIncidentByTag(csmclient.DedupTag(row.ID)) find the incident this
+	// same alert's Subject was tagged with below.
+	if store.enqueuedIDs[0] != body.ID {
+		t.Errorf("enqueued id = %q, want it to match the response id %q", store.enqueuedIDs[0], body.ID)
 	}
 	var incidentReq csmclient.CreateIncidentRequest
 	if err := json.Unmarshal(store.enqueuedPayloads[0], &incidentReq); err != nil {
@@ -89,6 +94,10 @@ func TestCreateAlert_Success(t *testing.T) {
 	}
 	if incidentReq.WorkNotes == nil || !strings.Contains(*incidentReq.WorkNotes, "alert-abc-123") {
 		t.Errorf("WorkNotes = %v, want it to contain the unique identifier", incidentReq.WorkNotes)
+	}
+	wantTag := csmclient.DedupTag(body.ID)
+	if !strings.HasPrefix(incidentReq.Subject, wantTag) {
+		t.Errorf("Subject = %q, want it to start with the dedup tag %q", incidentReq.Subject, wantTag)
 	}
 }
 
@@ -165,8 +174,8 @@ func TestCreateAlert_RejectsOversizedBody(t *testing.T) {
 }
 
 func TestCreateAlert_StoreFailureReturns500(t *testing.T) {
-	store := &mockStore{enqueueFn: func(ctx context.Context, payload []byte) (string, error) {
-		return "", errors.New("connection refused")
+	store := &mockStore{enqueueFn: func(ctx context.Context, id string, payload []byte) error {
+		return errors.New("connection refused")
 	}}
 	h := NewAlertHandler(store, "caller-1")
 
@@ -180,7 +189,7 @@ func TestCreateAlert_StoreFailureReturns500(t *testing.T) {
 
 func TestMapToIncident_UnmappedSourceOmitsContactType(t *testing.T) {
 	req := AlertRequest{Source: "datadog", Severity: "minor", Service: "svc", MetricName: "m", Description: "d"}
-	out := MapToIncident(req, "caller-1")
+	out := MapToIncident(req, "alert-id-1", "caller-1")
 	if out.ContactType != nil {
 		t.Errorf("ContactType = %v, want nil for an unmapped source", out.ContactType)
 	}
@@ -188,8 +197,24 @@ func TestMapToIncident_UnmappedSourceOmitsContactType(t *testing.T) {
 
 func TestMapToIncident_CategoryPassthroughWhenValid(t *testing.T) {
 	req := AlertRequest{Source: "azure", Severity: "minor", Service: "svc", MetricName: "m", Description: "d", Category: "security"}
-	out := MapToIncident(req, "caller-1")
+	out := MapToIncident(req, "alert-id-1", "caller-1")
 	if out.Category != "SECURITY" {
 		t.Errorf("Category = %q, want SECURITY", out.Category)
+	}
+}
+
+// The dedup tag is the load-bearing contract internal/worker's
+// SearchIncidentByTag pre-retry check depends on (see
+// internal/csmclient.DedupTag's doc comment) — this pins the exact format
+// so a future Subject-formatting tweak can't silently break it.
+func TestMapToIncident_SubjectStartsWithDedupTag(t *testing.T) {
+	req := AlertRequest{Source: "azure", Severity: "critical", Service: "svc-checkout", MetricName: "error_rate", Description: "d"}
+	out := MapToIncident(req, "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed", "caller-1")
+	want := "[alert:1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed]"
+	if !strings.HasPrefix(out.Subject, want) {
+		t.Errorf("Subject = %q, want it to start with %q", out.Subject, want)
+	}
+	if out.Subject != csmclient.DedupTag("1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed")+" [azure] error_rate alert: svc-checkout" {
+		t.Errorf("Subject = %q, unexpected full format", out.Subject)
 	}
 }

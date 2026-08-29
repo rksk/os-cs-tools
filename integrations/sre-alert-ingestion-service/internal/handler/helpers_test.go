@@ -48,18 +48,20 @@ func assertErrorMessage(t *testing.T, w *httptest.ResponseRecorder, want string)
 // mockStore is a hand-rolled double for alertStore + healthPinger, matching
 // this repo's no-mocking-library convention.
 type mockStore struct {
-	enqueueFn func(ctx context.Context, payload []byte) (string, error)
+	enqueueFn func(ctx context.Context, id string, payload []byte) error
 	pingFn    func(ctx context.Context) error
 
+	enqueuedIDs      []string
 	enqueuedPayloads [][]byte
 }
 
-func (m *mockStore) Enqueue(ctx context.Context, payload []byte) (string, error) {
+func (m *mockStore) Enqueue(ctx context.Context, id string, payload []byte) error {
+	m.enqueuedIDs = append(m.enqueuedIDs, id)
 	m.enqueuedPayloads = append(m.enqueuedPayloads, payload)
 	if m.enqueueFn != nil {
-		return m.enqueueFn(ctx, payload)
+		return m.enqueueFn(ctx, id, payload)
 	}
-	return "generated-id", nil
+	return nil
 }
 
 func (m *mockStore) Ping(ctx context.Context) error {

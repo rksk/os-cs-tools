@@ -48,9 +48,17 @@ type Store interface {
 }
 
 // IncidentCreator is the subset of internal/csmclient.Client the worker
-// depends on.
+// depends on to create an incident from a buffered alert, and to run the
+// pre-retry dedup check before doing so again for a row that already failed
+// once. Both live on the same interface (rather than a second constructor
+// parameter) because internal/csmclient.Client always implements both, and
+// there is no scenario in which the worker has one without the other.
 type IncidentCreator interface {
 	CreateIncident(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error)
+	// SearchIncidentByTag looks up whether an incident tagged with tag
+	// (csmclient.DedupTag) already exists. See attempt's doc comment for
+	// when and why this is called, and the fail-open behavior on error.
+	SearchIncidentByTag(ctx context.Context, tag string) (*csmclient.CreateIncidentResult, bool, error)
 }
 
 // Escalator is the subset of internal/notifications.TwilioClient the worker
@@ -63,7 +71,7 @@ type Escalator interface {
 type Config struct {
 	// MaxRetries is the number of failed, retryable attempts a buffered
 	// alert gets before the Twilio escalation call fires and the row is
-	// marked escalated. Defaults to 5 if <= 0.
+	// marked escalated. Defaults to 3 if <= 0.
 	MaxRetries int
 	// BatchSize caps how many pending rows a single scan loads from the
 	// store. Defaults to 50 if <= 0.
@@ -77,7 +85,7 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.MaxRetries <= 0 {
-		c.MaxRetries = 5
+		c.MaxRetries = 3
 	}
 	if c.BatchSize <= 0 {
 		c.BatchSize = 50
@@ -167,6 +175,40 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 			slog.ErrorContext(attemptCtx, "worker: MarkFailed failed", "id", row.ID, "err", merr)
 		}
 		return
+	}
+
+	// Pre-retry dedup check: only on a retry (row.RetryCount > 0), never on
+	// the first attempt — on attempt 1 nothing could possibly exist yet for
+	// this row, so searching first would just be a wasted call. From the
+	// second attempt onward, a previous CreateIncident call may have
+	// actually succeeded upstream even though *this* service recorded it as
+	// a failure: the request can complete on the far side while the
+	// response is lost to a timeout or connection reset. Blindly retrying
+	// in that case risks creating a second, duplicate incident for the same
+	// alert. tag is the same csmclient.DedupTag(row.ID) value
+	// internal/handler.buildSubject already stamped into this row's own
+	// CreateIncidentRequest.Subject when it was first buffered — row.ID is
+	// stable for the row's lifetime, so it's always the right tag to search
+	// for here, without needing to re-parse it out of req.Subject.
+	//
+	// Fail-open, deliberately: if the search call itself errors (including
+	// the 401 this endpoint also currently always returns — see this
+	// package's CLAUDE.md and internal/csmclient/search.go's doc comment),
+	// that is "we couldn't confirm either way," not "assume a duplicate
+	// exists." The safe default here is to proceed to attempt delivery, the
+	// same as if this check didn't exist at all — never silently give up on
+	// a buffered alert just because the confirmation step itself failed.
+	if row.RetryCount > 0 {
+		tag := csmclient.DedupTag(row.ID)
+		if existing, found, serr := w.csm.SearchIncidentByTag(attemptCtx, tag); serr != nil {
+			slog.WarnContext(attemptCtx, "worker: pre-retry dedup search failed, proceeding to attempt delivery (fail-open)", "id", row.ID, "err", serr)
+		} else if found {
+			slog.InfoContext(attemptCtx, "worker: found an existing incident for this alert from an earlier attempt, skipping duplicate create", "id", row.ID, "incidentID", existing.IncidentID, "incidentNumber", existing.IncidentNumber)
+			if merr := w.store.MarkDelivered(ctx, row.ID, existing.IncidentID); merr != nil {
+				slog.ErrorContext(attemptCtx, "worker: MarkDelivered (post-dedup) failed", "id", row.ID, "err", merr)
+			}
+			return
+		}
 	}
 
 	result, err := w.csm.CreateIncident(attemptCtx, req)

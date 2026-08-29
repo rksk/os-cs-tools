@@ -73,16 +73,15 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-func (s *PostgresStore) Enqueue(ctx context.Context, payload []byte) (string, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO alert_buffer (payload) VALUES ($1) RETURNING id`,
-		payload,
-	).Scan(&id)
+func (s *PostgresStore) Enqueue(ctx context.Context, id string, payload []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO alert_buffer (id, payload) VALUES ($1, $2)`,
+		id, payload,
+	)
 	if err != nil {
-		return "", fmt.Errorf("store: enqueue: %w", err)
+		return fmt.Errorf("store: enqueue: %w", err)
 	}
-	return id, nil
+	return nil
 }
 
 func (s *PostgresStore) PendingBatch(ctx context.Context, limit int) ([]AlertRecord, error) {

@@ -72,7 +72,7 @@ func main() {
 	})
 
 	w := worker.New(dbStore, csmClient, twilioClient, worker.Config{
-		MaxRetries:   envInt("SRE_ALERT_MAX_RETRIES", 5),
+		MaxRetries:   envInt("SRE_ALERT_MAX_RETRIES", 3),
 		PollInterval: time.Duration(envInt("SRE_ALERT_POLL_INTERVAL_SECONDS", 15)) * time.Second,
 	})
 

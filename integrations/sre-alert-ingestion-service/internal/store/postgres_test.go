@@ -94,12 +94,9 @@ func TestPostgresStore_EnqueueAndLifecycle(t *testing.T) {
 		t.Fatalf("Ping() error = %v", err)
 	}
 
-	id, err := s.Enqueue(ctx, []byte(`{"source":"test"}`))
-	if err != nil {
+	id := "11111111-1111-4111-8111-111111111111"
+	if err := s.Enqueue(ctx, id, []byte(`{"source":"test"}`)); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
-	}
-	if id == "" {
-		t.Fatal("Enqueue() returned empty id")
 	}
 
 	batch, err := s.PendingBatch(ctx, 10)
@@ -178,16 +175,16 @@ func TestPostgresStore_MarkEscalatedAndMarkFailedLeavePendingSet(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	escalatedID, err := s.Enqueue(ctx, []byte(`{}`))
-	if err != nil {
+	escalatedID := "22222222-2222-4222-8222-222222222222"
+	if err := s.Enqueue(ctx, escalatedID, []byte(`{}`)); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if err := s.MarkEscalated(ctx, escalatedID, "retry budget exhausted"); err != nil {
 		t.Fatalf("MarkEscalated() error = %v", err)
 	}
 
-	failedID, err := s.Enqueue(ctx, []byte(`{}`))
-	if err != nil {
+	failedID := "33333333-3333-4333-8333-333333333333"
+	if err := s.Enqueue(ctx, failedID, []byte(`{}`)); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if err := s.MarkFailed(ctx, failedID, "upstream returned 400: invalid payload"); err != nil {

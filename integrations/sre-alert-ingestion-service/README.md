@@ -84,7 +84,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `CSM_INTEGRATION_CLIENT_SECRET` | OAuth2 client secret |
 | `CSM_INTEGRATION_SCOPES` | Comma-separated OAuth2 scopes |
 | `SRE_ALERT_CALLER_ID` | A real, provisioned platform user id — see "Known limitations" |
-| `SRE_ALERT_MAX_RETRIES` | Retryable-failure count before escalation (default `5`) |
+| `SRE_ALERT_MAX_RETRIES` | Retryable-failure count before escalation (default `3`) |
 | `SRE_ALERT_POLL_INTERVAL_SECONDS` | How often the worker scans the buffer (default `15`) |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token |
@@ -120,9 +120,9 @@ for consistency rather than re-evaluated independently.
 
 | Column | Purpose |
 |---|---|
-| `id` | Generated UUID primary key — returned to the caller as the buffered alert's id |
+| `id` | UUID primary key, generated **client-side** by `internal/idgen` before the row is persisted (not by the column's `gen_random_uuid()` default — see "Duplicate-incident dedup" below for why) — returned to the caller as the buffered alert's id |
 | `received_at` | When the alert was accepted |
-| `payload` | The already-mapped `CreateIncidentRequest` JSON (not the raw inbound alert) — see `internal/handler.MapToIncident` |
+| `payload` | The already-mapped `CreateIncidentRequest` JSON (not the raw inbound alert) — see `internal/handler.MapToIncident`. Its `Subject` is tagged with this row's own `id` (`internal/csmclient.DedupTag`) |
 | `status` | `pending` \| `delivered` \| `escalated` \| `failed` |
 | `retry_count` | Number of failed, retryable delivery attempts so far |
 | `last_attempt_at` | Timestamp of the most recent delivery attempt |
@@ -185,6 +185,43 @@ Once a row accumulates `SRE_ALERT_MAX_RETRIES` retryable failures, the
 worker places a Twilio voice call (`internal/notifications.TwilioClient.Escalate`)
 and marks the row `escalated` — terminal; this service does not resume
 retrying an escalated row automatically.
+
+## Duplicate-incident dedup
+
+A failed `POST /incidents` call does not prove the incident wasn't actually
+created — the request can succeed on the far side while the response is
+lost (timeout, connection reset, etc.). Retrying blindly in that situation
+risks creating a second, duplicate incident for the same alert. This
+service guards against that in two parts:
+
+1. **Every incident's `Subject` is tagged with its buffer row's own id.**
+   `internal/idgen` generates `alert_buffer.id` client-side, *before* the
+   row is persisted (not via the column's `gen_random_uuid()` default), so
+   `internal/handler.MapToIncident` can embed it as a dedup tag —
+   `internal/csmclient.DedupTag(id)`, format `"[alert:<row-id>]"` — as the
+   leading text of `CreateIncidentRequest.Subject`. This is fully within
+   this service's own control, unlike `AlertRequest.UniqueIdentifier`
+   (vendor-supplied and optional), and guaranteed unique per buffered
+   alert.
+2. **Before any *retry* (never the first attempt — nothing could exist yet
+   on attempt 1), the worker searches for that tag first.**
+   `internal/worker.attempt` calls
+   `csmclient.Client.SearchIncidentByTag` (`POST /incidents/search` on
+   `csm-integration-service`, `searchQuery` = the row's dedup tag) whenever
+   `row.RetryCount > 0`. A match means an earlier attempt's incident
+   already exists: the row is marked `delivered` against that incident's
+   id/number and `POST /incidents` is **not** called again. No match, or
+   the search call itself failing, both **fail open toward attempting
+   delivery** — the search existing at all must never become a new way to
+   silently drop a buffered alert.
+
+**Known limitation:** `POST /incidents/search`, like `POST /incidents`
+itself, is ServiceNow-backed and currently also always 401s for the same
+missing-end-user-identity reason (see "Known limitations" below). Until
+that infrastructure gap is closed, every retry today hits "search 401'd,
+proceeding to create anyway" — the dedup check is **structurally correct
+and ready to work**, but **not yet actually effective in production**. It
+does not itself resolve the identity gap.
 
 ## Known limitations
 

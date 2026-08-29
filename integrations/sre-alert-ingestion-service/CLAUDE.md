@@ -57,6 +57,41 @@ before escalating should now just succeed sooner. If you find yourself
 wanting to change `isRetryable` once that infrastructure exists, that's a
 sign the classification was already correct and nothing needs to move.
 
+## Dedup: a failed create does not mean nothing was created
+
+A failed `POST /incidents` proves nothing about whether the incident exists
+upstream — the request can succeed on the far side while the response is
+lost to a timeout or connection reset. `internal/worker.attempt` therefore
+never blindly retries: for any row with `RetryCount > 0` (never the first
+attempt — nothing could exist yet on attempt 1) it first calls
+`csmclient.Client.SearchIncidentByTag` looking for
+`csmclient.DedupTag(row.ID)` (`"[alert:<row-id>]"`), which
+`internal/handler.buildSubject` already stamped as the leading text of this
+row's own `CreateIncidentRequest.Subject` back when the row was first
+buffered — `row.ID` is stable for the row's lifetime, so it's always the
+right tag to search for, no re-parsing needed. A match short-circuits
+straight to `MarkDelivered` against the found incident; `POST /incidents`
+is not called again.
+
+The id itself is generated client-side by `internal/idgen`, in
+`internal/handler.CreateAlert`, *before* `store.Enqueue` — not left to
+`alert_buffer.id`'s `gen_random_uuid()` column default — because the tag has
+to already be inside the JSON payload being persisted, not bolted on after
+the fact. Don't move id generation back into the store: that reintroduces
+the exact chicken-and-egg problem this was built to avoid.
+
+The search call fails open: no match, or the search call itself erroring
+(including the 401 it also currently always gets, for the identical
+missing-end-user-identity reason as `CreateIncident` — see the section
+above), both fall through to attempting `POST /incidents` as normal. Do not
+change this to fail closed ("couldn't confirm, so don't retry") — that
+would turn an availability safeguard into a new way to silently drop a
+buffered alert, which is the one thing this entire service exists to
+prevent. In today's state (search also 401s), this makes the dedup check
+**not yet actually effective in production** — every retry hits "search
+401'd, proceed to create anyway" — but it is structurally correct and
+requires zero changes once the identity gap closes.
+
 ## Persist-first is not an optimization
 
 `internal/handler.AlertHandler.CreateAlert` does the full alert→incident

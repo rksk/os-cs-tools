@@ -6,6 +6,13 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS alert_buffer (
+  -- The DEFAULT is a fallback only: internal/handler.CreateAlert now
+  -- generates this id client-side (internal/idgen) and always supplies it
+  -- explicitly on INSERT, because it must be embedded as the dedup tag in
+  -- the row's own CreateIncidentRequest.Subject before the row is
+  -- persisted (see internal/csmclient.DedupTag). Kept as a DEFAULT anyway
+  -- so the column still self-populates for any future caller that inserts
+  -- without supplying one.
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   payload         JSONB NOT NULL,
