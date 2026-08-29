@@ -156,16 +156,27 @@ direct entity-service client here without revisiting that decision.
 
 ## Twilio client: plain `net/http`, not the official SDK
 
-Matches the existing, working implementation at
-`integrations/csm-notification-service/internal/notifications/twilio.go`
-(`SendSMS`/`MakeCall`, Basic Auth, form-encoded POST, TwiML built via
-`encoding/xml` for safe escaping) — this service's `internal/notifications/twilio.go`
-is adapted from it, trimmed to `MakeCall`/`Escalate` only (no SMS need
-here). That existing implementation is itself plain `net/http`, not
-Twilio's official Go SDK — followed here for consistency with the
-established pattern, not re-evaluated independently. If a future change
-needs SMS or other Twilio resources beyond a voice call, `csm-notification-service`'s
-fuller implementation (`SendSMS` included) is the reference to extend from.
+This service's `internal/notifications/twilio.go` is a **self-contained copy**, not a shared
+package or a runtime dependency: no code in this service imports, calls, or is deployed
+alongside `csm-notification-service`, and this service's `go.mod` has no reference to it (see
+"Deployment isolation" below). The implementation style (`MakeCall`/`Escalate`, Basic Auth,
+form-encoded POST, TwiML built via `encoding/xml` for safe escaping, plain `net/http` instead
+of Twilio's official Go SDK) was originally written for
+`integrations/csm-notification-service/internal/notifications/twilio.go` and copied here,
+trimmed to `MakeCall`/`Escalate` only (no SMS need in this service) — credited for provenance,
+not wired as a dependency. Diverge from it freely if this service's needs change; there is no
+coupling to keep in sync.
+
+## Deployment isolation
+
+This service is deployed and scaled independently of every other CSM component, by design —
+its entire purpose is to keep working when the rest of the CSM platform doesn't. Its only
+runtime dependency on anything CSM-owned is an HTTP call to `csm-integration-service`'s
+`POST /incidents` / `POST /incidents/search` (see "Why `csm-integration-service`, not
+`entity-service`, directly" above). It does not import any other service's Go module, is not
+deployed alongside any other component, and its buffer database is its own dedicated Postgres
+instance, never shared with the CSM platform's database. Do not add an import of, or a
+deploy-time dependency on, any other `cs-tools` component without revisiting this decision.
 
 ## Postgres driver: `jackc/pgx/v5` via `database/sql`, matching repo convention
 
