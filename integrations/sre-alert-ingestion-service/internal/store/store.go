@@ -1,0 +1,95 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package store is this service's durable buffer: a dedicated Postgres
+// table (alert_buffer, see migrations/0001_create_alert_buffer.up.sql), not
+// shared with CSM's own database. This is the mechanism that lets this
+// service survive its own restarts and a regional failover without losing a
+// buffered alert — an in-process queue would not.
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// Alert buffer row statuses.
+const (
+	// StatusPending is the initial state, and the state a row returns to
+	// after a failed attempt that hasn't exhausted its retry budget.
+	StatusPending = "pending"
+	// StatusDelivered means CreateIncident succeeded; IncidentID is set.
+	StatusDelivered = "delivered"
+	// StatusEscalated means the retry budget was exhausted and the Twilio
+	// voice-call escalation was triggered. Terminal — this service does not
+	// resume retrying an escalated row automatically (see internal/worker).
+	StatusEscalated = "escalated"
+	// StatusFailed means a non-retryable error was returned (e.g. a 400: the
+	// buffered payload itself is invalid) — retrying the same payload could
+	// never succeed, so this is terminal without ever reaching Twilio
+	// escalation, which exists for CSM-*availability* problems, not bad
+	// input.
+	StatusFailed = "failed"
+)
+
+// AlertRecord is one row of the alert_buffer table.
+type AlertRecord struct {
+	ID            string
+	ReceivedAt    time.Time
+	Payload       []byte
+	Status        string
+	RetryCount    int
+	LastAttemptAt *time.Time
+	LastError     string
+	IncidentID    string
+	EscalatedAt   *time.Time
+}
+
+// Store is the durable buffer's full interface. internal/worker and
+// internal/handler each depend on their own minimal local subset of this
+// (following this repo's convention of small point-of-use interfaces), not
+// this type directly — Store exists as the single place the full contract
+// and its Postgres implementation (see postgres.go) are defined together.
+type Store interface {
+	// Enqueue persists a new buffered alert (status=pending) and returns its
+	// generated id. Called synchronously from the POST /alerts handler,
+	// before it responds — see the handler's doc comment for why
+	// persist-first is a correctness requirement, not just a nicety.
+	Enqueue(ctx context.Context, payload []byte) (id string, err error)
+	// PendingBatch returns up to limit rows currently in StatusPending,
+	// oldest received_at first. It does not filter by backoff due-ness —
+	// that decision is made in Go by internal/backoff against each row's
+	// RetryCount/LastAttemptAt, keeping the due-or-not logic pure and
+	// testable without a database.
+	PendingBatch(ctx context.Context, limit int) ([]AlertRecord, error)
+	// MarkDelivered transitions a row to StatusDelivered and records the
+	// CSM incident it produced.
+	MarkDelivered(ctx context.Context, id, incidentID string) error
+	// MarkAttemptFailed records a failed, still-retryable attempt: increments
+	// RetryCount, stamps LastAttemptAt, records lastError, and leaves the row
+	// in StatusPending for a later retry.
+	MarkAttemptFailed(ctx context.Context, id, lastError string) error
+	// MarkEscalated transitions a row to StatusEscalated after its retry
+	// budget was exhausted and the Twilio escalation call was placed (or at
+	// least attempted — see internal/worker for the ordering).
+	MarkEscalated(ctx context.Context, id, lastError string) error
+	// MarkFailed transitions a row to StatusFailed: a terminal, non-retryable
+	// outcome (e.g. a 400 from CSM, or an unparseable buffered payload) that
+	// never reaches the retry/escalation path at all.
+	MarkFailed(ctx context.Context, id, lastError string) error
+	// Ping reports whether the store is reachable, for GET /health.
+	Ping(ctx context.Context) error
+}
