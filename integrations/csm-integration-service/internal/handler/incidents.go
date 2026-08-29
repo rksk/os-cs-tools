@@ -27,6 +27,7 @@ import (
 // entityIncidentClient abstracts the entity service incident operations used by IncidentHandler.
 type entityIncidentClient interface {
 	CreateIncident(ctx context.Context, body []byte) ([]byte, error)
+	SearchIncidents(ctx context.Context, body []byte) ([]byte, error)
 }
 
 // IncidentHandler handles HTTP requests for incident operations, delegating to the
@@ -74,4 +75,39 @@ func (h *IncidentHandler) CreateIncident(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// SearchIncidents handles POST /incidents/search. Targets the same
+// ServiceNow-backed entity-service operation family as CreateIncident above —
+// it also requires a forwarded end-user identity token that this service
+// cannot supply, so calls here always receive a mapped 401 from upstream.
+// Kept for API-shape completeness, not because it currently succeeds. The
+// request body is forwarded verbatim; the entity service enforces its own
+// field validation and 400s otherwise, so this handler does not re-validate
+// that.
+func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchIncidents(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchIncidents failed", "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to search incidents.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }

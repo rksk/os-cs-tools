@@ -404,6 +404,67 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /incidents/search:
+    post:
+      summary: Search incidents.
+      description: >
+        ServiceNow-backed, same as POST /incidents. This operation requires a
+        forwarded end-user identity token on the entity-service side; this
+        service is strictly M2M with no mechanism to supply one, so every
+        call here currently receives a mapped 401. Kept for API-shape
+        completeness, not because it currently succeeds.
+      operationId: searchIncidents
+      requestBody:
+        description: Incident search payload.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchIncidentsRequest'
+      responses:
+        "200":
+          description: Incidents matching the search query.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchIncidentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized (upstream reported a missing or invalid forwarded identity — always, for this operation, given this service's M2M-only design)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     oauth2ClientCredentials:
@@ -797,3 +858,110 @@ components:
               format: date-time
             createdBy:
               type: string
+
+    SearchIncidentsRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+              description: Case-insensitive free-text match against incident fields.
+            priorities:
+              type: array
+              items:
+                type: string
+                enum: [HIGH, MEDIUM, LOW]
+            parentIds:
+              type: array
+              items:
+                type: string
+            number:
+              type: string
+              description: Exact match against the incident's human-readable number (e.g. "INC0010001").
+            filters:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  op:
+                    type: string
+                  values:
+                    type: array
+                    items:
+                      type: string
+              description: >
+                Generic field/op/values filter array. Forwarded verbatim; the
+                entity service validates the supported field/op combinations.
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+              enum: [createdOn, updatedOn, openedOn]
+            order:
+              type: string
+              enum: [asc, desc]
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    SearchIncidentView:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        openedOn:
+          type: string
+          format: date-time
+        subject:
+          type: string
+        caller:
+          type: object
+          additionalProperties: true
+        priority:
+          type: string
+        state:
+          type: string
+        category:
+          type: string
+        parent:
+          type: object
+          additionalProperties: true
+        parentIncident:
+          type: object
+          additionalProperties: true
+        assignmentGroup:
+          type: object
+          additionalProperties: true
+        assignedTo:
+          type: object
+          additionalProperties: true
+        createdOn:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedOn:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    SearchIncidentsResponse:
+      type: object
+      properties:
+        incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchIncidentView'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer

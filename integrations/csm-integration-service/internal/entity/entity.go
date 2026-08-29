@@ -85,3 +85,13 @@ func (c *Client) UpdateProject(ctx context.Context, id string, body []byte) ([]b
 func (c *Client) CreateIncident(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/incidents", body)
 }
+
+// SearchIncidents calls POST /incidents/search on the entity service. This
+// targets a ServiceNow-backed operation that requires a forwarded end-user
+// identity token, same as CreateIncident above — this service cannot supply
+// one, so entity-service is expected to reject this call with 401. Kept for
+// API-shape completeness, not because it currently succeeds. Response is
+// returned as raw JSON; typed response structs are deferred.
+func (c *Client) SearchIncidents(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incidents/search", body)
+}
