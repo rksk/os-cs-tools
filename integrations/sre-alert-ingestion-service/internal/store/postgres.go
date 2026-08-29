@@ -73,20 +73,50 @@ func (s *PostgresStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-func (s *PostgresStore) Enqueue(ctx context.Context, id string, payload []byte) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO alert_buffer (id, payload) VALUES ($1, $2)`,
-		id, payload,
-	)
+// Enqueue pulls this store's own alert_number_seq, calls buildPayload with
+// the formatted number, and inserts the row -- the sequence pull and the
+// INSERT happen inside one transaction so there is never a persisted row
+// missing its own AlertNumber, nor an AlertNumber pulled without a row to
+// show for it (barring the transaction aborting entirely, in which case
+// nothing is persisted at all — the only "loss" is the sequence value
+// itself going unused, which is an accepted, ordinary property of Postgres
+// sequences, not a correctness issue: they are not guaranteed gap-free).
+// See internal/store.Store.Enqueue's doc comment for why buildPayload is a
+// callback rather than a plain []byte parameter.
+func (s *PostgresStore) Enqueue(ctx context.Context, id string, buildPayload func(alertNumber string) ([]byte, error)) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: enqueue: %w", err)
+		return "", fmt.Errorf("store: enqueue: begin tx: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }() // no-op once Commit has succeeded
+
+	var seq int64
+	if err := tx.QueryRowContext(ctx, `SELECT nextval('alert_number_seq')`).Scan(&seq); err != nil {
+		return "", fmt.Errorf("store: enqueue: next alert number: %w", err)
+	}
+	alertNumber := fmt.Sprintf("ALT%07d", seq)
+
+	payload, err := buildPayload(alertNumber)
+	if err != nil {
+		return "", fmt.Errorf("store: enqueue: build payload: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO alert_buffer (id, alert_number, payload) VALUES ($1, $2, $3)`,
+		id, alertNumber, payload,
+	); err != nil {
+		return "", fmt.Errorf("store: enqueue: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("store: enqueue: commit: %w", err)
+	}
+	return alertNumber, nil
 }
 
 func (s *PostgresStore) PendingBatch(ctx context.Context, limit int) ([]AlertRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, received_at, payload, status, retry_count, last_attempt_at, last_error, incident_id, escalated_at
+		`SELECT id, alert_number, received_at, payload, status, retry_count, last_attempt_at, last_error, incident_id, escalated_at
 		 FROM alert_buffer
 		 WHERE status = $1
 		 ORDER BY received_at ASC
@@ -103,7 +133,7 @@ func (s *PostgresStore) PendingBatch(ctx context.Context, limit int) ([]AlertRec
 		var rec AlertRecord
 		var lastAttemptAt, escalatedAt sql.NullTime
 		var lastError, incidentID sql.NullString
-		if err := rows.Scan(&rec.ID, &rec.ReceivedAt, &rec.Payload, &rec.Status, &rec.RetryCount,
+		if err := rows.Scan(&rec.ID, &rec.AlertNumber, &rec.ReceivedAt, &rec.Payload, &rec.Status, &rec.RetryCount,
 			&lastAttemptAt, &lastError, &incidentID, &escalatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan pending row: %w", err)
 		}

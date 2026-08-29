@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/alertpayload"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/csmclient"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/idgen"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/severity"
@@ -32,7 +33,7 @@ import (
 
 // alertStore is the subset of internal/store.Store AlertHandler depends on.
 type alertStore interface {
-	Enqueue(ctx context.Context, id string, payload []byte) error
+	Enqueue(ctx context.Context, id string, buildPayload func(alertNumber string) ([]byte, error)) (alertNumber string, err error)
 }
 
 // AlertRequest is the inbound, vendor-agnostic normalized alert payload
@@ -71,14 +72,15 @@ func (req AlertRequest) validate() string {
 
 // MapToIncident builds the CreateIncidentRequest this service will
 // eventually send to csm-integration-service, from req, the buffered alert
-// row's own id, and the configured callerID (see AlertHandler.callerID's doc
-// comment — CSM has no "system" user concept for machine-created incidents
-// today, so this must be a real, operator-provisioned CSM user id passed in
-// via config, never guessed or hardcoded here).
+// row's own human-readable alert number, and the configured callerID (see
+// AlertHandler.callerID's doc comment — CSM has no "system" user concept for
+// machine-created incidents today, so this must be a real,
+// operator-provisioned CSM user id passed in via config, never guessed or
+// hardcoded here).
 //
-// alertID is embedded into the built Subject as a dedup tag
+// alertNumber is embedded into the built Subject as a dedup tag
 // (csmclient.DedupTag) — see buildSubject's doc comment for why.
-func MapToIncident(req AlertRequest, alertID, callerID string) csmclient.CreateIncidentRequest {
+func MapToIncident(req AlertRequest, alertNumber, callerID string) csmclient.CreateIncidentRequest {
 	iu := severity.MapImpactUrgency(req.Severity)
 	category := severity.MapCategory(req.Category)
 
@@ -88,7 +90,7 @@ func MapToIncident(req AlertRequest, alertID, callerID string) csmclient.CreateI
 		ServiceID: req.Service,
 		Impact:    iu.Impact,
 		Urgency:   iu.Urgency,
-		Subject:   buildSubject(alertID, req),
+		Subject:   buildSubject(alertNumber, req),
 	}
 
 	if ct, ok := severity.MapContactType(req.Source); ok {
@@ -111,22 +113,40 @@ func MapToIncident(req AlertRequest, alertID, callerID string) csmclient.CreateI
 }
 
 // buildSubject composes CreateIncidentRequest.Subject from the buffered
-// alert row's own id and the alert's metric name and source, e.g.
-// "[alert:1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed] [azure] high_error_rate
-// alert: svc-checkout".
+// alert row's own human-readable alert number and the alert's metric name
+// and source, e.g. "[alert:ALT0000123] [azure] high_error_rate alert:
+// svc-checkout".
 //
-// The leading csmclient.DedupTag(alertID) is not cosmetic: it's this
+// The leading csmclient.DedupTag(alertNumber) is not cosmetic: it's this
 // service's own dedup key for internal/worker's pre-retry
 // SearchIncidentByTag check (a failed POST /incidents doesn't prove the
 // incident wasn't actually created — the response could have been lost —
 // so a retry needs a way to find a previous attempt's incident by something
-// this service fully controls). alertID is guaranteed unique per buffered
-// alert and available before persistence (internal/idgen, called from
-// CreateAlert), unlike AlertRequest.UniqueIdentifier, which is
+// this service fully controls). alertNumber is guaranteed unique per
+// buffered alert (this service's own Postgres sequence — see
+// internal/store.PostgresStore.Enqueue) and is this row's externally-facing
+// identifier, unlike AlertRequest.UniqueIdentifier, which is
 // vendor-supplied and optional. Full human-readable detail still belongs in
 // AdditionalComments/WorkNotes, not here — this stays short and scannable.
-func buildSubject(alertID string, req AlertRequest) string {
-	return fmt.Sprintf("%s [%s] %s alert: %s", csmclient.DedupTag(alertID), req.Source, req.MetricName, req.Service)
+func buildSubject(alertNumber string, req AlertRequest) string {
+	return fmt.Sprintf("%s [%s] %s alert: %s", csmclient.DedupTag(alertNumber), req.Source, req.MetricName, req.Service)
+}
+
+// deriveAlertStatus maps an inbound alert onto this service's own
+// FIRING/RESOLVED vocabulary for the alert-incident-mapping contract
+// (csmclient.CreateAlertIncidentMappingRequest.AlertStatus — see
+// internal/worker's incident-grouping logic). AlertRequest carries no
+// explicit status/state field from the vendor today — only Severity — so
+// this reuses the one signal internal/severity.MapImpactUrgency already
+// treats specially: "ok" is the sole severity value documented there as
+// meaning the condition has cleared ("a fully-resolved (ok) signal warrants
+// neither" elevated impact nor urgency — see severity.go). Every other
+// severity value means the condition is still active, hence FIRING.
+func deriveAlertStatus(req AlertRequest) string {
+	if strings.EqualFold(strings.TrimSpace(req.Severity), "ok") {
+		return "RESOLVED"
+	}
+	return "FIRING"
 }
 
 // buildWorkNotes composes an internal-engineer-facing note from the alert
@@ -197,26 +217,32 @@ func (h *AlertHandler) CreateAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generated here, before persistence, not left to a Postgres column
-	// default: MapToIncident needs this id to embed as the dedup tag in
-	// Subject (see buildSubject), and that has to already be inside the
-	// payload this handler is about to persist.
+	// id is still generated here (internal/idgen), before persistence: it is
+	// alert_buffer's DB primary key, needed up front as internal/store.Store's
+	// Enqueue parameter. The row's externally-facing identifier, by contrast,
+	// is generated by the store itself (this service's own Postgres sequence)
+	// during Enqueue — see buildPayload below and internal/store.Store.Enqueue's
+	// doc comment for why that has to be a callback rather than a plain value.
 	id := idgen.New()
 
-	incidentReq := MapToIncident(req, id, h.callerID)
-	payload, err := json.Marshal(incidentReq)
+	alertNumber, err := h.store.Enqueue(r.Context(), id, func(alertNumber string) ([]byte, error) {
+		incidentReq := MapToIncident(req, alertNumber, h.callerID)
+		payload := alertpayload.Payload{
+			CreateIncidentRequest: incidentReq,
+			Source:                req.Source,
+			UniqueIdentifier:      req.UniqueIdentifier,
+			Service:               req.Service,
+			MetricName:            req.MetricName,
+			AlertStatus:           deriveAlertStatus(req),
+		}
+		return json.Marshal(payload)
+	})
 	if err != nil {
-		slog.ErrorContext(r.Context(), "handler: failed to marshal mapped incident request", "err", err)
-		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
-		return
-	}
-
-	if err := h.store.Enqueue(r.Context(), id, payload); err != nil {
 		slog.ErrorContext(r.Context(), "handler: failed to persist buffered alert", "err", err)
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
 	}
 
-	slog.InfoContext(r.Context(), "alert buffered", "id", id, "source", req.Source, "severity", req.Severity, "service", req.Service)
-	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
+	slog.InfoContext(r.Context(), "alert buffered", "id", id, "alertNumber", alertNumber, "source", req.Source, "severity", req.Severity, "service", req.Service)
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "alertNumber": alertNumber})
 }

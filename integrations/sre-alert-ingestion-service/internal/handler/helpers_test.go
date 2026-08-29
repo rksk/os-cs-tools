@@ -45,23 +45,44 @@ func assertErrorMessage(t *testing.T, w *httptest.ResponseRecorder, want string)
 	}
 }
 
+// testAlertNumber is the fixed AlertNumber mockStore.Enqueue reports when
+// nextAlertNumber isn't set — matches the "ALT" + 7-digit format
+// internal/store.PostgresStore.Enqueue actually produces.
+const testAlertNumber = "ALT0000001"
+
 // mockStore is a hand-rolled double for alertStore + healthPinger, matching
 // this repo's no-mocking-library convention.
 type mockStore struct {
-	enqueueFn func(ctx context.Context, id string, payload []byte) error
+	// enqueueFn, when set, replaces Enqueue's default behavior entirely
+	// (including calling buildPayload) — used by tests that need Enqueue to
+	// fail without ever reaching buildPayload/persistence.
+	enqueueFn func(ctx context.Context, id string, buildPayload func(string) ([]byte, error)) (string, error)
 	pingFn    func(ctx context.Context) error
 
-	enqueuedIDs      []string
-	enqueuedPayloads [][]byte
+	// nextAlertNumber overrides testAlertNumber for a single test, if set.
+	nextAlertNumber string
+
+	enqueuedIDs          []string
+	enqueuedAlertNumbers []string
+	enqueuedPayloads     [][]byte
 }
 
-func (m *mockStore) Enqueue(ctx context.Context, id string, payload []byte) error {
-	m.enqueuedIDs = append(m.enqueuedIDs, id)
-	m.enqueuedPayloads = append(m.enqueuedPayloads, payload)
+func (m *mockStore) Enqueue(ctx context.Context, id string, buildPayload func(string) ([]byte, error)) (string, error) {
 	if m.enqueueFn != nil {
-		return m.enqueueFn(ctx, id, payload)
+		return m.enqueueFn(ctx, id, buildPayload)
 	}
-	return nil
+	alertNumber := m.nextAlertNumber
+	if alertNumber == "" {
+		alertNumber = testAlertNumber
+	}
+	payload, err := buildPayload(alertNumber)
+	if err != nil {
+		return "", err
+	}
+	m.enqueuedIDs = append(m.enqueuedIDs, id)
+	m.enqueuedAlertNumbers = append(m.enqueuedAlertNumbers, alertNumber)
+	m.enqueuedPayloads = append(m.enqueuedPayloads, payload)
+	return alertNumber, nil
 }
 
 func (m *mockStore) Ping(ctx context.Context) error {

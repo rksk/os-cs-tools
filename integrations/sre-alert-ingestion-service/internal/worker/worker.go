@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/alertpayload"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/backoff"
 	"github.com/wso2-open-operations/cs-tools/integrations/sre-alert-ingestion-service/internal/csmclient"
@@ -48,17 +49,28 @@ type Store interface {
 }
 
 // IncidentCreator is the subset of internal/csmclient.Client the worker
-// depends on to create an incident from a buffered alert, and to run the
-// pre-retry dedup check before doing so again for a row that already failed
-// once. Both live on the same interface (rather than a second constructor
-// parameter) because internal/csmclient.Client always implements both, and
-// there is no scenario in which the worker has one without the other.
+// depends on: creating an incident from a buffered alert, the pre-retry
+// dedup check before doing so again for a row that already failed once, and
+// the incident-grouping lookup/confirm/record calls (see tryGroup). All live
+// on the same interface (rather than separate constructor parameters)
+// because internal/csmclient.Client always implements all of them, and
+// there is no scenario in which the worker has some without the others.
 type IncidentCreator interface {
 	CreateIncident(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error)
 	// SearchIncidentByTag looks up whether an incident tagged with tag
 	// (csmclient.DedupTag) already exists. See attempt's doc comment for
 	// when and why this is called, and the fail-open behavior on error.
 	SearchIncidentByTag(ctx context.Context, tag string) (*csmclient.CreateIncidentResult, bool, error)
+	// SearchOpenIncidentByNumber confirms whether the incident identified by
+	// number is still open (not Resolved/Closed/Cancelled). See tryGroup for
+	// when this is called and the fail-open behavior on error.
+	SearchOpenIncidentByNumber(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error)
+	// LookupAlertIncidentMappings finds any earlier alert(s) recorded against
+	// (source, uniqueIdentifier), most-recent-first. See tryGroup.
+	LookupAlertIncidentMappings(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error)
+	// CreateAlertIncidentMapping records one alert against the incident it
+	// ended up delivered to. See tryGroup and attempt's post-create call.
+	CreateAlertIncidentMapping(ctx context.Context, req csmclient.CreateAlertIncidentMappingRequest) (*csmclient.AlertIncidentMappingView, error)
 }
 
 // Escalator is the subset of internal/notifications.TwilioClient the worker
@@ -164,18 +176,19 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	// distinct traceable event.
 	attemptCtx := middleware.WithCorrelationID(ctx, middleware.NewCorrelationID())
 
-	var req csmclient.CreateIncidentRequest
-	if err := json.Unmarshal(row.Payload, &req); err != nil {
+	var bp alertpayload.Payload
+	if err := json.Unmarshal(row.Payload, &bp); err != nil {
 		// The buffered payload itself is corrupt. No retry can ever fix
 		// this — it isn't a CSM-availability problem — so this is terminal,
 		// and specifically does not reach Twilio escalation (that channel
 		// exists for "CSM won't accept this", not "we can't even ask").
-		slog.ErrorContext(attemptCtx, "worker: buffered payload is not valid JSON, marking failed", "id", row.ID, "err", err)
+		slog.ErrorContext(attemptCtx, "worker: buffered payload is not valid JSON, marking failed", "id", row.ID, "alertNumber", row.AlertNumber, "err", err)
 		if merr := w.store.MarkFailed(ctx, row.ID, "corrupt buffered payload: "+err.Error()); merr != nil {
 			slog.ErrorContext(attemptCtx, "worker: MarkFailed failed", "id", row.ID, "err", merr)
 		}
 		return
 	}
+	req := bp.CreateIncidentRequest
 
 	// Pre-retry dedup check: only on a retry (row.RetryCount > 0), never on
 	// the first attempt — on attempt 1 nothing could possibly exist yet for
@@ -185,11 +198,12 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	// a failure: the request can complete on the far side while the
 	// response is lost to a timeout or connection reset. Blindly retrying
 	// in that case risks creating a second, duplicate incident for the same
-	// alert. tag is the same csmclient.DedupTag(row.ID) value
+	// alert. tag is the same csmclient.DedupTag(row.AlertNumber) value
 	// internal/handler.buildSubject already stamped into this row's own
-	// CreateIncidentRequest.Subject when it was first buffered — row.ID is
-	// stable for the row's lifetime, so it's always the right tag to search
-	// for here, without needing to re-parse it out of req.Subject.
+	// CreateIncidentRequest.Subject when it was first buffered — row.AlertNumber
+	// is stable for the row's lifetime (this service's own Postgres
+	// sequence, assigned once at Enqueue time), so it's always the right tag
+	// to search for here, without needing to re-parse it out of req.Subject.
 	//
 	// Fail-open, deliberately: if the search call itself errors (including
 	// the 401 this endpoint also currently always returns — see this
@@ -199,13 +213,28 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	// same as if this check didn't exist at all — never silently give up on
 	// a buffered alert just because the confirmation step itself failed.
 	if row.RetryCount > 0 {
-		tag := csmclient.DedupTag(row.ID)
+		tag := csmclient.DedupTag(row.AlertNumber)
 		if existing, found, serr := w.csm.SearchIncidentByTag(attemptCtx, tag); serr != nil {
-			slog.WarnContext(attemptCtx, "worker: pre-retry dedup search failed, proceeding to attempt delivery (fail-open)", "id", row.ID, "err", serr)
+			slog.WarnContext(attemptCtx, "worker: pre-retry dedup search failed, proceeding to attempt delivery (fail-open)", "id", row.ID, "alertNumber", row.AlertNumber, "err", serr)
 		} else if found {
-			slog.InfoContext(attemptCtx, "worker: found an existing incident for this alert from an earlier attempt, skipping duplicate create", "id", row.ID, "incidentID", existing.IncidentID, "incidentNumber", existing.IncidentNumber)
+			slog.InfoContext(attemptCtx, "worker: found an existing incident for this alert from an earlier attempt, skipping duplicate create", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", existing.IncidentID, "incidentNumber", existing.IncidentNumber)
 			if merr := w.store.MarkDelivered(ctx, row.ID, existing.IncidentID); merr != nil {
 				slog.ErrorContext(attemptCtx, "worker: MarkDelivered (post-dedup) failed", "id", row.ID, "err", merr)
+			}
+			return
+		}
+	}
+
+	// Incident-grouping check: only ever relevant for an alert whose inbound
+	// payload carried a vendor-supplied UniqueIdentifier — nothing to group
+	// on otherwise (see tryGroup's doc comment for the full contract and its
+	// fail-open behavior). Deliberately run before the create-or-dedup-search
+	// flow below: if an earlier alert's still-open incident is found, this
+	// alert attaches to it and CreateIncident is never called at all.
+	if bp.UniqueIdentifier != "" {
+		if incidentID, _, grouped := w.tryGroup(attemptCtx, row, bp); grouped {
+			if merr := w.store.MarkDelivered(ctx, row.ID, incidentID); merr != nil {
+				slog.ErrorContext(attemptCtx, "worker: MarkDelivered (post-grouping) failed", "id", row.ID, "err", merr)
 			}
 			return
 		}
@@ -217,12 +246,20 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 			slog.ErrorContext(attemptCtx, "worker: MarkDelivered failed", "id", row.ID, "err", merr)
 			return
 		}
-		slog.InfoContext(attemptCtx, "worker: alert delivered", "id", row.ID, "incidentID", result.IncidentID, "incidentNumber", result.IncidentNumber)
+		slog.InfoContext(attemptCtx, "worker: alert delivered", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "incidentNumber", result.IncidentNumber)
+
+		// Best-effort, non-blocking: record this alert against the incident
+		// just created, so a future related alert (same source+uniqueIdentifier)
+		// can find and group onto it via tryGroup. The primary goal — an
+		// incident exists, and this row is marked delivered — is already
+		// achieved above regardless of whether this call succeeds; see
+		// recordMapping's doc comment.
+		w.recordMapping(attemptCtx, row, bp, result.IncidentID, result.IncidentNumber)
 		return
 	}
 
 	if !isRetryable(err) {
-		slog.ErrorContext(attemptCtx, "worker: non-retryable error, marking failed", "id", row.ID, "err", err)
+		slog.ErrorContext(attemptCtx, "worker: non-retryable error, marking failed", "id", row.ID, "alertNumber", row.AlertNumber, "err", err)
 		if merr := w.store.MarkFailed(ctx, row.ID, err.Error()); merr != nil {
 			slog.ErrorContext(attemptCtx, "worker: MarkFailed failed", "id", row.ID, "err", merr)
 		}
@@ -231,13 +268,16 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 
 	nextRetryCount := row.RetryCount + 1
 	if nextRetryCount >= w.cfg.MaxRetries {
-		slog.WarnContext(attemptCtx, "worker: retry budget exhausted, escalating", "id", row.ID, "retryCount", nextRetryCount, "maxRetries", w.cfg.MaxRetries, "err", err)
+		slog.WarnContext(attemptCtx, "worker: retry budget exhausted, escalating", "id", row.ID, "alertNumber", row.AlertNumber, "retryCount", nextRetryCount, "maxRetries", w.cfg.MaxRetries, "err", err)
 		if merr := w.store.MarkEscalated(ctx, row.ID, err.Error()); merr != nil {
 			slog.ErrorContext(attemptCtx, "worker: MarkEscalated (store) failed", "id", row.ID, "err", merr)
 		}
+		// row.AlertNumber leads the message (it's this alert's externally-facing
+		// identifier — see internal/store.PostgresStore.Enqueue); row.ID follows
+		// for anyone cross-referencing this service's own logs/database directly.
 		message := fmt.Sprintf(
-			"SRE alert ingestion service: alert %s could not be delivered to CSM after %d attempts. Last error: %s",
-			row.ID, nextRetryCount, truncate(err.Error(), 200),
+			"SRE alert ingestion service: alert %s (id %s) could not be delivered to CSM after %d attempts. Last error: %s",
+			row.AlertNumber, row.ID, nextRetryCount, truncate(err.Error(), 200),
 		)
 		if terr := w.twilio.Escalate(ctx, message); terr != nil {
 			// The escalation call itself failing is the worst case this
@@ -251,10 +291,106 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 		return
 	}
 
-	slog.WarnContext(attemptCtx, "worker: delivery attempt failed, will retry", "id", row.ID, "retryCount", nextRetryCount, "nextDelay", backoff.Delay(nextRetryCount-1).String(), "err", err)
+	slog.WarnContext(attemptCtx, "worker: delivery attempt failed, will retry", "id", row.ID, "alertNumber", row.AlertNumber, "retryCount", nextRetryCount, "nextDelay", backoff.Delay(nextRetryCount-1).String(), "err", err)
 	if merr := w.store.MarkAttemptFailed(ctx, row.ID, err.Error()); merr != nil {
 		slog.ErrorContext(attemptCtx, "worker: MarkAttemptFailed failed", "id", row.ID, "err", merr)
 	}
+}
+
+// tryGroup implements this alert's incident-grouping check: an earlier
+// alert reporting the same (source, uniqueIdentifier) condition may already
+// have an open incident, in which case this alert should attach to it (via
+// a recorded alert-incident-mapping row) instead of a new one being
+// created. Called only when bp.UniqueIdentifier is non-empty (see attempt).
+//
+// Returns grouped=true, plus the existing incident's id/number, only when
+// both the lookup and the open-state confirmation succeed. Any failure
+// anywhere along this path — the lookup call erroring, no mapping found, a
+// mapping found but with no recorded incident number to confirm against, or
+// the open-state confirmation call itself erroring or finding the incident
+// no longer open — returns grouped=false, so attempt() falls through to the
+// existing create-or-dedup-search flow unchanged. This mirrors the same
+// fail-open philosophy as the pre-retry dedup check above: "we couldn't
+// confirm this is groupable" is never treated as "assume it is."
+//
+// This is a known, accepted v1 limitation, not a bug: the open-state
+// confirmation (SearchOpenIncidentByNumber) is ServiceNow-backed, like every
+// other csmclient search call in this service, and 401s on every call today
+// (see internal/csmclient/search.go and this service's CLAUDE.md) — so in
+// production this always falls open to "not groupable, proceed as before"
+// until that infrastructure gap is closed. The grouping feature itself is
+// structurally complete and ready for that day; it does not attempt to work
+// around the gap.
+func (w *Worker) tryGroup(ctx context.Context, row store.AlertRecord, bp alertpayload.Payload) (incidentID, incidentNumber string, grouped bool) {
+	mappings, err := w.csm.LookupAlertIncidentMappings(ctx, bp.Source, bp.UniqueIdentifier)
+	if err != nil {
+		slog.WarnContext(ctx, "worker: incident-grouping lookup failed, proceeding without grouping (fail-open)", "id", row.ID, "alertNumber", row.AlertNumber, "err", err)
+		return "", "", false
+	}
+	if len(mappings) == 0 {
+		return "", "", false
+	}
+
+	// mappings is most-recent-first per the lookup contract.
+	latest := mappings[0]
+	if latest.IncidentNumber == nil || *latest.IncidentNumber == "" {
+		slog.WarnContext(ctx, "worker: incident-grouping match has no recorded incident number, cannot confirm open state, proceeding without grouping", "id", row.ID, "alertNumber", row.AlertNumber, "matchedMappingID", latest.ID)
+		return "", "", false
+	}
+
+	existing, found, serr := w.csm.SearchOpenIncidentByNumber(ctx, *latest.IncidentNumber)
+	if serr != nil {
+		slog.WarnContext(ctx, "worker: incident-grouping open-state confirmation failed, proceeding without grouping (known limitation, fail-open — see tryGroup doc comment)", "id", row.ID, "alertNumber", row.AlertNumber, "err", serr)
+		return "", "", false
+	}
+	if !found {
+		slog.InfoContext(ctx, "worker: incident-grouping match's incident is not open (resolved/closed/cancelled), proceeding without grouping", "id", row.ID, "alertNumber", row.AlertNumber, "incidentNumber", *latest.IncidentNumber)
+		return "", "", false
+	}
+
+	slog.InfoContext(ctx, "worker: grouping alert onto an earlier alert's still-open incident", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", existing.IncidentID, "incidentNumber", existing.IncidentNumber)
+	w.recordMapping(ctx, row, bp, existing.IncidentID, existing.IncidentNumber)
+	return existing.IncidentID, existing.IncidentNumber, true
+}
+
+// recordMapping calls csmclient.CreateAlertIncidentMapping to record row
+// against incidentID/incidentNumber. Best-effort and non-blocking by
+// design: every call site treats a failure here purely as a logged
+// warning, never as a reason to fail the overall delivery or hold back
+// Store.MarkDelivered — the primary goal (an incident exists, and this
+// alert is attached to it) is already achieved by the time this is called.
+// A missed mapping row just means a future related alert won't find this
+// group and will create its own incident instead — a known, documented
+// degradation, not a correctness bug (see this method's callers in attempt
+// and tryGroup).
+//
+// A 409 (already recorded) surfaces from csmclient as (nil, nil), not an
+// error — see CreateAlertIncidentMapping's doc comment — so it logs nothing
+// here and is treated the same as a clean success.
+func (w *Worker) recordMapping(ctx context.Context, row store.AlertRecord, bp alertpayload.Payload, incidentID, incidentNumber string) {
+	req := csmclient.CreateAlertIncidentMappingRequest{
+		AlertNumber:      row.AlertNumber,
+		Source:           bp.Source,
+		UniqueIdentifier: strOrNil(bp.UniqueIdentifier),
+		Service:          strOrNil(bp.Service),
+		MetricName:       strOrNil(bp.MetricName),
+		AlertStatus:      bp.AlertStatus,
+		IncidentID:       incidentID,
+		IncidentNumber:   strOrNil(incidentNumber),
+	}
+	if _, err := w.csm.CreateAlertIncidentMapping(ctx, req); err != nil {
+		slog.WarnContext(ctx, "worker: failed to record alert-incident-mapping (best-effort, non-blocking — incident delivery already succeeded)", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", incidentID, "err", err)
+	}
+}
+
+// strOrNil returns nil for an empty string, else a pointer to s — for
+// populating the optional *string fields on
+// csmclient.CreateAlertIncidentMappingRequest from bp's plain string fields.
+func strOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // isRetryable classifies an error returned by IncidentCreator.CreateIncident.

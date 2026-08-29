@@ -30,6 +30,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -84,6 +85,25 @@ type mockIncidentCreator struct {
 	searchFn    func(ctx context.Context, tag string) (*csmclient.CreateIncidentResult, bool, error)
 	searchCalls int
 	searchTags  []string
+
+	// searchOpenFn is optional; when nil, SearchOpenIncidentByNumber reports
+	// "no match, no error" — the common case for tests that never reach the
+	// incident-grouping open-state confirmation step at all.
+	searchOpenFn    func(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error)
+	searchOpenCalls int
+	searchOpenNums  []string
+
+	// lookupMappingsFn is optional; when nil, LookupAlertIncidentMappings
+	// reports "no mappings, no error" — the common case for tests where a
+	// row has no UniqueIdentifier at all, so this is never called.
+	lookupMappingsFn    func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error)
+	lookupMappingsCalls int
+
+	// createMappingFn is optional; when nil, CreateAlertIncidentMapping
+	// reports success with no error.
+	createMappingFn    func(ctx context.Context, req csmclient.CreateAlertIncidentMappingRequest) (*csmclient.AlertIncidentMappingView, error)
+	createMappingCalls int
+	createMappingReqs  []csmclient.CreateAlertIncidentMappingRequest
 }
 
 func (m *mockIncidentCreator) CreateIncident(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
@@ -100,6 +120,32 @@ func (m *mockIncidentCreator) SearchIncidentByTag(ctx context.Context, tag strin
 	return nil, false, nil
 }
 
+func (m *mockIncidentCreator) SearchOpenIncidentByNumber(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error) {
+	m.searchOpenCalls++
+	m.searchOpenNums = append(m.searchOpenNums, number)
+	if m.searchOpenFn != nil {
+		return m.searchOpenFn(ctx, number)
+	}
+	return nil, false, nil
+}
+
+func (m *mockIncidentCreator) LookupAlertIncidentMappings(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+	m.lookupMappingsCalls++
+	if m.lookupMappingsFn != nil {
+		return m.lookupMappingsFn(ctx, source, uniqueIdentifier)
+	}
+	return nil, nil
+}
+
+func (m *mockIncidentCreator) CreateAlertIncidentMapping(ctx context.Context, req csmclient.CreateAlertIncidentMappingRequest) (*csmclient.AlertIncidentMappingView, error) {
+	m.createMappingCalls++
+	m.createMappingReqs = append(m.createMappingReqs, req)
+	if m.createMappingFn != nil {
+		return m.createMappingFn(ctx, req)
+	}
+	return &csmclient.AlertIncidentMappingView{}, nil
+}
+
 // mockEscalator is a hand-rolled Escalator double.
 type mockEscalator struct {
 	err      error
@@ -111,14 +157,41 @@ func (m *mockEscalator) Escalate(ctx context.Context, message string) error {
 	return m.err
 }
 
+// rowWithPayload builds a row whose AlertNumber matches id (tests that care
+// about the dedup tag pass id as both, e.g. csmclient.DedupTag("alert-1"))
+// and whose payload carries no UniqueIdentifier — the common case where
+// incident-grouping never even attempts a lookup. See
+// rowWithGroupablePayload for the grouping-specific variant.
 func rowWithPayload(t *testing.T, id string, retryCount int, lastAttemptAt *time.Time) store.AlertRecord {
 	t.Helper()
 	return store.AlertRecord{
 		ID:            id,
+		AlertNumber:   id,
 		Status:        store.StatusPending,
 		RetryCount:    retryCount,
 		LastAttemptAt: lastAttemptAt,
 		Payload:       []byte(`{"callerId":"caller-1","category":"SERVICE_INTERRUPTION","serviceId":"svc-1","impact":"HIGH","urgency":"HIGH","subject":"test"}`),
+	}
+}
+
+// rowWithGroupablePayload is rowWithPayload's variant for incident-grouping
+// tests: the buffered payload carries source/uniqueIdentifier/service/
+// metricName/alertStatus (internal/alertpayload.Payload's fields, alongside
+// the embedded CreateIncidentRequest), matching what internal/handler
+// actually persists for an alert with a vendor-supplied UniqueIdentifier.
+func rowWithGroupablePayload(t *testing.T, id, source, uniqueIdentifier string) store.AlertRecord {
+	t.Helper()
+	payload := fmt.Sprintf(
+		`{"callerId":"caller-1","category":"SERVICE_INTERRUPTION","serviceId":"svc-1","impact":"HIGH","urgency":"HIGH","subject":"test",`+
+			`"source":%q,"uniqueIdentifier":%q,"service":"svc-1","metricName":"error_rate","alertStatus":"FIRING"}`,
+		source, uniqueIdentifier,
+	)
+	return store.AlertRecord{
+		ID:          id,
+		AlertNumber: id,
+		Status:      store.StatusPending,
+		RetryCount:  0,
+		Payload:     []byte(payload),
 	}
 }
 
@@ -529,5 +602,236 @@ func TestConfig_Defaults(t *testing.T) {
 	}
 	if cfg.PollInterval != 15*time.Second {
 		t.Errorf("default PollInterval = %v, want 15s", cfg.PollInterval)
+	}
+}
+
+// strPtr is a small test-local pointer helper, matching the *string fields
+// on csmclient.AlertIncidentMappingView / CreateAlertIncidentMappingRequest.
+func strPtr(s string) *string { return &s }
+
+// ---- Incident-grouping tests -------------------------------------------
+
+// TestRunOnce_GroupsOntoEarlierOpenIncident_SkipsCreate is the "match found,
+// and it's still open" branch: this alert must attach to the earlier
+// alert's incident (record a mapping, mark delivered against that incident)
+// and must never call CreateIncident at all.
+func TestRunOnce_GroupsOntoEarlierOpenIncident_SkipsCreate(t *testing.T) {
+	row := rowWithGroupablePayload(t, "alert-2", "azure", "uid-123")
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{
+		createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+			t.Fatal("CreateIncident should not be called once grouping finds an earlier, still-open incident")
+			return nil, nil
+		},
+		lookupMappingsFn: func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+			if source != "azure" || uniqueIdentifier != "uid-123" {
+				t.Errorf("lookup called with source=%q uniqueIdentifier=%q, want azure/uid-123", source, uniqueIdentifier)
+			}
+			return []csmclient.AlertIncidentMappingView{
+				{ID: "map-1", IncidentID: "inc-old", IncidentNumber: strPtr("INC0009999")},
+			}, nil
+		},
+		searchOpenFn: func(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error) {
+			if number != "INC0009999" {
+				t.Errorf("SearchOpenIncidentByNumber called with %q, want INC0009999", number)
+			}
+			return &csmclient.CreateIncidentResult{IncidentID: "inc-old", IncidentNumber: "INC0009999"}, true, nil
+		},
+	}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if csm.lookupMappingsCalls != 1 {
+		t.Fatalf("LookupAlertIncidentMappings called %d times, want 1", csm.lookupMappingsCalls)
+	}
+	if csm.searchOpenCalls != 1 {
+		t.Fatalf("SearchOpenIncidentByNumber called %d times, want 1", csm.searchOpenCalls)
+	}
+	if csm.calls != 0 {
+		t.Errorf("CreateIncident called %d times, want 0", csm.calls)
+	}
+	if csm.createMappingCalls != 1 {
+		t.Fatalf("CreateAlertIncidentMapping called %d times, want 1", csm.createMappingCalls)
+	}
+	if got := csm.createMappingReqs[0]; got.IncidentID != "inc-old" || got.AlertNumber != "alert-2" {
+		t.Errorf("mapping request = %+v, want IncidentID=inc-old AlertNumber=alert-2", got)
+	}
+	if len(s.delivered) != 1 || s.delivered[0].id != "alert-2" || s.delivered[0].incidentID != "inc-old" {
+		t.Errorf("delivered = %+v, want one row for alert-2/inc-old", s.delivered)
+	}
+}
+
+// TestRunOnce_GroupingFallsThroughOnNoMatchOrClosedOrLookupOrStateCheckFailure
+// covers all of the "not groupable" branches at once: no earlier mapping,
+// a mapping whose incident is confirmed no longer open, the lookup call
+// itself erroring, and the open-state confirmation call itself erroring
+// (the fail-open case this feature will actually hit in production today —
+// see tryGroup's doc comment). Every one of these must fall through
+// unchanged to the existing create-or-dedup-search flow: CreateIncident is
+// still called exactly once, and the row is still delivered against the
+// newly-created incident.
+func TestRunOnce_GroupingFallsThroughOnNoMatchOrClosedOrLookupOrStateCheckFailure(t *testing.T) {
+	cases := []struct {
+		name             string
+		lookupMappingsFn func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error)
+		searchOpenFn     func(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error)
+	}{
+		{
+			name: "no earlier mapping found",
+			lookupMappingsFn: func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+				return nil, nil
+			},
+		},
+		{
+			name: "mapping found but its incident is no longer open",
+			lookupMappingsFn: func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+				return []csmclient.AlertIncidentMappingView{{ID: "map-1", IncidentID: "inc-old", IncidentNumber: strPtr("INC0009999")}}, nil
+			},
+			searchOpenFn: func(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error) {
+				return nil, false, nil // resolved/closed/cancelled -> no longer open
+			},
+		},
+		{
+			name: "lookup call itself errors",
+			lookupMappingsFn: func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+				return nil, errors.New("connection refused")
+			},
+		},
+		{
+			name: "open-state confirmation call itself errors (e.g. the same 401 CreateIncident gets today)",
+			lookupMappingsFn: func(ctx context.Context, source, uniqueIdentifier string) ([]csmclient.AlertIncidentMappingView, error) {
+				return []csmclient.AlertIncidentMappingView{{ID: "map-1", IncidentID: "inc-old", IncidentNumber: strPtr("INC0009999")}}, nil
+			},
+			searchOpenFn: func(ctx context.Context, number string) (*csmclient.CreateIncidentResult, bool, error) {
+				return nil, false, &apierror.Error{StatusCode: 401, Body: "Missing or invalid user ID token header."}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			row := rowWithGroupablePayload(t, "alert-2", "azure", "uid-123")
+			s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+				return []store.AlertRecord{row}, nil
+			}}
+			csm := &mockIncidentCreator{
+				createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+					return &csmclient.CreateIncidentResult{IncidentID: "inc-new", IncidentNumber: "INC0000001"}, nil
+				},
+				lookupMappingsFn: tc.lookupMappingsFn,
+				searchOpenFn:     tc.searchOpenFn,
+			}
+			tw := &mockEscalator{}
+
+			w := New(s, csm, tw, Config{MaxRetries: 3})
+			w.RunOnce(context.Background())
+
+			if csm.calls != 1 {
+				t.Errorf("CreateIncident called %d times, want 1 (grouping must fall open to the normal create flow)", csm.calls)
+			}
+			if len(s.delivered) != 1 || s.delivered[0].incidentID != "inc-new" {
+				t.Errorf("delivered = %+v, want one row for alert-2/inc-new", s.delivered)
+			}
+		})
+	}
+}
+
+// TestRunOnce_NoUniqueIdentifierSkipsGroupingEntirely is the third branch:
+// a row whose buffered payload carries no UniqueIdentifier must never call
+// the grouping lookup at all — there is nothing to group against or by.
+func TestRunOnce_NoUniqueIdentifierSkipsGroupingEntirely(t *testing.T) {
+	row := rowWithPayload(t, "alert-1", 0, nil) // no UniqueIdentifier in this payload
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		return &csmclient.CreateIncidentResult{IncidentID: "inc-1", IncidentNumber: "INC0001"}, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if csm.lookupMappingsCalls != 0 {
+		t.Errorf("LookupAlertIncidentMappings called %d times, want 0 for a row with no UniqueIdentifier", csm.lookupMappingsCalls)
+	}
+	if csm.searchOpenCalls != 0 {
+		t.Errorf("SearchOpenIncidentByNumber called %d times, want 0 for a row with no UniqueIdentifier", csm.searchOpenCalls)
+	}
+	if csm.calls != 1 {
+		t.Errorf("CreateIncident called %d times, want 1", csm.calls)
+	}
+}
+
+// TestRunOnce_RecordsMappingAfterNewIncidentCreated_BestEffort covers
+// attempt's post-create call: once a new incident is successfully created,
+// a mapping row must be recorded against it (so a later related alert can
+// find and group onto it), with the correct fields.
+func TestRunOnce_RecordsMappingAfterNewIncidentCreated_BestEffort(t *testing.T) {
+	row := rowWithGroupablePayload(t, "alert-2", "azure", "uid-123")
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		return &csmclient.CreateIncidentResult{IncidentID: "inc-new", IncidentNumber: "INC0000001"}, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if csm.createMappingCalls != 1 {
+		t.Fatalf("CreateAlertIncidentMapping called %d times, want 1", csm.createMappingCalls)
+	}
+	got := csm.createMappingReqs[0]
+	if got.AlertNumber != "alert-2" || got.Source != "azure" {
+		t.Errorf("mapping request AlertNumber/Source = %q/%q, want alert-2/azure", got.AlertNumber, got.Source)
+	}
+	if got.UniqueIdentifier == nil || *got.UniqueIdentifier != "uid-123" {
+		t.Errorf("mapping request UniqueIdentifier = %v, want uid-123", got.UniqueIdentifier)
+	}
+	if got.AlertStatus != "FIRING" {
+		t.Errorf("mapping request AlertStatus = %q, want FIRING", got.AlertStatus)
+	}
+	if got.IncidentID != "inc-new" {
+		t.Errorf("mapping request IncidentID = %q, want inc-new", got.IncidentID)
+	}
+}
+
+// TestRunOnce_MappingCreateFailureAfterNewIncidentDoesNotFailDelivery is the
+// best-effort contract: the mapping-create call failing must not fail the
+// overall delivery, must not prevent the row from being marked delivered,
+// and must not trigger any retry/escalation/terminal-failure path — the
+// incident already exists, which is the primary goal.
+func TestRunOnce_MappingCreateFailureAfterNewIncidentDoesNotFailDelivery(t *testing.T) {
+	row := rowWithGroupablePayload(t, "alert-2", "azure", "uid-123")
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{
+		createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+			return &csmclient.CreateIncidentResult{IncidentID: "inc-new", IncidentNumber: "INC0000001"}, nil
+		},
+		createMappingFn: func(ctx context.Context, req csmclient.CreateAlertIncidentMappingRequest) (*csmclient.AlertIncidentMappingView, error) {
+			return nil, errors.New("csm-integration-service: connection refused")
+		},
+	}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if len(s.delivered) != 1 || s.delivered[0].incidentID != "inc-new" {
+		t.Fatalf("delivered = %+v, want one row for alert-2/inc-new even though the mapping-create call failed", s.delivered)
+	}
+	if len(s.attemptFailed) != 0 || len(s.escalated) != 0 || len(s.failed) != 0 {
+		t.Errorf("unexpected non-delivered transitions: attemptFailed=%v escalated=%v failed=%v", s.attemptFailed, s.escalated, s.failed)
+	}
+	if len(tw.messages) != 0 {
+		t.Error("Twilio should not be called just because the best-effort mapping-create call failed")
 	}
 }

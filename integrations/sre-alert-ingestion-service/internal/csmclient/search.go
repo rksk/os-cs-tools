@@ -25,29 +25,58 @@ import (
 
 // DedupTag returns the exact, stable tag internal/handler.MapToIncident
 // embeds in every CreateIncidentRequest.Subject it builds, keyed off the
-// buffered alert row's own primary-key id (internal/idgen, assigned before
-// the row is persisted — see internal/store.Store.Enqueue's doc comment).
+// buffered alert row's own human-readable alert number (this service's own
+// Postgres sequence — see internal/store.Store.Enqueue's doc comment and
+// migrations/0002_add_alert_number.up.sql). The row's internal UUID primary
+// key (internal/idgen) is unaffected by this and remains what every
+// Store method keys its UPDATE/WHERE off of — this tag is purely the
+// externally-facing identifier.
 //
-// Format: "[alert:<row-id>]", e.g. "[alert:1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed]".
-// This exact string is what internal/worker's pre-retry dedup check
+// Format: "[alert:<alert-number>]", e.g. "[alert:ALT0000123]". This exact
+// string is what internal/worker's pre-retry dedup check
 // (SearchIncidentByTag) later searches for via SearchIncidentsFilters.SearchQuery
 // to find an incident a previous, lost-response attempt may already have
 // created. Changing this format is a breaking change for any row already
 // buffered with the old tag baked into its persisted payload — don't change
 // it without a migration plan for in-flight rows.
-func DedupTag(alertID string) string {
-	return "[alert:" + alertID + "]"
+func DedupTag(alertNumber string) string {
+	return "[alert:" + alertNumber + "]"
 }
 
 // SearchIncidentsFilters is the filter subset of entity-service's own
 // SearchIncidentsFilters (internal/domain/entity.go) this service actually
 // sends. The real upstream type carries more optional fields (Priorities,
-// ParentIDs, Number, a generic Filters array) — this service only ever
-// needs free-text SearchQuery for the dedup check, so the rest are left
-// zero-valued/omitted rather than modeled here.
+// ParentIDs, a fuller Filters array) — this service only ever needs
+// free-text SearchQuery for the pre-retry dedup check, plus Number and a
+// state Filters entry for the incident-grouping open-state confirmation
+// (see SearchOpenIncidentByNumber), so the rest are left zero-valued/omitted
+// rather than modeled here.
 type SearchIncidentsFilters struct {
 	SearchQuery string `json:"searchQuery"`
+	// Number filters to the incident whose human-readable number (e.g.
+	// "INC0010001") exactly matches. Only set by SearchOpenIncidentByNumber.
+	Number *string `json:"number,omitempty"`
+	// Filters is entity-service's generic field/op/values filter array. This
+	// service only ever sends a single "state" (op "in") entry — see
+	// openIncidentStates and SearchOpenIncidentByNumber.
+	Filters []IncidentFieldFilter `json:"filters,omitempty"`
 }
+
+// IncidentFieldFilter is a single predicate in entity-service's generic
+// incident-search filter array: "field op values". Mirrors entity-service's
+// own IncidentFieldFilter (internal/domain/entity.go).
+type IncidentFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
+// openIncidentStates are entity-service's domain.IncidentState values (see
+// entity-service/internal/domain/entity.go — a read-only reference this
+// service does not import, being a separate Go module, so these literals
+// are copied and must be kept in sync by hand) that represent an incident
+// still being worked: everything except RESOLVED, CLOSED, and CANCELLED.
+var openIncidentStates = []string{"NEW", "IN_PROGRESS", "ON_HOLD"}
 
 // IncidentSort mirrors entity-service's IncidentSort. Left zero-valued by
 // SearchIncidentByTag — sort order doesn't matter when Pagination.Limit is 1
@@ -119,6 +148,45 @@ func (c *Client) SearchIncidentByTag(ctx context.Context, tag string) (*CreateIn
 		Filters:    SearchIncidentsFilters{SearchQuery: tag},
 		Pagination: Pagination{Limit: 1, Offset: 0},
 	}
+	return c.searchFirstIncident(ctx, req)
+}
+
+// SearchOpenIncidentByNumber calls POST /incidents/search filtered to the
+// incident whose human-readable number exactly matches number, AND a state
+// filter restricted to openIncidentStates (i.e. not Resolved/Closed/
+// Cancelled), and reports whether such a still-open incident exists.
+//
+// This backs internal/worker's incident-grouping check: before attaching a
+// new alert to an earlier alert's already-known incident (found via a
+// recorded alert-incident-mapping row), this confirms that incident hasn't
+// since been resolved or closed — grouping a new, currently-firing alert
+// onto a closed incident would silently bury it instead of surfacing it.
+//
+// Known limitation: like SearchIncidentByTag and CreateIncident, this
+// endpoint is ServiceNow-backed and requires a forwarded end-user identity
+// token this stack cannot currently supply, so it also 401s on every call
+// today (see this package's doc comment and this service's README/CLAUDE.md).
+// internal/worker fails open on any error here — "we couldn't confirm the
+// incident is still open" is treated the same as "not groupable, proceed as
+// before," never as "assume it's open." This method is structurally correct
+// and ready for when that infrastructure gap is closed; it does not itself
+// work around it.
+func (c *Client) SearchOpenIncidentByNumber(ctx context.Context, number string) (*CreateIncidentResult, bool, error) {
+	req := SearchIncidentsRequest{
+		Filters: SearchIncidentsFilters{
+			Number:  &number,
+			Filters: []IncidentFieldFilter{{Field: "state", Op: "in", Values: openIncidentStates}},
+		},
+		Pagination: Pagination{Limit: 1, Offset: 0},
+	}
+	return c.searchFirstIncident(ctx, req)
+}
+
+// searchFirstIncident is the shared POST /incidents/search call + decode
+// path behind SearchIncidentByTag and SearchOpenIncidentByNumber — both only
+// ever care about "does at least one incident match, and if so what's its
+// id/number," differing only in which filters they send.
+func (c *Client) searchFirstIncident(ctx context.Context, req SearchIncidentsRequest) (*CreateIncidentResult, bool, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, false, fmt.Errorf("csmclient: marshal SearchIncidentsRequest: %w", err)
@@ -131,7 +199,7 @@ func (c *Client) SearchIncidentByTag(ctx context.Context, tag string) (*CreateIn
 
 	var resp searchIncidentsResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, false, fmt.Errorf("csmclient: decode SearchIncidentByTag response: %w", err)
+		return nil, false, fmt.Errorf("csmclient: decode incident search response: %w", err)
 	}
 
 	if len(resp.Incidents) == 0 {

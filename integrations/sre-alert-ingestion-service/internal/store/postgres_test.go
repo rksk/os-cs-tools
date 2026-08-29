@@ -29,10 +29,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -49,20 +52,16 @@ func testDSN(t *testing.T) string {
 	return dsn
 }
 
-// applyMigration runs migrations/0001_create_alert_buffer.up.sql against dsn
+// applyMigration runs every migrations/*.up.sql file in order against dsn
 // directly (not through PostgresStore, which deliberately doesn't run
-// migrations itself) so the test starts from a known schema.
+// migrations itself) so the test starts from a known, current schema.
 func applyMigration(t *testing.T, dsn string) {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("could not determine test file path")
 	}
-	migrationPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations", "0001_create_alert_buffer.up.sql")
-	sqlBytes, err := os.ReadFile(migrationPath) // #nosec G304 -- fixed, repo-relative test fixture path
-	if err != nil {
-		t.Fatalf("read migration file: %v", err)
-	}
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -73,8 +72,22 @@ func applyMigration(t *testing.T, dsn string) {
 	if _, err := db.Exec(`DROP TABLE IF EXISTS alert_buffer`); err != nil {
 		t.Fatalf("drop existing table: %v", err)
 	}
-	if _, err := db.Exec(string(sqlBytes)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	if _, err := db.Exec(`DROP SEQUENCE IF EXISTS alert_number_seq`); err != nil {
+		t.Fatalf("drop existing sequence: %v", err)
+	}
+
+	ups := []string{
+		"0001_create_alert_buffer.up.sql",
+		"0002_add_alert_number.up.sql",
+	}
+	for _, name := range ups {
+		sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir, name)) // #nosec G304 -- fixed, repo-relative test fixture path
+		if err != nil {
+			t.Fatalf("read migration file %s: %v", name, err)
+		}
+		if _, err := db.Exec(string(sqlBytes)); err != nil {
+			t.Fatalf("apply migration %s: %v", name, err)
+		}
 	}
 }
 
@@ -95,8 +108,17 @@ func TestPostgresStore_EnqueueAndLifecycle(t *testing.T) {
 	}
 
 	id := "11111111-1111-4111-8111-111111111111"
-	if err := s.Enqueue(ctx, id, []byte(`{"source":"test"}`)); err != nil {
+	alertNumber, err := s.Enqueue(ctx, id, func(alertNumber string) ([]byte, error) {
+		return []byte(`{"source":"test"}`), nil
+	})
+	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if alertNumber == "" {
+		t.Fatal("Enqueue() returned an empty alertNumber")
+	}
+	if !strings.HasPrefix(alertNumber, "ALT") {
+		t.Errorf("alertNumber = %q, want it to start with ALT", alertNumber)
 	}
 
 	batch, err := s.PendingBatch(ctx, 10)
@@ -109,6 +131,9 @@ func TestPostgresStore_EnqueueAndLifecycle(t *testing.T) {
 	got := batch[0]
 	if got.ID != id {
 		t.Errorf("row ID = %q, want %q", got.ID, id)
+	}
+	if got.AlertNumber != alertNumber {
+		t.Errorf("row AlertNumber = %q, want %q (the value Enqueue returned)", got.AlertNumber, alertNumber)
 	}
 	if got.Status != store.StatusPending {
 		t.Errorf("row Status = %q, want %q", got.Status, store.StatusPending)
@@ -175,8 +200,10 @@ func TestPostgresStore_MarkEscalatedAndMarkFailedLeavePendingSet(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
+	buildPayload := func(alertNumber string) ([]byte, error) { return []byte(`{}`), nil }
+
 	escalatedID := "22222222-2222-4222-8222-222222222222"
-	if err := s.Enqueue(ctx, escalatedID, []byte(`{}`)); err != nil {
+	if _, err := s.Enqueue(ctx, escalatedID, buildPayload); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if err := s.MarkEscalated(ctx, escalatedID, "retry budget exhausted"); err != nil {
@@ -184,7 +211,7 @@ func TestPostgresStore_MarkEscalatedAndMarkFailedLeavePendingSet(t *testing.T) {
 	}
 
 	failedID := "33333333-3333-4333-8333-333333333333"
-	if err := s.Enqueue(ctx, failedID, []byte(`{}`)); err != nil {
+	if _, err := s.Enqueue(ctx, failedID, buildPayload); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if err := s.MarkFailed(ctx, failedID, "upstream returned 400: invalid payload"); err != nil {
@@ -197,5 +224,42 @@ func TestPostgresStore_MarkEscalatedAndMarkFailedLeavePendingSet(t *testing.T) {
 	}
 	if len(batch) != 0 {
 		t.Fatalf("PendingBatch() = %d rows, want 0 (escalated/failed rows aren't pending)", len(batch))
+	}
+}
+
+// TestPostgresStore_AlertNumbersAreSequentialAndUnique pins the exact format
+// (see internal/store.PostgresStore.Enqueue's "ALT" + 7-digit format) and
+// that alert_number_seq actually enforces uniqueness across concurrent
+// Enqueue calls -- the UNIQUE constraint added by
+// migrations/0002_add_alert_number.up.sql is what CreateAlertIncidentMapping
+// and the dedup tag both depend on never colliding.
+func TestPostgresStore_AlertNumbersAreSequentialAndUnique(t *testing.T) {
+	dsn := testDSN(t)
+	applyMigration(t, dsn)
+
+	s, err := store.NewPostgresStore(dsn)
+	if err != nil {
+		t.Fatalf("NewPostgresStore() error = %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	buildPayload := func(alertNumber string) ([]byte, error) { return []byte(`{}`), nil }
+
+	const n = 20
+	seen := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
+		alertNumber, err := s.Enqueue(ctx, id, buildPayload)
+		if err != nil {
+			t.Fatalf("Enqueue() [%d] error = %v", i, err)
+		}
+		if matched, merr := regexp.MatchString(`^ALT\d{7}$`, alertNumber); merr != nil || !matched {
+			t.Errorf("alertNumber = %q, want it to match ^ALT\\d{7}$", alertNumber)
+		}
+		if seen[alertNumber] {
+			t.Fatalf("alertNumber %q was generated more than once across %d Enqueue calls", alertNumber, n)
+		}
+		seen[alertNumber] = true
 	}
 }

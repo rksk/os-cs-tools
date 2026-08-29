@@ -51,7 +51,8 @@ func TestCreateAlert_Success(t *testing.T) {
 
 	assertStatus(t, w, http.StatusAccepted)
 	var body struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		AlertNumber string `json:"alertNumber"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -59,16 +60,24 @@ func TestCreateAlert_Success(t *testing.T) {
 	if body.ID == "" {
 		t.Fatal("response id is empty, want a generated id")
 	}
+	if body.AlertNumber == "" {
+		t.Fatal("response alertNumber is empty, want the generated human-readable alert number")
+	}
 
 	if len(store.enqueuedPayloads) != 1 {
 		t.Fatalf("Enqueue called %d times, want 1", len(store.enqueuedPayloads))
 	}
 	// The id returned to the caller must be the exact same id the row was
-	// persisted under — this is what lets internal/worker's later
-	// SearchIncidentByTag(csmclient.DedupTag(row.ID)) find the incident this
-	// same alert's Subject was tagged with below.
+	// persisted under.
 	if store.enqueuedIDs[0] != body.ID {
 		t.Errorf("enqueued id = %q, want it to match the response id %q", store.enqueuedIDs[0], body.ID)
+	}
+	// The alertNumber returned to the caller must be the exact same one the
+	// row was persisted under — this is what lets internal/worker's later
+	// SearchIncidentByTag(csmclient.DedupTag(row.AlertNumber)) find the
+	// incident this same alert's Subject was tagged with below.
+	if store.enqueuedAlertNumbers[0] != body.AlertNumber {
+		t.Errorf("enqueued alertNumber = %q, want it to match the response alertNumber %q", store.enqueuedAlertNumbers[0], body.AlertNumber)
 	}
 	var incidentReq csmclient.CreateIncidentRequest
 	if err := json.Unmarshal(store.enqueuedPayloads[0], &incidentReq); err != nil {
@@ -95,7 +104,7 @@ func TestCreateAlert_Success(t *testing.T) {
 	if incidentReq.WorkNotes == nil || !strings.Contains(*incidentReq.WorkNotes, "alert-abc-123") {
 		t.Errorf("WorkNotes = %v, want it to contain the unique identifier", incidentReq.WorkNotes)
 	}
-	wantTag := csmclient.DedupTag(body.ID)
+	wantTag := csmclient.DedupTag(body.AlertNumber)
 	if !strings.HasPrefix(incidentReq.Subject, wantTag) {
 		t.Errorf("Subject = %q, want it to start with the dedup tag %q", incidentReq.Subject, wantTag)
 	}
@@ -174,8 +183,8 @@ func TestCreateAlert_RejectsOversizedBody(t *testing.T) {
 }
 
 func TestCreateAlert_StoreFailureReturns500(t *testing.T) {
-	store := &mockStore{enqueueFn: func(ctx context.Context, id string, payload []byte) error {
-		return errors.New("connection refused")
+	store := &mockStore{enqueueFn: func(ctx context.Context, id string, buildPayload func(string) ([]byte, error)) (string, error) {
+		return "", errors.New("connection refused")
 	}}
 	h := NewAlertHandler(store, "caller-1")
 
@@ -216,5 +225,70 @@ func TestMapToIncident_SubjectStartsWithDedupTag(t *testing.T) {
 	}
 	if out.Subject != csmclient.DedupTag("1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed")+" [azure] error_rate alert: svc-checkout" {
 		t.Errorf("Subject = %q, unexpected full format", out.Subject)
+	}
+}
+
+// TestDeriveAlertStatus pins deriveAlertStatus's severity->FIRING/RESOLVED
+// mapping: "ok" (case-insensitively, surrounding whitespace trimmed) is the
+// sole severity value treated as RESOLVED, matching the one signal
+// internal/severity.MapImpactUrgency already documents as meaning "this
+// condition has cleared." Every other severity value, including one this
+// service doesn't otherwise recognize, means the condition is still active.
+func TestDeriveAlertStatus(t *testing.T) {
+	cases := []struct {
+		severity string
+		want     string
+	}{
+		{"ok", "RESOLVED"},
+		{"OK", "RESOLVED"},
+		{"  ok  ", "RESOLVED"},
+		{"critical", "FIRING"},
+		{"major", "FIRING"},
+		{"minor", "FIRING"},
+		{"warning", "FIRING"},
+		{"", "FIRING"},
+		{"some-unrecognized-value", "FIRING"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.severity, func(t *testing.T) {
+			got := deriveAlertStatus(AlertRequest{Severity: tc.severity})
+			if got != tc.want {
+				t.Errorf("deriveAlertStatus(Severity=%q) = %q, want %q", tc.severity, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCreateAlert_PersistsGroupingFieldsAlongsideMappedIncident verifies the
+// buffered payload carries the alertpayload.Payload superset fields
+// (source/uniqueIdentifier/service/metricName/alertStatus), not just the
+// embedded CreateIncidentRequest — internal/worker's incident-grouping logic
+// depends on these being present in what actually gets persisted.
+func TestCreateAlert_PersistsGroupingFieldsAlongsideMappedIncident(t *testing.T) {
+	store := &mockStore{}
+	h := NewAlertHandler(store, "caller-1")
+
+	r := httptest.NewRequest(http.MethodPost, "/alerts", bytes.NewReader(validAlertJSON()))
+	w := httptest.NewRecorder()
+	h.CreateAlert(w, r)
+
+	assertStatus(t, w, http.StatusAccepted)
+	if len(store.enqueuedPayloads) != 1 {
+		t.Fatalf("Enqueue called %d times, want 1", len(store.enqueuedPayloads))
+	}
+
+	var got struct {
+		Source           string `json:"source"`
+		UniqueIdentifier string `json:"uniqueIdentifier"`
+		Service          string `json:"service"`
+		MetricName       string `json:"metricName"`
+		AlertStatus      string `json:"alertStatus"`
+	}
+	if err := json.Unmarshal(store.enqueuedPayloads[0], &got); err != nil {
+		t.Fatalf("buffered payload is not valid JSON: %v", err)
+	}
+	if got.Source != "azure" || got.UniqueIdentifier != "alert-abc-123" || got.Service != "svc-checkout" ||
+		got.MetricName != "error_rate" || got.AlertStatus != "FIRING" {
+		t.Errorf("persisted grouping fields = %+v, want source=azure uniqueIdentifier=alert-abc-123 service=svc-checkout metricName=error_rate alertStatus=FIRING", got)
 	}
 }
