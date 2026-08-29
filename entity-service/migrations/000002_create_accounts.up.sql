@@ -1,15 +1,15 @@
 CREATE TYPE account_tier AS ENUM ('basic', 'enterprise');
 
 CREATE TABLE IF NOT EXISTS accounts (
-    id                    TEXT         PRIMARY KEY,
+    id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     sf_id                 TEXT         NOT NULL UNIQUE,
     name                  TEXT         NOT NULL,
     tier                  account_tier NOT NULL,
     region                TEXT,
     activation_date       TIMESTAMPTZ  NOT NULL,
     deactivation_date     TIMESTAMPTZ,
-    owner_id              TEXT         NOT NULL,
-    technical_owner_id    TEXT,
+    owner_id              UUID         NOT NULL,
+    technical_owner_id    UUID,
     agent_enabled         BOOLEAN      NOT NULL DEFAULT FALSE,
     kb_references_enabled BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),

@@ -9,10 +9,10 @@ CREATE TABLE IF NOT EXISTS case_attachments (
   mime_type   TEXT NOT NULL,
   size_bytes  BIGINT NOT NULL CHECK (size_bytes > 0),
   description TEXT,
-  uploaded_by TEXT NOT NULL REFERENCES users(id),
+  uploaded_by UUID NOT NULL REFERENCES users(id),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_by  TEXT REFERENCES users(id)
+  updated_by  UUID REFERENCES users(id)
 );
 
 -- FK / equality indexes

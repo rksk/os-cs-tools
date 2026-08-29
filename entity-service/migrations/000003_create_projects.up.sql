@@ -20,8 +20,8 @@ CREATE TYPE closure_status_enum AS ENUM (
 );
 
 CREATE TABLE IF NOT EXISTS projects (
-    id                TEXT                   PRIMARY KEY,
-    account_id        TEXT                   NOT NULL,
+    id                UUID                   PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id        UUID                   NOT NULL,
     sf_id             TEXT                   NOT NULL UNIQUE,
     name              TEXT                   NOT NULL,
     key               TEXT                   NOT NULL UNIQUE,
