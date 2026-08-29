@@ -1327,11 +1327,17 @@ export default function CreateCasePage(): JSX.Element {
   const hasNoDeployments =
     !isPrimaryProductionOnly &&
     isDeploymentDropdownEmpty(baseDeploymentOptions, deploymentFieldLoading, false);
-  const hasNoProductsForDeployment = isProductDropdownEmpty(
-    sortedBaseProductOptions.length > 0,
-    isProductDropdownDisabled,
-    productFieldLoading,
-  );
+  // Same exclusion as hasNoDeployments above: these project types have no
+  // self-service add-product affordance (see onAddProduct below), so
+  // treating an empty product list as a blocking dead end here would leave
+  // the customer with no way out.
+  const hasNoProductsForDeployment =
+    !isPrimaryProductionOnly &&
+    isProductDropdownEmpty(
+      sortedBaseProductOptions.length > 0,
+      isProductDropdownDisabled,
+      productFieldLoading,
+    );
   // Nothing valid can be submitted while either dropdown is a dead end.
   const isFormBlockedByMissingOptions =
     isDeploymentSetupEnabled && (hasNoDeployments || hasNoProductsForDeployment);
@@ -1414,8 +1420,22 @@ export default function CreateCasePage(): JSX.Element {
             extraProductOptions={extraProductOptions}
             isDeploymentDisabled={false}
             hideDeploymentField={isPrimaryProductionOnly}
-            onAddDeployment={isDeploymentSetupEnabled ? handleAddDeployment : undefined}
-            onAddProduct={isDeploymentSetupEnabled ? handleAddProduct : undefined}
+            onAddDeployment={
+              isDeploymentSetupEnabled && !isPrimaryProductionOnly
+                ? handleAddDeployment
+                : undefined
+            }
+            // Cloud Support / Cloud Evaluation Support projects are locked
+            // to a single "Primary Production" deployment (the field itself
+            // is hidden via hideDeploymentField below) - since we don't
+            // offer these projects self-service deployment setup, offering
+            // to add a product under that fixed deployment would be
+            // inconsistent.
+            onAddProduct={
+              isDeploymentSetupEnabled && !isPrimaryProductionOnly
+                ? handleAddProduct
+                : undefined
+            }
             onLoadMoreDeployments={() => {
               if (
                 deploymentsQuery.hasNextPage &&

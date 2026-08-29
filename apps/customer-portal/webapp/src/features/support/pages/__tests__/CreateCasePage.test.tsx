@@ -112,13 +112,15 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   };
 });
 
+const mockShouldRestrictToPrimaryProductionDeployments = vi.fn(() => false);
 vi.mock("@utils/permission", () => ({
   filterDeploymentsForCaseCreation: (items: unknown[]) => items ?? [],
   getProjectSeverityPolicy: () => ({
     excludeS0: false,
     restrictSeverityToLow: false,
   }),
-  shouldRestrictToPrimaryProductionDeployments: () => false,
+  shouldRestrictToPrimaryProductionDeployments: () =>
+    mockShouldRestrictToPrimaryProductionDeployments(),
 }));
 
 vi.mock("@features/support/components/case-creation-layout/header/CaseCreationHeader", () => ({
@@ -830,6 +832,37 @@ describe("CreateCasePage", () => {
           screen.getByText("Deployment value: (none)"),
         ).toBeInTheDocument(),
       );
+    });
+  });
+
+  describe("Cloud Support / Cloud Evaluation Support projects (locked to Primary Production)", () => {
+    afterEach(() => {
+      // mockReturnValue persists across tests (clearAllMocks doesn't reset
+      // it), so restore the default explicitly.
+      mockShouldRestrictToPrimaryProductionDeployments.mockReturnValue(false);
+    });
+
+    it("does not offer Add Product for a fixed-deployment project, since it doesn't offer Add Deployment either", () => {
+      mockShouldRestrictToPrimaryProductionDeployments.mockReturnValue(true);
+      // A project locked to Primary Production has no deployment field at
+      // all (hideDeploymentField), so there is never an "Add Deployment
+      // CTA" to click here - only confirming "Add Product CTA" is also
+      // absent.
+      render(<CreateCasePage />);
+
+      expect(
+        screen.queryByText("Add Product CTA"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not block the form on an empty product list either, since there's no way to add one", () => {
+      mockShouldRestrictToPrimaryProductionDeployments.mockReturnValue(true);
+      mockDeploymentProductsQuery.mockReturnValue(EMPTY_INFINITE_QUERY);
+
+      render(<CreateCasePage />);
+
+      expect(screen.getByText("Details Section")).toBeInTheDocument();
+      expect(screen.getByText("Watch List Section")).toBeInTheDocument();
     });
   });
 });
