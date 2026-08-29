@@ -180,3 +180,24 @@ func (m *mockEntityIncidentClient) SearchIncidents(ctx context.Context, body []b
 	}
 	return []byte(`{}`), nil
 }
+
+// ----- mock entity alert-incident-mapping client -----
+
+type mockEntityAlertIncidentMappingClient struct {
+	createAlertIncidentMappingFn  func(ctx context.Context, body []byte) ([]byte, error)
+	lookupAlertIncidentMappingsFn func(ctx context.Context, body []byte) ([]byte, error)
+}
+
+func (m *mockEntityAlertIncidentMappingClient) CreateAlertIncidentMapping(ctx context.Context, body []byte) ([]byte, error) {
+	if m.createAlertIncidentMappingFn != nil {
+		return m.createAlertIncidentMappingFn(ctx, body)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityAlertIncidentMappingClient) LookupAlertIncidentMappings(ctx context.Context, body []byte) ([]byte, error) {
+	if m.lookupAlertIncidentMappingsFn != nil {
+		return m.lookupAlertIncidentMappingsFn(ctx, body)
+	}
+	return []byte(`{}`), nil
+}

@@ -1,8 +1,8 @@
 # CSM Integration Service
 
 Go HTTP server (`net/http`, Go 1.26+) exposing Project/Account search and their
-Contacts sub-resource, plus incident creation and search, to third-party (M2M)
-consumers. It
+Contacts sub-resource, incident creation and search, and alert-incident mapping
+create/lookup, to third-party (M2M) consumers. It
 forwards requests to the entity service and returns responses as-is — it does not
 shape or authenticate on behalf of an end user.
 
@@ -68,6 +68,20 @@ some other path with its own credential. Neither is solved by this service's own
 code — don't attempt to "fix" this endpoint locally without that groundwork
 existing first.
 
+## `POST /alert-incident-mappings` and `POST /alert-incident-mappings/lookup` are functional today
+
+**Unlike `POST /incidents`, `POST /incidents/search`, and `PATCH /projects/{id}`
+above, these two endpoints are NOT stuck in an always-401 state.** They proxy
+a Postgres-only entity-service operation with no ServiceNow dependency, so no
+forwarded end-user identity is required — this service's M2M-only identity to
+entity-service is sufficient on its own. A caller through Choreo's gateway can
+expect a real `201`/`200` from these today, not a guaranteed `401`. Don't
+assume every endpoint in this service is in the "kept for API-shape
+completeness, doesn't work yet" state described above — check whether the
+underlying entity-service operation is ServiceNow-backed (needs a forwarded
+identity, will 401 here) or Postgres-only (works fine over M2M) before
+documenting a new endpoint one way or the other.
+
 ## Middleware chain
 
 `SecurityHeaders → CorrelationID → Logger → Mux`
@@ -93,7 +107,7 @@ handler so every `slog.*Context(r.Context(), …)` call automatically includes
 
 | Package | Upstream | Notes |
 |---------|----------|-------|
-| `entity` | Entity service | Account/Project + Contacts sub-resource + incident creation/search; raw `[]byte` passthrough |
+| `entity` | Entity service | Account/Project + Contacts sub-resource + incident creation/search + alert-incident mapping create/lookup; raw `[]byte` passthrough |
 
 A new upstream service would get its own package under `internal/`, following the
 same `Config`/`Client`/`NewClient`/`do()` pattern as `internal/entity`.
