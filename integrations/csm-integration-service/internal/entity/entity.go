@@ -73,3 +73,15 @@ func (c *Client) SearchProjectContacts(ctx context.Context, projectID string, bo
 func (c *Client) UpdateProject(ctx context.Context, id string, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/projects/%s", url.PathEscape(id)), body)
 }
+
+// CreateIncident calls POST /incidents on the entity service. This targets a
+// ServiceNow-backed operation that requires a forwarded end-user identity
+// token. This service is strictly M2M with no mechanism to carry one, so
+// entity-service is expected to reject this call with 401 — kept for
+// API-shape completeness so a real caller has somewhere stable to point at,
+// not because it currently succeeds. See UpdateProject's doc comment above
+// for the same situation. Response is returned as raw JSON; typed response
+// structs are deferred.
+func (c *Client) CreateIncident(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incidents", body)
+}
