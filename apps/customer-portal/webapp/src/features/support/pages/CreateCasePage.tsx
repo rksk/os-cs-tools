@@ -1265,16 +1265,18 @@ export default function CreateCasePage(): JSX.Element {
     return [classificationProductLabel];
   }, [classificationProductLabel, sortedBaseProductOptions]);
 
+  // "Auto detected" means the AI classification suggested this value - it
+  // is misleading for a singleton auto-select (there was nothing to
+  // detect, it was just the only option), so that case intentionally
+  // shows no chip at all rather than reusing this one.
   const isProductAutoDetected =
-    (!noAiMode &&
-      !!classificationProductLabel?.trim() &&
-      !!product?.trim() &&
-      !isProductManuallySet) ||
-    isProductSingleOptionAutoSelected;
+    !noAiMode &&
+    !!classificationProductLabel?.trim() &&
+    !!product?.trim() &&
+    !isProductManuallySet;
 
   const isDeploymentAutoDetected =
-    (!noAiMode && isDeploymentFromClassification && !isDeploymentManuallySet) ||
-    isDeploymentSingleOptionAutoSelected;
+    !noAiMode && isDeploymentFromClassification && !isDeploymentManuallySet;
 
   const isIssueTypeAutoDetected = !noAiMode && isIssueTypeFromClassification;
   const isSeverityAutoDetected = !noAiMode && isSeverityFromClassification;
@@ -1305,11 +1307,22 @@ export default function CreateCasePage(): JSX.Element {
   // below so the "no options configured" empty-state check stays consistent
   // between what the dropdown shows and whether the rest of the form is
   // blocked from submission.
+  //
+  // The *ClassificationPending flags only mean "still paging through
+  // results looking for the AI-suggested match" - once at least one real
+  // option has actually arrived, that search continuing in the background
+  // must not keep masking the dropdown as loading. Without this guard, a
+  // deployment/product added while classification's search was still
+  // in-flight (e.g. right after using "Add Deployment"/"Add Product" from
+  // an empty list) stayed hidden behind a loading skeleton until something
+  // else (like re-picking the deployment) reset the classification state.
   const deploymentFieldLoading =
-    isProjectLoading || isDeploymentsLoading || isDeploymentClassificationPending;
+    isProjectLoading ||
+    isDeploymentsLoading ||
+    (isDeploymentClassificationPending && baseDeploymentOptions.length === 0);
   const productFieldLoading =
     (!!selectedDeploymentId && deploymentProductsLoading) ||
-    isProductClassificationPending;
+    (isProductClassificationPending && sortedBaseProductOptions.length === 0);
 
   const hasNoDeployments =
     !isPrimaryProductionOnly &&

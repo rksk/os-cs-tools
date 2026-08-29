@@ -55,8 +55,15 @@ vi.mock("@api/useGetProjectFeatures", () => ({
   default: () => ({ data: {}, isLoading: false }),
 }));
 
+const mockProjectFilters = vi.fn(() => ({
+  data: {
+    issueTypes: [] as { id: string; label: string }[],
+    severities: [] as { id: string; label: string }[],
+  },
+  isLoading: false,
+}));
 vi.mock("@api/useGetProjectFilters", () => ({
-  default: () => ({ data: { issueTypes: [], severities: [] }, isLoading: false }),
+  default: () => mockProjectFilters(),
 }));
 
 const mockDeploymentsQuery = vi.fn();
@@ -141,11 +148,21 @@ vi.mock(
       setDeployment?: (value: string) => void;
       onAddDeployment?: () => void;
       onAddProduct?: () => void;
+      isDeploymentAutoDetected?: boolean;
+      isProductAutoDetected?: boolean;
+      isDeploymentLoading?: boolean;
+      isProductLoading?: boolean;
     }) => (
       <div>
         Basic Section
         <div>Deployment value: {props.deployment || "(none)"}</div>
         <div>Product value: {props.product || "(none)"}</div>
+        <div>
+          Deployment auto detected: {String(!!props.isDeploymentAutoDetected)}
+        </div>
+        <div>Product auto detected: {String(!!props.isProductAutoDetected)}</div>
+        <div>Deployment loading: {String(!!props.isDeploymentLoading)}</div>
+        <div>Product loading: {String(!!props.isProductLoading)}</div>
         {props.setDeployment && (
           <button onClick={() => props.setDeployment?.("Production")}>
             Select Deployment
@@ -505,6 +522,65 @@ describe("CreateCasePage", () => {
       expect(
         screen.getByRole("button", { name: /create support case/i }),
       ).toBeInTheDocument();
+
+      // Regression: a singleton auto-select is not the same thing as an
+      // AI-classification "detection" - reusing the same "Auto detected"
+      // chip for both was misleading, since nothing was actually detected
+      // here, it was just the only option.
+      expect(
+        screen.getByText("Deployment auto detected: false"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Product auto detected: false"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not mask an already-loaded product behind a loading skeleton just because classification's page search is still in flight", () => {
+      // Regression: adding a product to a deployment while Novera's
+      // classification suggested some (unrelated/not-yet-matched) product
+      // name used to keep the product field stuck in a loading state -
+      // masking the just-added product - until something else reset the
+      // classification-pending flags (e.g. re-picking the deployment).
+      // The classification-apply effect requires a non-empty severities
+      // list to run at all.
+      mockProjectFilters.mockReturnValue({
+        data: {
+          issueTypes: [],
+          severities: [{ id: "sev-2", label: "S2" }],
+        },
+        isLoading: false,
+      });
+      mockUseLocation.mockReturnValue({
+        pathname: "/projects/project-1/support/chat/create-case",
+        search: "",
+        state: {
+          classificationResponse: {
+            issueType: "Bug",
+            severityLevel: "S2",
+            caseInfo: { productName: "Some Other Product Not In The List" },
+          },
+        },
+      });
+      // The deployment's product query still has more pages left to search
+      // for that classification-suggested product, but a real product has
+      // already arrived on the first page - it must not be hidden.
+      mockDeploymentProductsQuery.mockReturnValue({
+        ...EMPTY_INFINITE_QUERY,
+        hasNextPage: true,
+        data: {
+          pages: [
+            {
+              products: [
+                { id: "prod-1", product: { label: "API Manager" }, version: "4.2.0" },
+              ],
+            },
+          ],
+        },
+      });
+
+      render(<CreateCasePage />);
+
+      expect(screen.getByText("Product loading: false")).toBeInTheDocument();
     });
 
     it("also switches to a newly-added deployment (not the classification-driven one) when arriving via Novera chat", () => {
