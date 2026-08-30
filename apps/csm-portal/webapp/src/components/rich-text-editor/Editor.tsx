@@ -38,7 +38,6 @@ import {
   tokenizePlainTextPaste,
   unwrapNestedPreCodeElements,
   collapseEmptyParagraphElements,
-  stripRedundantBoldWrapper,
 } from "@components/rich-text-editor/richTextEditor";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
@@ -124,7 +123,7 @@ const OnChangeHTMLPlugin = ({
       onChange={(editorState) => {
         editorState.read(() => {
           const html = $generateHtmlFromNodes(editor);
-          onChange?.(stripRedundantBoldWrapper(html));
+          onChange?.(html);
         });
       }}
     />
