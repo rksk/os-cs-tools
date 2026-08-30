@@ -324,3 +324,68 @@ export function collapseEmptyParagraphElements(dom: Document): boolean {
 
   return changed;
 }
+
+/**
+ * Removes the redundant `<b>` wrapper Lexical's default `TextNode.exportDOM()`
+ * always adds around a bold run, when (and only when) its sole child is a
+ * `<strong>` element. Mutates `dom` in place; returns whether anything changed.
+ *
+ * Lexical's live editor DOM already renders a bold run as `<strong class="…">`
+ * (`getElementInnerTag` picks `strong` whenever the `bold` format is set, ahead
+ * of every other format), but on export `exportDOM` unconditionally wraps that
+ * same element in an *additional* `<b>` for "client compatibility"
+ * (`node_modules/lexical/Lexical.dev.mjs`, `wrapElementWith(element, 'b')`).
+ * That wrapper is pure duplication: `<strong>` alone already renders bold in
+ * every browser via the UA stylesheet, independent of nesting, so `<b><strong>`
+ * and `<strong>` render identically anywhere this HTML is read.
+ *
+ * Deliberately narrow: only `<b>` is touched. `<i>`, `<u>`, `<s>` are NOT safe
+ * to strip the same way — `getElementInnerTag` only ever branches on bold and
+ * italic (bold wins if both are set), so underline and strikethrough are
+ * *never* the base tag and exist purely as a CSS class
+ * (`editor-text-underline` / `editor-text-strikethrough`) that only the
+ * editor's own stylesheet defines. Once a comment is posted and rendered
+ * elsewhere (`CsmCaseCommentBubble.tsx`, which has no such class rules), the
+ * `<u>`/`<s>` wrapper — and `<i>` too, whenever bold is also active and has
+ * already claimed the `<strong>` base tag — is the *only* thing that makes
+ * that formatting visible. Stripping those would silently drop real
+ * formatting from posted comments; stripping `<b>` never does, since
+ * `<strong>` never depends on it.
+ */
+export function unwrapRedundantBoldTag(dom: Document): boolean {
+  const body = dom.body;
+  if (!body) return false;
+
+  let changed = false;
+  for (const b of Array.from(body.querySelectorAll("b"))) {
+    const onlyChild = b.childNodes.length === 1 ? b.firstChild : null;
+    if (
+      onlyChild?.nodeType === Node.ELEMENT_NODE &&
+      (onlyChild as Element).tagName === "STRONG"
+    ) {
+      b.replaceWith(onlyChild);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+/**
+ * String-level convenience wrapper around {@link unwrapRedundantBoldTag} for
+ * the composer's HTML-generation path, which only has the serialized
+ * `$generateHtmlFromNodes` output, not a `Document`.
+ *
+ * The `includes("<b")` fast path matters for perf on large comment bodies:
+ * this runs on every keystroke (`OnChangeHTMLPlugin`), and the common case
+ * has no bold text at all, so most calls skip the parse/serialize round trip
+ * entirely rather than paying it unconditionally.
+ */
+export function stripRedundantBoldWrapper(html: string): string {
+  if (!html.includes("<b")) return html;
+
+  const dom = new DOMParser().parseFromString(html, "text/html");
+  if (!unwrapRedundantBoldTag(dom)) return html;
+
+  return dom.body.innerHTML;
+}
