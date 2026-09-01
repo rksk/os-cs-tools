@@ -341,15 +341,24 @@ func (s *snOutageService) SearchOutages(ctx context.Context, req domain.SearchOu
 	}, nil
 }
 
-// snOutageDetail mirrors the Choreo GET /outages/{id} response: the outage
-// shape plus per-channel communication counts.
-type snOutageDetail struct {
+// snOutageDetailInner mirrors the Choreo OutageDetails schema: the outage
+// shape plus per-channel communication counts, both nested inside the
+// response's "outage" key.
+type snOutageDetailInner struct {
 	snOutage
 	CommunicationCounts struct {
 		External   int `json:"external"`
 		Internal   int `json:"internal"`
 		Additional int `json:"additional"`
 	} `json:"communicationCounts"`
+}
+
+// snOutageDetail mirrors the Choreo GET /outages/{id} response (OutageResponse):
+// the detail object is wrapped under "outage", not flat at the top level --
+// unmarshaling into a flat struct silently produced an all-zero-value result
+// with no error, since json.Unmarshal ignores unmatched top-level keys.
+type snOutageDetail struct {
+	Outage snOutageDetailInner `json:"outage"`
 }
 
 // GetOutageByID implements OutageService for the ServiceNow data source.
@@ -371,9 +380,9 @@ func (s *snOutageService) GetOutageByID(ctx context.Context, id string) (domain.
 	}
 
 	return domain.OutageDetail{
-		Outage: mapSNOutageToView(sn.snOutage),
+		Outage: mapSNOutageToView(sn.Outage.snOutage),
 		CommunicationCounts: domain.OutageCommunicationCounts{
-			External: sn.CommunicationCounts.External, Internal: sn.CommunicationCounts.Internal, Additional: sn.CommunicationCounts.Additional,
+			External: sn.Outage.CommunicationCounts.External, Internal: sn.Outage.CommunicationCounts.Internal, Additional: sn.Outage.CommunicationCounts.Additional,
 		},
 	}, nil
 }

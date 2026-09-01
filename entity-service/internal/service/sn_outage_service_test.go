@@ -368,17 +368,22 @@ func TestSNOutageService_GetOutageByID_MapsCommunicationCounts(t *testing.T) {
 			t.Fatalf("expected GET, got %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// The real response wraps the detail object under "outage" (OutageResponse ->
+		// OutageDetails) -- this shape caught a real bug where an earlier flat mock let
+		// an unwrap-less struct silently unmarshal to all zero values with no error.
 		_, _ = w.Write([]byte(`{
-			"id": "` + testOutageSysid + `", "number": "OUT0001875",
-			"type": "outage", "status": "resolved",
-			"begin": "2026-08-18 09:00:00", "end": "2026-08-18 10:00:00", "duration": "1970-01-01 01:00:00",
-			"shortDescription": "test outage",
-			"configurationItem": null, "incident": null,
-			"affectedConfigurationItems": [],
-			"publishesToStatusPage": false, "statusPageCloud": null,
-			"createdOn": "2026-08-18 09:00:00", "createdBy": "engineer@example.com",
-			"updatedOn": "2026-08-18 09:00:00", "updatedBy": "engineer@example.com",
-			"communicationCounts": {"external": 2, "internal": 2, "additional": 0}
+			"outage": {
+				"id": "` + testOutageSysid + `", "number": "OUT0001875",
+				"type": "outage", "status": "resolved",
+				"begin": "2026-08-18 09:00:00", "end": "2026-08-18 10:00:00", "duration": "1970-01-01 01:00:00",
+				"shortDescription": "test outage",
+				"configurationItem": null, "incident": null,
+				"affectedConfigurationItems": [],
+				"publishesToStatusPage": false, "statusPageCloud": null,
+				"createdOn": "2026-08-18 09:00:00", "createdBy": "engineer@example.com",
+				"updatedOn": "2026-08-18 09:00:00", "updatedBy": "engineer@example.com",
+				"communicationCounts": {"external": 2, "internal": 2, "additional": 0}
+			}
 		}`))
 	})
 
@@ -388,6 +393,9 @@ func TestSNOutageService_GetOutageByID_MapsCommunicationCounts(t *testing.T) {
 	resp, err := svc.GetOutageByID(contextWithUserIDToken("token"), testOutageUUID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Outage.Number != "OUT0001875" {
+		t.Errorf("outage.number: got %q, want %q -- struct must unwrap the \"outage\" key, not read it flat", resp.Outage.Number, "OUT0001875")
 	}
 	if resp.CommunicationCounts.External != 2 || resp.CommunicationCounts.Internal != 2 || resp.CommunicationCounts.Additional != 0 {
 		t.Errorf("communicationCounts: got %+v", resp.CommunicationCounts)
