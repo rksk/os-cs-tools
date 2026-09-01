@@ -3852,7 +3852,8 @@ export interface BeOutage {
   shortDescription: string;
   configurationItem: BeOutageConfigurationItemRef | null;
   incident: BeOutageIncidentRef | null;
-  affectedConfigurationItems: BeOutageConfigurationItemRef[];
+  /** Maintained by the backing data source's own business rules; can be `null`, not just empty. */
+  affectedConfigurationItems: BeOutageConfigurationItemRef[] | null;
   publishesToStatusPage: boolean;
   statusPageCloud: string | null;
   createdOn: string;

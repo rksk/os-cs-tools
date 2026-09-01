@@ -307,7 +307,7 @@ export default function OutageDetailPage(): JSX.Element {
             <Typography variant="body2">{formatDateTime(outage.updatedOn)} · {outage.updatedBy || "—"}</Typography>
           </MetaCell>
         </Box>
-        {outage.affectedConfigurationItems.length > 0 && (
+        {!!outage.affectedConfigurationItems?.length && (
           <MetaCell label={`Affected configuration items (${outage.affectedConfigurationItems.length})`}>
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
               {outage.affectedConfigurationItems.map((ci) => (
