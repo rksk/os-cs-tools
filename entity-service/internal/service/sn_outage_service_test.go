@@ -298,13 +298,17 @@ func TestSNOutageService_SearchOutages_MapsFiltersAndResponse(t *testing.T) {
 		t.Errorf("appliedBeginFrom: got %q", resp.AppliedBeginFrom)
 	}
 
-	filters, ok := gotBody["filters"].(map[string]any)
-	if !ok {
-		t.Fatal("expected filters object in outgoing payload")
+	// The outgoing payload must be flat -- Choreo's OutageSearchPayload is a
+	// closed record with no filters/pagination wrapper; a nested shape 400s.
+	if _, ok := gotBody["filters"]; ok {
+		t.Fatal("outgoing payload must not nest fields under \"filters\" -- Choreo's OutageSearchPayload is flat")
 	}
-	types, ok := filters["types"].([]any)
+	if _, ok := gotBody["pagination"]; ok {
+		t.Fatal("outgoing payload must not nest fields under \"pagination\" -- Choreo's OutageSearchPayload is flat")
+	}
+	types, ok := gotBody["types"].([]any)
 	if !ok || len(types) != 1 || types[0] != "outage" {
-		t.Errorf("expected filters.types == [\"outage\"], got %v", filters["types"])
+		t.Errorf("expected top-level types == [\"outage\"], got %v", gotBody["types"])
 	}
 }
 

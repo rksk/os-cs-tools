@@ -224,14 +224,12 @@ func (s *snOutageService) CreateOutage(ctx context.Context, req domain.CreateOut
 	return domain.CreateOutageResponse{Message: snResp.Message, Outage: mapSNOutageToView(snResp.Outage)}, nil
 }
 
-// snOutageSort is the Choreo POST /outages/search sortBy shape.
-type snOutageSort struct {
-	Field string `json:"field"`
-	Order string `json:"order"`
-}
-
-// snOutageFilters is the Choreo POST /outages/search filters shape.
-type snOutageFilters struct {
+// snSearchOutagesPayload is the Choreo POST /outages/search request body.
+// This is a CLOSED record on the Choreo side (OutageSearchPayload) with every
+// field flat at the top level -- no `filters`/`pagination`/`sortBy` wrapper
+// objects, unlike this service's other search payloads. Sending a nested
+// shape here 400s (confirmed live: the field simply doesn't bind).
+type snSearchOutagesPayload struct {
 	Types                []string `json:"types,omitempty"`
 	Statuses             []string `json:"statuses,omitempty"`
 	ConfigurationItemIDs []string `json:"configurationItemIds,omitempty"`
@@ -240,13 +238,10 @@ type snOutageFilters struct {
 	BeginTo              string   `json:"beginTo,omitempty"`
 	PublishedOnly        *bool    `json:"publishedOnly,omitempty"`
 	SearchTerm           string   `json:"searchTerm,omitempty"`
-}
-
-// snSearchOutagesPayload is the Choreo POST /outages/search request body.
-type snSearchOutagesPayload struct {
-	Filters    snOutageFilters     `json:"filters,omitempty"`
-	SortBy     *snOutageSort       `json:"sortBy,omitempty"`
-	Pagination snProjectPagination `json:"pagination"`
+	Limit                int      `json:"limit,omitempty"`
+	Offset               int      `json:"offset,omitempty"`
+	SortBy               string   `json:"sortBy,omitempty"`
+	SortOrder            string   `json:"sortOrder,omitempty"`
 }
 
 // snSearchOutagesResponse mirrors the Choreo POST /outages/search response.
@@ -298,28 +293,27 @@ func (s *snOutageService) SearchOutages(ctx context.Context, req domain.SearchOu
 		statuses = append(statuses, string(st))
 	}
 
-	var snSortBy *snOutageSort
+	var sortOrder string
 	if req.SortBy.Field != "" {
-		order := string(req.SortBy.Order)
-		if order == "" {
-			order = "desc"
+		sortOrder = string(req.SortBy.Order)
+		if sortOrder == "" {
+			sortOrder = "desc"
 		}
-		snSortBy = &snOutageSort{Field: string(req.SortBy.Field), Order: order}
 	}
 
 	payload := snSearchOutagesPayload{
-		Filters: snOutageFilters{
-			Types:                types,
-			Statuses:             statuses,
-			ConfigurationItemIDs: uuidsToSysids(req.Filters.ConfigurationItemIDs),
-			IncidentIDs:          uuidsToSysids(req.Filters.IncidentIDs),
-			BeginFrom:            stringPtrValue(req.Filters.BeginFrom),
-			BeginTo:              stringPtrValue(req.Filters.BeginTo),
-			PublishedOnly:        req.Filters.PublishedOnly,
-			SearchTerm:           req.Filters.SearchTerm,
-		},
-		SortBy:     snSortBy,
-		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
+		Types:                types,
+		Statuses:             statuses,
+		ConfigurationItemIDs: uuidsToSysids(req.Filters.ConfigurationItemIDs),
+		IncidentIDs:          uuidsToSysids(req.Filters.IncidentIDs),
+		BeginFrom:            stringPtrValue(req.Filters.BeginFrom),
+		BeginTo:              stringPtrValue(req.Filters.BeginTo),
+		PublishedOnly:        req.Filters.PublishedOnly,
+		SearchTerm:           req.Filters.SearchTerm,
+		Limit:                req.Pagination.Limit,
+		Offset:               req.Pagination.Offset,
+		SortBy:               string(req.SortBy.Field),
+		SortOrder:            sortOrder,
 	}
 
 	raw, err := s.client.Post(ctx, "/outages/search", token, payload)
