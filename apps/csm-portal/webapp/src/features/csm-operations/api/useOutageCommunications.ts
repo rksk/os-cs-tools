@@ -46,7 +46,7 @@ export function useGetOutageCommunications(
     queryFn: (): Promise<BeSearchOutageCommunicationsResponse | null> =>
       api.post<BeSearchOutageCommunicationsPayload, BeSearchOutageCommunicationsResponse>(
         `/outages/${encodeURIComponent(outageId as string)}/communications/search`,
-        { pagination: { offset: 0, limit: 100 } },
+        { pagination: { offset: 0, limit: 50 } },
       ),
     enabled: !!outageId,
     staleTime: 15_000,
