@@ -268,6 +268,44 @@ func TestSNOutageService_AddOutageCommunication_InvalidChannel(t *testing.T) {
 	}
 }
 
+func TestSNOutageService_SearchOutageCommunications_FlatPayload(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/outages/"+testOutageSysid+"/communications/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"communications": [], "offset": 0, "limit": 20, "totalRecords": 0
+		}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowOutageService(client)
+
+	req := domain.SearchOutageCommunicationsRequest{
+		OutageID: testOutageUUID,
+		Channels: []domain.OutageCommunicationChannel{domain.OutageCommunicationChannelExternal},
+	}
+	if _, err := svc.SearchOutageCommunications(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The outgoing payload must be flat -- Choreo's OutageCommunicationSearchPayload is a closed
+	// record with no pagination wrapper; a nested shape 400s (confirmed live).
+	if _, ok := gotBody["pagination"]; ok {
+		t.Fatal("outgoing payload must not nest fields under \"pagination\" -- Choreo's OutageCommunicationSearchPayload is flat")
+	}
+	channels, ok := gotBody["channels"].([]any)
+	if !ok || len(channels) != 1 || channels[0] != "external" {
+		t.Errorf("expected top-level channels == [\"external\"], got %v", gotBody["channels"])
+	}
+	if _, ok := gotBody["limit"]; !ok {
+		t.Error("expected top-level \"limit\" in outgoing payload")
+	}
+}
+
 func TestSNOutageService_SearchOutages_MapsFiltersAndResponse(t *testing.T) {
 	var gotBody map[string]any
 	mux := http.NewServeMux()

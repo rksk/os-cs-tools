@@ -531,10 +531,13 @@ func (s *snOutageService) AddOutageCommunication(ctx context.Context, req domain
 	return domain.AddOutageCommunicationResponse{Message: snResp.Message, Communication: mapSNOutageCommunicationToView(snResp.Communication)}, nil
 }
 
-// snSearchOutageCommunicationsPayload is the Choreo POST /outages/{id}/communications/search request body.
+// snSearchOutageCommunicationsPayload is the Choreo POST /outages/{id}/communications/search
+// request body. Closed record on the Choreo side (OutageCommunicationSearchPayload) -- flat,
+// no pagination wrapper, same class of mismatch as snSearchOutagesPayload.
 type snSearchOutageCommunicationsPayload struct {
-	Channels   []string            `json:"channels,omitempty"`
-	Pagination snProjectPagination `json:"pagination"`
+	Channels []string `json:"channels,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+	Offset   int      `json:"offset,omitempty"`
 }
 
 // snSearchOutageCommunicationsResponse mirrors the Choreo POST /outages/{id}/communications/search response.
@@ -567,8 +570,9 @@ func (s *snOutageService) SearchOutageCommunications(ctx context.Context, req do
 	}
 
 	payload := snSearchOutageCommunicationsPayload{
-		Channels:   channels,
-		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
+		Channels: channels,
+		Limit:    req.Pagination.Limit,
+		Offset:   req.Pagination.Offset,
 	}
 
 	raw, err := s.client.Post(ctx, "/outages/"+uuidToSysid(req.OutageID)+"/communications/search", token, payload)
