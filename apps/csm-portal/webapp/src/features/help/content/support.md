@@ -83,6 +83,18 @@ request** action is disabled in both places: closed cases are read-only.
 Service requests aren't available on every project. If the selected project isn't eligible,
 the create form shows a warning and blocks submission.
 
+**Escalation** shows the case's current level (EL0 "not escalated" through EL5 "CEO") as a
+badge, with a read-only history of every past escalate/de-escalate step below it — who made
+each change, when, and their stated reason. **Escalate** and **De-escalate** buttons sit next
+to the badge (whichever apply at the current level: neither shows past EL5, only "Escalate"
+shows at EL0). Either opens a short confirm dialog asking for a reason — required when
+escalating, optional when de-escalating — and posts a case work note recording the change
+automatically. Any signed-in engineer can escalate or de-escalate a case; there's no approval
+step. Escalation is a ServiceNow data source feature only; a non-ServiceNow-backed case shows
+no escalation level at all. The Cases list also has an optional **Escalation** column (via
+**Customise columns**) that shows the level badge for escalated cases only, left blank for
+everything else.
+
 ## Comments
 
 The comment composer at the bottom of the timeline sends either a public reply visible to the
