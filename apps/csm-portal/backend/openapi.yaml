@@ -9610,6 +9610,8 @@ components:
           type: string
           format: uuid
           nullable: true
+        userName:
+          type: string
         name:
           type: string
           nullable: true
