@@ -139,7 +139,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	var escalationHandler *handler.EscalationHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		escalationHandler = handler.NewEscalationHandler(service.NewServiceNowEscalationService(serviceNowIntegrationServiceClient))
+		escalationHandler = handler.NewEscalationHandler(service.NewServiceNowEscalationService(serviceNowIntegrationServiceClient, activeCaseSvc))
 	}
 
 	var changeRequestHandler *handler.ChangeRequestHandler

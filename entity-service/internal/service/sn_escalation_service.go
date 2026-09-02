@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -158,14 +159,38 @@ func snEscalationToDomain(ctx context.Context, e snEscalation) (domain.Escalatio
 }
 
 type snEscalationService struct {
-	client *integrationservice.Client
+	client  *integrationservice.Client
+	caseSvc CaseService
 }
 
 // NewServiceNowEscalationService constructs an EscalationService backed by the
 // backing service's shared escalation endpoints (already deployed and unchanged
-// by this service — see /escalations and /escalations/search).
-func NewServiceNowEscalationService(client *integrationservice.Client) EscalationService {
-	return &snEscalationService{client: client}
+// by this service — see /escalations and /escalations/search). caseSvc is used
+// to record a work note on the parent case after a successful escalation
+// create: verified live against SN dev data that creating an escalation record
+// does not itself produce any case activity/comment entry, so this service adds
+// the one the backing API doesn't.
+func NewServiceNowEscalationService(client *integrationservice.Client, caseSvc CaseService) EscalationService {
+	return &snEscalationService{client: client, caseSvc: caseSvc}
+}
+
+// escalationWorkNoteContent builds the case work note text recorded after a
+// successful escalation create, e.g. "Case escalated from EL1 to EL2. Reason:
+// customer requested management involvement." or "Case de-escalated from EL2 to
+// EL1." (no reason line when none was given). Level wording comes straight from
+// the backing service's own choice-list labels rather than a hardcoded map, so
+// it can't drift from whatever SN's escalation_level choices actually say.
+func escalationWorkNoteContent(action domain.EscalationAction, e snEscalation) string {
+	verb := "escalated"
+	if action == domain.EscalationActionDeescalate {
+		verb = "de-escalated"
+	}
+
+	content := fmt.Sprintf("Case %s from %s to %s.", verb, e.PreviousLevel.Label, e.CurrentLevel.Label)
+	if e.Reason != nil && *e.Reason != "" {
+		content += fmt.Sprintf(" Reason: %s.", *e.Reason)
+	}
+	return content
 }
 
 // SearchEscalations implements EscalationService.
@@ -249,5 +274,26 @@ func (s *snEscalationService) CreateEscalation(ctx context.Context, caseID strin
 		return domain.Escalation{}, fmt.Errorf("sn create escalation: parse response: %w", err)
 	}
 
-	return snEscalationToDomain(ctx, snResp.Escalation)
+	view, err := snEscalationToDomain(ctx, snResp.Escalation)
+	if err != nil {
+		return domain.Escalation{}, err
+	}
+
+	// The escalation record itself carries no case activity of its own (verified
+	// live against SN dev: creating sn_customerservice_case_escalation rows produces
+	// no sys_journal_field entry on the parent case). Record one here so the case's
+	// comment/work-note trail reflects the action. The escalation already happened
+	// by this point, so a failure here must not fail the request -- log and return
+	// the successful escalation instead of telling the caller their escalation failed
+	// when it didn't.
+	if _, err := s.caseSvc.CreateCaseComment(ctx, domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeWorkNote,
+		Content: escalationWorkNoteContent(effectiveAction, snResp.Escalation),
+	}); err != nil {
+		slog.ErrorContext(ctx, "sn create escalation: failed to record case work note",
+			"caseID", caseID, "escalationID", view.ID, "error", err)
+	}
+
+	return view, nil
 }
