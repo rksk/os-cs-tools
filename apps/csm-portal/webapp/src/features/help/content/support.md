@@ -83,6 +83,12 @@ request** action is disabled in both places: closed cases are read-only.
 Service requests aren't available on every project. If the selected project isn't eligible,
 the create form shows a warning and blocks submission.
 
+**Provide workaround** / **Recall workaround**, in the case's **More** menu, marks (or
+un-marks) that a workaround has been given to the customer — this pauses the case's Workaround
+SLA clock while marked, and resumes it on recall. The menu item's label and icon switch
+depending on the case's current state, and it's shown for every case regardless of who's
+assigned to it, disabled only once the case is closed.
+
 ## Comments
 
 The comment composer at the bottom of the timeline sends either a public reply visible to the
