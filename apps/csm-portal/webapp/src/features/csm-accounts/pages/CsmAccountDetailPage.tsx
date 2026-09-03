@@ -151,12 +151,15 @@ function ProjectsSection({ accountId }: { accountId: string }): JSX.Element {
             ) : (
               projects.map((p) => (
                 <TableRow key={p.id} hover>
-                  <TableCell>
+                  <TableCell sx={{ maxWidth: 320 }}>
                     <Typography
                       component={RouterLink}
                       to={`/customers/projects/${p.id}`}
                       variant="body2"
+                      noWrap
+                      title={p.name}
                       sx={(t) => ({
+                        display: "block",
                         textDecoration: "none",
                         color: t.palette.primary.dark,
                         ...t.applyStyles("dark", { color: t.palette.primary.main }),

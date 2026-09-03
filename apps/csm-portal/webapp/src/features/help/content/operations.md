@@ -81,7 +81,9 @@ From the detail page a CS engineer can:
   and notes, since those are required by the backing system for those two
   transitions.
 - **Edit** the incident's fields.
-- Manage the **watch list** (add or remove watchers).
+- Manage the **watch list** (add or remove watchers). A **Follow incident
+  updates** / **Unfollow incident updates** button on the Watchers tab also
+  lets you add or remove yourself with one click.
 - Add comments (public or internal) and upload/download attachments, with
   inline preview for supported attachment types.
 

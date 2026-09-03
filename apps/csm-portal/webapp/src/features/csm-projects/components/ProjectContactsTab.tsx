@@ -177,7 +177,7 @@ export default function ProjectContactsTab({
                   // email is the closest thing to a natural key, and index
                   // disambiguates the rare case of a duplicate/blank email.
                   <TableRow key={c.id ?? `${c.email ?? "unknown"}-${i}`} hover>
-                    <TableCell>
+                    <TableCell sx={{ maxWidth: 280 }}>
                       <UserRefLink name={name} email={c.email} userId={c.id ?? null} />
                     </TableCell>
                     <TableCell sx={{ wordBreak: "break-all" }}>{c.email || "—"}</TableCell>

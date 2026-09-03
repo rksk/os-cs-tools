@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1361,6 +1362,209 @@ func TestPatchCase(t *testing.T) {
 					}
 				}
 			})
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH also records a work note documenting the hold", func(t *testing.T) {
+		var (
+			commentCaseID string
+			commentBody   []byte
+		)
+		commentCalled := make(chan struct{})
+		client := &mockEntityCaseClient{
+			// No prior autoclosureStateTime (getCaseFn unset -> default "{}"), so the
+			// new hold date always counts as a change here.
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, caseID string, body []byte) ([]byte, error) {
+				commentCaseID = caseID
+				commentBody = body
+				close(commentCalled)
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+
+		// The work note is recorded fire-and-forget in a goroutine so it never delays
+		// the PATCH response; wait for it (bounded) rather than asserting immediately.
+		select {
+		case <-commentCalled:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected CreateCaseComment to be called after a successful autocloseHoldUntil PATCH")
+		}
+		if commentCaseID != testCaseID {
+			t.Errorf("comment posted against caseID %q, want %q", commentCaseID, testCaseID)
+		}
+
+		var note struct {
+			Type    string `json:"type"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(commentBody, &note); err != nil {
+			t.Fatalf("decode comment body: %v; raw: %s", err, commentBody)
+		}
+		if note.Type != "work_note" {
+			t.Errorf("comment type = %q, want %q", note.Type, "work_note")
+		}
+		wantContent := "Please note that this case is on-hold until 2026-08-01, hence it will not go through the auto closure process. It will be eligible for auto-closure again after this date passes, or if the case state is changed to 'Waiting on WSO2'."
+		if note.Content != wantContent {
+			t.Errorf("comment content = %q, want %q", note.Content, wantContent)
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH work note survives the request context being canceled after the handler returns", func(t *testing.T) {
+		// The work note is recorded from a goroutine detached (via
+		// context.WithoutCancel) from the request context, which is canceled as soon
+		// as the handler returns. A regression back to a plain child context (or to
+		// context.Background(), which would silently drop the caller's identity
+		// instead) should be caught here: this asserts the context the async call
+		// actually receives is not Done at the moment it's used, even after the
+		// request's own context has since been canceled. The error is captured
+		// synchronously inside the mock, not read back afterwards from the test
+		// goroutine — reading it later would race against the WithTimeout context's
+		// own deferred cleanup cancel(), which is unrelated to request detachment.
+		ctxDone := make(chan struct{})
+		var gotErr error
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(ctx context.Context, _ string, _ []byte) ([]byte, error) {
+				gotErr = ctx.Err()
+				close(ctxDone)
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		reqCtx, cancel := context.WithCancel(context.Background())
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)).WithContext(reqCtx))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+		assertStatus(t, w, http.StatusOK)
+
+		// Simulate the request finishing (connection torn down) right after the
+		// handler returns, before the async work note has necessarily run.
+		cancel()
+
+		select {
+		case <-ctxDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected CreateCaseComment to be called")
+		}
+		if gotErr != nil {
+			t.Errorf("work-note context was already canceled (%v) once the request context was — it must be detached", gotErr)
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH does not record a duplicate work note when the hold date is unchanged", func(t *testing.T) {
+		var commentCalled atomic.Bool
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"id":"` + testCaseID + `","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}`), nil
+			},
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				commentCalled.Store(true)
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		// Give a would-be goroutine a moment to run; there should be none to wait for.
+		time.Sleep(100 * time.Millisecond)
+		if commentCalled.Load() {
+			t.Error("expected no work note for a PATCH that resends the existing hold date")
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH records a work note on the first hold, even if autoclosureStateTime already held an unrelated staged-advance date", func(t *testing.T) {
+		// A case not currently on hold can still carry a non-nil autoclosureStateTime
+		// (e.g. when its autoclosureStep is FIRST_COMMENT) that happens to match the
+		// FE's pre-filled hold-date picker default. The dedup check must gate on
+		// autoclosureStep == ON_HOLD, not merely on the date matching, or this — the
+		// default "open dialog, accept the pre-filled date, click Hold" path — would
+		// wrongly be treated as a no-op and its note dropped.
+		commentCalled := make(chan struct{})
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"id":"` + testCaseID + `","autoclosureStep":"FIRST_COMMENT","autoclosureStateTime":"2026-08-01T00:00:00Z"}`), nil
+			},
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				close(commentCalled)
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		select {
+		case <-commentCalled:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected CreateCaseComment to be called for the first hold, despite a matching prior autoclosureStateTime")
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH still succeeds when the work-note comment call fails", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return nil, errors.New("entity service unavailable")
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("PATCH without autocloseHoldUntil does not record a work note", func(t *testing.T) {
+		var commentCalled atomic.Bool
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","subject":"New subject text"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				commentCalled.Store(true)
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"subject":"New subject text"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		if commentCalled.Load() {
+			t.Error("expected CreateCaseComment not to be called when autocloseHoldUntil is absent from the PATCH")
 		}
 	})
 

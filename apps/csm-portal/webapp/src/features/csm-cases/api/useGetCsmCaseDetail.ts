@@ -109,6 +109,13 @@ function detailFromBeCase(
           email: c.acknowledgedBy.email ?? undefined,
         }
       : undefined,
+    workaroundProvidedOn: c.workaroundProvidedOn ?? undefined,
+    workaroundProvidedBy: c.workaroundProvidedBy
+      ? {
+          name: c.workaroundProvidedBy.name?.trim() || (c.workaroundProvidedBy.email ?? "—"),
+          email: c.workaroundProvidedBy.email ?? undefined,
+        }
+      : undefined,
     assignee,
     assigneeName,
     assigneeEmail,

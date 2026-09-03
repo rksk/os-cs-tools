@@ -237,7 +237,7 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
                         {vuln.cveId || vuln.vulnerabilityId || "-"}
                       </Typography>
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ maxWidth: 280 }}>
                       <Typography variant="body2" noWrap title={vuln.componentName}>
                         {vuln.componentName || "-"}
                         {vuln.version ? (
@@ -252,8 +252,8 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
                         ) : null}
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" noWrap>
+                    <TableCell sx={{ maxWidth: 280 }}>
+                      <Typography variant="body2" noWrap title={vuln.productName || undefined}>
                         {vuln.productName || "-"}
                         {vuln.productVersion ? (
                           <Typography

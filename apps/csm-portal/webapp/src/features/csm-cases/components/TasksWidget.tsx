@@ -173,7 +173,11 @@ export function TasksWidget({ caseId }: TasksWidgetProps): JSX.Element {
                       aria-label={`View task ${task.subject}`}
                       sx={{ cursor: "pointer" }}
                     >
-                      <TableCell>{task.subject}</TableCell>
+                      <TableCell sx={{ maxWidth: 360 }}>
+                        <Typography variant="body2" noWrap title={task.subject}>
+                          {task.subject}
+                        </Typography>
+                      </TableCell>
                       <TableCell>
                         <Chip
                           size="small"

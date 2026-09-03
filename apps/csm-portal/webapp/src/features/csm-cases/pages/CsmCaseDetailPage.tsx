@@ -49,6 +49,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useLocation } from "react-router";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import {
   usePatchCsmCase,
   usePatchCsmCaseById,
@@ -351,6 +352,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // route/location for the app as a whole. Without it, every background
   // tab's `useParams`/`useLocation` would resolve to whatever route is
   // CURRENTLY on-screen, not the case this particular instance represents.
+  // The signed-in engineer's platform UUID — the id the watch list's write
+  // side is keyed by — so the Watchers tab can self-subscribe/unsubscribe.
+  const { user: currentUser } = useCurrentUser();
   const routedCaseId = useNormalizedIdParam("caseId");
   const routedNavigate = useNavTransition();
   const routedLocation = useLocation();
@@ -1224,6 +1228,34 @@ export default function CsmCaseDetailPage(): JSX.Element {
       // onSetFixEta once a value is confirmed.
       if (action.secondary === "set_fix_eta") {
         setFixEtaOpen(true);
+        return;
+      }
+
+      // Mark / recall the case's workaround via PATCH { workaroundProvided }.
+      // A single-field toggle, same shape as the plain "Pause work" branch
+      // above — no conflict check needed (unlike resuming work).
+      if (action.secondary === "toggle_workaround_provided") {
+        const providing = !data?.workaroundProvidedOn;
+        patchCase.mutate(
+          { workaroundProvided: providing },
+          {
+            onSuccess: () =>
+              setFeedback({
+                message: providing
+                  ? "Workaround marked as provided — the Workaround SLA clock is paused."
+                  : "Workaround recalled.",
+                severity: "success",
+                sticky: false,
+              }),
+            onError: (err) =>
+              showError(
+                providing
+                  ? "Could not mark the workaround as provided. Please try again."
+                  : "Could not recall the workaround. Please try again.",
+                err,
+              ),
+          },
+        );
         return;
       }
 
@@ -2619,6 +2651,17 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onRefresh={() => void refetchCaseDetail()}
             isRefreshing={isFetchingCaseDetail}
             refreshedAt={caseDetailUpdatedAt}
+            currentUserId={currentUser?.id}
+            // The account manager / technical owner are also auto-added to a
+            // case's watch list, but that data isn't on this response (see
+            // detailFromBeCase's account-ref comment) — only the assignee
+            // check is expressible without a new fetch, so Unfollow stays
+            // available to an AM/TO watcher until that's plumbed through.
+            autoWatchingReason={
+              c.assigneeIsMe
+                ? "You're on this case's watch list as its assigned engineer."
+                : undefined
+            }
           />
         </Box>
       )}

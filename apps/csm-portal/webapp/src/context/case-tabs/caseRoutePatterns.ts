@@ -61,13 +61,26 @@ export function basePathForKind(kind: CaseRouteKind): string {
  * matching, deliberately independent of the app's real `<Routes>` tree so it
  * can also be used inside an isolated (non-real) router — see
  * `CaseTabIsolatedRouter`.
+ *
+ * `new` is never a real id here: every one of these bases also owns a
+ * sibling `<base>/new` create route in `App.tsx` (`cases/new`,
+ * `engagements/new`, `operations/incidents/new`, etc.). Without this
+ * exclusion, navigating to one of those create routes from inside an
+ * already-open case tab matched here first — `CaseTabIsolatedRouter`'s
+ * in-tab `navigate()` override treats any match as "open/activate a tab for
+ * this id" and never lets the real app router see the navigation at all, so
+ * the create page never mounts. Instead it opened a bogus tab for a record
+ * literally named "new", which fails to load (backend rejects "new" as an
+ * id) — reported as "Create incident from case" failing, but the same
+ * misroute hits every kind's create action once its originating case is
+ * open as a tab.
  */
 export function matchCaseLocation(pathname: string): CaseLocationMatch | undefined {
   for (const [base, kind] of ROUTE_KIND_BY_BASE) {
     if (pathname === base || pathname.startsWith(`${base}/`)) {
       const rest = pathname.slice(base.length + 1);
       const caseId = rest.split("/")[0];
-      if (caseId) return { kind, caseId };
+      if (caseId && caseId !== "new") return { kind, caseId };
     }
   }
   return undefined;

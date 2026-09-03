@@ -339,6 +339,13 @@ export interface BeCaseView {
    * so a materially changed case has to be acknowledged afresh.
    */
   acknowledgedBy?: BeAssignedEngineerRef | null;
+  /**
+   * When the case's workaround was marked provided, or `null` until marked (and
+   * cleared again on recall). Pauses the case's Workaround SLA clock while set.
+   */
+  workaroundProvidedOn?: string | null;
+  /** The CS engineer who marked the workaround as provided, or `null` until marked. */
+  workaroundProvidedBy?: BeAssignedEngineerRef | null;
   account?: BeCaseAccountRef;
   project?: BeEntityRef;
   /** Nullable: ServiceNow-sourced cases may have no deployment / product. */
@@ -706,6 +713,7 @@ interface BeCaseUpdateNever {
   product?: never;
   publicTicket?: never;
   acknowledge?: never;
+  workaroundProvided?: never;
 }
 
 /**
@@ -806,6 +814,12 @@ export type BeCaseUpdatePayload =
    * `alreadyAcknowledged: true` with whoever claimed it first.
    */
   | (Omit<BeCaseUpdateNever, "acknowledge"> & { acknowledge: true })
+  /**
+   * Mark (`true`) or recall (`false`) the case's workaround (ServiceNow only).
+   * Marking it stamps the signed-in engineer as the provider and pauses the
+   * case's Workaround SLA clock; recalling clears both.
+   */
+  | (Omit<BeCaseUpdateNever, "workaroundProvided"> & { workaroundProvided: boolean })
   /**
    * Places the case on hold in the backing data source's staged auto-closure
    * sequence until this ISO date-time (ServiceNow only). The raw

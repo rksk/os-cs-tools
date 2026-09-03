@@ -63,6 +63,16 @@ describe("matchCaseLocation", () => {
   it("only takes the first path segment after the base as the id", () => {
     expect(matchCaseLocation("/cases/CS1/extra")).toEqual({ kind: "case", caseId: "CS1" });
   });
+
+  it("does not treat a sibling create route's 'new' segment as an id", () => {
+    expect(matchCaseLocation("/cases/new")).toBeUndefined();
+    expect(matchCaseLocation("/engagements/new")).toBeUndefined();
+    expect(matchCaseLocation("/announcements/new")).toBeUndefined();
+    expect(matchCaseLocation("/operations/service-requests/new")).toBeUndefined();
+    expect(matchCaseLocation("/security-center/security-reports/new")).toBeUndefined();
+    expect(matchCaseLocation("/operations/incidents/new")).toBeUndefined();
+    expect(matchCaseLocation("/operations/change-requests/new")).toBeUndefined();
+  });
 });
 
 describe("basePathForKind / pathForTab", () => {

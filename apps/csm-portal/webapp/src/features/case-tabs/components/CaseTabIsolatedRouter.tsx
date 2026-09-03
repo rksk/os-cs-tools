@@ -28,6 +28,7 @@ import { useCaseTabsControllerRef } from "@context/case-tabs/CaseTabsContext";
 import { CaseRouteOverrideProvider } from "@context/case-tabs/CaseRouteOverrideContext";
 import type { CaseRouteKind, CaseTabState } from "@context/case-tabs/caseTabsTypes";
 import { tabElementId, tabPanelElementId } from "@features/case-tabs/utils/tabElementIds";
+import { useNavTransition } from "@hooks/useNavTransition";
 
 function toHref(to: To): string {
   if (typeof to === "string") return to;
@@ -72,8 +73,9 @@ export interface CaseTabIsolatedRouterProps {
  * present in context.
  *
  * In-page navigation (the misrouted-case redirect, the dashless-id repair in
- * `useNormalizedIdParam`, ...) is intercepted by the `navigate` function
- * passed through the override rather than reaching the real browser history:
+ * `useNormalizedIdParam`, the header's own Back button, ...) is intercepted
+ * by the `navigate` function passed through the override rather than
+ * reaching the real browser history:
  *   - if it resolves to the SAME caseId this tab represents, the tab's own
  *     `path`/`kind` are updated in place (`updateTabPath`) — covers the
  *     redirect/repair cases, and keeps this tab's identity stable.
@@ -86,6 +88,18 @@ export interface CaseTabIsolatedRouterProps {
  *     one — avoiding the need to ever change a tab's React key mid-life
  *     (which would force a real remount and defeat the point of this
  *     component).
+ *   - if it doesn't resolve to a case route AT ALL — leaving the case
+ *     entirely, e.g. the page's own Back button returning to the case list/
+ *     dashboard, or a "create new" shortcut — it must reach the REAL router,
+ *     not just this tab's local override state: `CaseTabsContentHost` decides
+ *     whether to show this tab's content at all by comparing the REAL
+ *     `location.pathname` against a case-route match, so updating only the
+ *     override's internal `pathname` here left the real URL (and so that
+ *     visibility check) completely unchanged — Back looked unresponsive
+ *     because, from the real router's point of view, nothing had moved. The
+ *     tab itself is left open (not closed) so it's still available to
+ *     reactivate from the tab strip, matching how leaving a case via the
+ *     pinned "current location" tab or the app nav already behaves.
  *
  * The active tab's real-URL sync (so a reload/bookmark on `/cases/:id`
  * still works — see this feature's design notes) is owned by the caller
@@ -151,6 +165,8 @@ export default function CaseTabIsolatedRouter({
   // ever retargeting this one — so `tab.caseId` never changes here either.
   // Safe to close over both directly in the memo below (with the lint
   // suppression that implies) instead of keeping them in refs.
+  const realNavigate = useNavTransition();
+
   const navigate = useMemo(() => {
     return (to: To | number, options?: NavigateOptions): void => {
       if (typeof to === "number") {
@@ -163,17 +179,26 @@ export default function CaseTabIsolatedRouter({
       const search = href.includes("?") ? `?${href.split("?")[1]?.split("#")[0]}` : "";
       const hash = href.includes("#") ? `#${href.split("#")[1]}` : "";
       const match = matchCaseLocation(pathname);
-      if (!match || match.caseId === tab.caseId) {
-        setRouteState((prev) => ({
+      if (!match) {
+        // Leaving this case entirely (e.g. the page's own Back button, or a
+        // "create new" shortcut) — this MUST reach the real router. See this
+        // component's own doc comment above for why updating only the local
+        // override state here left Back looking completely unresponsive:
+        // `CaseTabsContentHost` gates this tab's visibility on the REAL
+        // `location.pathname`, which never moved otherwise. The tab stays
+        // open in the background (not closed) for the strip to reactivate.
+        realNavigate(to, options);
+        return;
+      }
+      if (match.caseId === tab.caseId) {
+        setRouteState(() => ({
           pathname,
           search,
           hash,
-          kind: match?.kind ?? prev.kind,
+          kind: match.kind,
           state: options?.state,
         }));
-        if (match) {
-          controllerRef.current.updateTabPath(tab.id, match.kind, href);
-        }
+        controllerRef.current.updateTabPath(tab.id, match.kind, href);
         return;
       }
       // Different case referenced from inside this tab: open/activate it as
@@ -182,8 +207,10 @@ export default function CaseTabIsolatedRouter({
     };
     // Stable for the lifetime of this tab instance — reads the latest
     // controller via `controllerRef` rather than depending on it directly.
+    // `realNavigate` (from `useNavTransition`) is itself stable for the
+    // lifetime of the app, so including it doesn't defeat that.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [realNavigate]);
 
   const overrideValue = useMemo(
     () => ({

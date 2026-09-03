@@ -478,6 +478,82 @@ describe("WatchersWidget", () => {
       screen.getByRole("combobox", { name: /add a watcher/i }),
     ).toBeDisabled();
   });
+
+  describe("self-subscribe", () => {
+    it("omits the Follow/Unfollow control when no currentUserId is supplied", () => {
+      renderWithRouter(
+        <WatchersWidget entityKind="case" watchers={WATCHERS} onReplace={vi.fn()} />,
+      );
+      expect(
+        screen.queryByRole("button", { name: /^follow case updates$/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /^unfollow case updates$/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows Follow when the signed-in engineer isn't a watcher, and adds them on click", () => {
+      const onReplace = vi.fn();
+      // Neither fixture watcher is flagged `isMe` here — CANDIDATE_ID (the
+      // signed-in engineer in this test) isn't on the list at all, matching
+      // how the caller would populate `isMe` for a real not-yet-following user.
+      renderWithRouter(
+        <WatchersWidget
+          entityKind="case"
+          watchers={ONE_WATCHER}
+          onReplace={onReplace}
+          currentUserId={CANDIDATE_ID}
+        />,
+      );
+      expect(
+        screen.queryByRole("button", { name: /^unfollow case updates$/i }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /^follow case updates$/i }));
+      expect(onReplace).toHaveBeenCalledWith([WATCHER_ONE_ID, CANDIDATE_ID], "add");
+    });
+
+    it("shows Unfollow when the signed-in engineer is already a watcher and not auto-added, and removes them on click", () => {
+      const onReplace = vi.fn();
+      renderWithRouter(
+        <WatchersWidget
+          entityKind="case"
+          watchers={WATCHERS}
+          onReplace={onReplace}
+          currentUserId={WATCHER_TWO_ID}
+        />,
+      );
+      expect(
+        screen.queryByRole("button", { name: /^follow case updates$/i }),
+      ).not.toBeInTheDocument();
+      const button = screen.getByRole("button", { name: /^unfollow case updates$/i });
+      expect(button).not.toHaveAttribute("aria-disabled");
+      fireEvent.click(button);
+      expect(onReplace).toHaveBeenCalledWith([WATCHER_ONE_ID], "remove");
+    });
+
+    it("blocks Unfollow, with the reason reachable by assistive tech, when the caller reports an auto-added membership (e.g. the case's assignee)", () => {
+      const onReplace = vi.fn();
+      renderWithRouter(
+        <WatchersWidget
+          entityKind="case"
+          watchers={WATCHERS}
+          onReplace={onReplace}
+          currentUserId={WATCHER_TWO_ID}
+          autoWatchingReason="You're on this case's watch list as its assigned engineer."
+        />,
+      );
+      const button = screen.getByRole("button", { name: /^unfollow case updates$/i });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      const reason = document.getElementById(
+        button.getAttribute("aria-describedby") ?? "",
+      );
+      expect(reason).toHaveTextContent(
+        "You're on this case's watch list as its assigned engineer.",
+      );
+      fireEvent.click(button);
+      expect(onReplace).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("AttachmentsWidget — preview affordance", () => {

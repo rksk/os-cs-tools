@@ -29,6 +29,8 @@ import {
   Activity,
   ArrowDownRight,
   ArrowUpRight,
+  Bell,
+  BellOff,
   Building,
   CheckCircle,
   ClipboardList,
@@ -640,6 +642,8 @@ export function WatchersWidget({
   onRefresh,
   isRefreshing,
   refreshedAt,
+  currentUserId,
+  autoWatchingReason,
 }: {
   /** Which record's watch list this is. Drives the copy and the rules. */
   entityKind: WatchedEntityKind;
@@ -657,16 +661,37 @@ export function WatchersWidget({
   onRefresh?: () => void;
   isRefreshing?: boolean;
   refreshedAt?: number;
+  /**
+   * Platform UUID of the signed-in engineer. Drives the self-subscribe
+   * Follow/Unfollow control: without it there is no id to add on Follow, so
+   * the button is omitted entirely rather than rendered disabled.
+   */
+  currentUserId?: string;
+  /**
+   * Non-empty when the signed-in engineer is on this watch list only because
+   * of an automatic, role-based add (e.g. they're the record's assigned
+   * engineer) rather than having chosen to self-subscribe. The widget has no
+   * visibility into role assignment, so the caller supplies this; when set,
+   * Unfollow is blocked with this as the reason, same treatment as
+   * {@link removalBlockedReason} above.
+   */
+  autoWatchingReason?: string;
 }): JSX.Element {
   const rules = WATCH_LIST_RULES[entityKind];
   const reasonId = useId();
+  const followReasonId = useId();
   const watcherIds = useMemo(() => watchers.map((w) => w.id), [watchers]);
+  // Keyed on the UUID, not `isMe`: both page callers derive `isMe` from an
+  // email match, which is unreliable when email data is missing, whereas
+  // `currentUserId` is the same UUID the watch list itself is keyed by.
+  const isFollowing = !!currentUserId && watcherIds.includes(currentUserId);
 
   // Below the floor the record type allows, removal isn't expressible at all
   // (see WATCH_LIST_RULES), so the control is blocked with the reason rather
   // than firing a request that is known to be rejected.
   const belowFloorAfterRemoval = watchers.length <= rules.minWatchers;
   const removalBlockedReason = belowFloorAfterRemoval ? rules.minWatchersReason : "";
+  const unfollowBlockedReason = autoWatchingReason || removalBlockedReason;
 
   const addWatcher = useCallback(
     (userId: string) => {
@@ -690,6 +715,21 @@ export function WatchersWidget({
     [onReplace, isSaving, belowFloorAfterRemoval, watcherIds],
   );
 
+  // Self-subscribe: the same add/remove path as the per-watcher controls
+  // below, just always targeting the signed-in engineer's own id rather than
+  // a picked-from-search or a listed watcher.
+  const onFollowClick = useCallback(() => {
+    if (currentUserId) addWatcher(currentUserId);
+  }, [addWatcher, currentUserId]);
+  const onUnfollowClick = useCallback(() => {
+    if (!currentUserId || unfollowBlockedReason) return;
+    if (!onReplace || isSaving) return;
+    onReplace(
+      watcherIds.filter((id) => id !== currentUserId),
+      "remove",
+    );
+  }, [currentUserId, unfollowBlockedReason, onReplace, isSaving, watcherIds]);
+
   return (
     <WidgetCard
       title="Watchers"
@@ -705,6 +745,56 @@ export function WatchersWidget({
         )
       }
     >
+      {onReplace && currentUserId && (
+        <Box sx={{ mb: 1.5 }}>
+          {isFollowing ? (
+            <Tooltip title={unfollowBlockedReason}>
+              {/* aria-disabled, not disabled, so the reason stays reachable
+                  via aria-describedby — same reasoning as the per-watcher
+                  remove control below. */}
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<BellOff size={14} />}
+                  aria-disabled={!!unfollowBlockedReason || isSaving || undefined}
+                  aria-describedby={unfollowBlockedReason ? followReasonId : undefined}
+                  onClick={onUnfollowClick}
+                  sx={{ opacity: unfollowBlockedReason ? 0.6 : 1 }}
+                >
+                  {`Unfollow ${rules.noun} updates`}
+                </Button>
+              </span>
+            </Tooltip>
+          ) : (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Bell size={14} />}
+              disabled={isSaving}
+              onClick={onFollowClick}
+            >
+              {`Follow ${rules.noun} updates`}
+            </Button>
+          )}
+          {unfollowBlockedReason && (
+            <Box
+              component="span"
+              id={followReasonId}
+              sx={{
+                position: "absolute",
+                width: 1,
+                height: 1,
+                overflow: "hidden",
+                clip: "rect(0 0 0 0)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {unfollowBlockedReason}
+            </Box>
+          )}
+        </Box>
+      )}
       {watchers.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           {`No one is watching this ${rules.noun}.`}

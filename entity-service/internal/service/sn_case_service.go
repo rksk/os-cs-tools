@@ -43,31 +43,36 @@ type snCasesResponse struct {
 }
 
 type snCase struct {
-	ID                    string                      `json:"id"`
-	InternalID            string                      `json:"internalId"`
-	Number                string                      `json:"number"`
-	Title                 string                      `json:"title"`
-	Description           string                      `json:"description"`
-	CreatedOn             string                      `json:"createdOn"`
-	UpdatedOn             *string                     `json:"updatedOn"`
-	CreatedBy             string                      `json:"createdBy"`
-	CreatedByFullName     string                      `json:"createdByFullName"`
-	Project               snCaseProjectRef            `json:"project"`
-	Deployment            snCaseEntityRef             `json:"deployment"`
-	DeployedProduct       snCaseDeployedProduct       `json:"deployedProduct"`
-	Product               *snCaseEntityRef            `json:"product"`
-	State                 *snCaseState                `json:"state"`
-	WorkState             *snCaseLabel                `json:"workState"`
-	Severity              *snCaseLabel                `json:"severity"`
-	IssueType             *snCaseIssueType            `json:"issueType"`
-	EngagementType        *snCaseLabel                `json:"engagementType"`
-	CaseType              *snCaseEntityRef            `json:"caseType"`
-	Catalog               *snCaseEntityRef            `json:"catalog"`
-	CatalogItem           *snCaseEntityRef            `json:"catalogItem"`
-	AssignedTeam          *snCaseEntityRef            `json:"assignedTeam"`
-	Conversation          *snCaseEntityRef            `json:"conversation"`
-	AssignedEngineer      *snAssignedEngineerRef      `json:"assignedEngineer"`
-	AcknowledgedBy        *snAssignedEngineerRef      `json:"acknowledgedBy"`
+	ID                string                 `json:"id"`
+	InternalID        string                 `json:"internalId"`
+	Number            string                 `json:"number"`
+	Title             string                 `json:"title"`
+	Description       string                 `json:"description"`
+	CreatedOn         string                 `json:"createdOn"`
+	UpdatedOn         *string                `json:"updatedOn"`
+	CreatedBy         string                 `json:"createdBy"`
+	CreatedByFullName string                 `json:"createdByFullName"`
+	Project           snCaseProjectRef       `json:"project"`
+	Deployment        snCaseEntityRef        `json:"deployment"`
+	DeployedProduct   snCaseDeployedProduct  `json:"deployedProduct"`
+	Product           *snCaseEntityRef       `json:"product"`
+	State             *snCaseState           `json:"state"`
+	WorkState         *snCaseLabel           `json:"workState"`
+	Severity          *snCaseLabel           `json:"severity"`
+	IssueType         *snCaseIssueType       `json:"issueType"`
+	EngagementType    *snCaseLabel           `json:"engagementType"`
+	CaseType          *snCaseEntityRef       `json:"caseType"`
+	Catalog           *snCaseEntityRef       `json:"catalog"`
+	CatalogItem       *snCaseEntityRef       `json:"catalogItem"`
+	AssignedTeam      *snCaseEntityRef       `json:"assignedTeam"`
+	Conversation      *snCaseEntityRef       `json:"conversation"`
+	AssignedEngineer  *snAssignedEngineerRef `json:"assignedEngineer"`
+	AcknowledgedBy    *snAssignedEngineerRef `json:"acknowledgedBy"`
+	// WorkaroundProvidedOn/WorkaroundProvidedBy mirror AcknowledgedBy's shape:
+	// populated on the Choreo GET /cases/{id} response, null until the workaround
+	// is marked provided (and cleared again on recall).
+	WorkaroundProvidedOn  *string                     `json:"workaroundProvidedOn"`
+	WorkaroundProvidedBy  *snAssignedEngineerRef      `json:"workaroundProvidedBy"`
 	ParentCase            *snCaseRef                  `json:"parentCase"`
 	RelatedCase           *snCaseRef                  `json:"relatedCase"`
 	Account               *snCaseAccount              `json:"account"`
@@ -949,6 +954,16 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 	if c.AcknowledgedBy != nil {
 		cv.AcknowledgedBy = &domain.AssignedEngineerRef{ID: sysidToUUID(c.AcknowledgedBy.ID), Name: c.AcknowledgedBy.Name, Email: c.AcknowledgedBy.Email}
 	}
+	if c.WorkaroundProvidedOn != nil && *c.WorkaroundProvidedOn != "" {
+		workaroundProvidedOn, err := parseSNDateTime(ctx, "sn get case", "workaroundProvidedOn", *c.WorkaroundProvidedOn)
+		if err != nil {
+			return domain.CaseView{}, fmt.Errorf("sn get case: parse workaroundProvidedOn %q: %w", *c.WorkaroundProvidedOn, err)
+		}
+		cv.WorkaroundProvidedOn = &workaroundProvidedOn
+	}
+	if c.WorkaroundProvidedBy != nil {
+		cv.WorkaroundProvidedBy = &domain.AssignedEngineerRef{ID: sysidToUUID(c.WorkaroundProvidedBy.ID), Name: c.WorkaroundProvidedBy.Name, Email: c.WorkaroundProvidedBy.Email}
+	}
 	if c.ParentCase != nil {
 		cv.ParentCase = &domain.CaseNumberRef{ID: sysidToUUID(c.ParentCase.ID), Number: c.ParentCase.Number, Type: snParentCaseTypeToDomain(c.ParentCase.Type)}
 	}
@@ -1320,6 +1335,10 @@ type snUpdateCasePayload struct {
 	AddPublicComment *bool   `json:"addPublicComment,omitempty"`
 	Product          *string `json:"product,omitempty"`
 	PublicTicket     *string `json:"publicTicket,omitempty"`
+	// WorkaroundProvided marks (true) or recalls (false) the case's workaround
+	// (u_workaround_provided/u_workaround_provided_by). Same combinable pathway as
+	// the fix-ETA fields above -- not mutually exclusive with anything.
+	WorkaroundProvided *bool `json:"workaroundProvided,omitempty"`
 }
 
 // snResolutionStates are the state keys that allow resolution fields.
@@ -1543,9 +1562,12 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.PublicTicket != nil {
 		combinableCount++
 	}
+	if req.WorkaroundProvided != nil {
+		combinableCount++
+	}
 	const fieldList = "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, type, " +
 		"relatedCaseId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, " +
-		"bestCaseFixEta, mostLikelyFixEta, or worstCaseFixEta"
+		"bestCaseFixEta, mostLikelyFixEta, worstCaseFixEta, or workaroundProvided"
 	if exclusiveCount == 0 && combinableCount == 0 {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "at least one of " + fieldList + " must be provided"}
 	}
@@ -1819,6 +1841,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		payload.AddPublicComment = req.AddPublicComment
 		payload.Product = req.Product
 		payload.PublicTicket = req.PublicTicket
+	}
+	if req.WorkaroundProvided != nil {
+		payload.WorkaroundProvided = req.WorkaroundProvided
 	}
 
 	raw, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(req.ID), token, payload)

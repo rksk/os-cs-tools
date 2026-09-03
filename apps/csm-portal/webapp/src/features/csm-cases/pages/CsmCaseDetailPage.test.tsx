@@ -70,6 +70,15 @@ const showErrorMock = vi.fn();
 vi.mock("@context/error-banner/ErrorBannerContext", () => ({
   useErrorBanner: () => ({ showError: showErrorMock }),
 }));
+const CURRENT_USER_ID = "00000000-0000-0000-0000-00000000000c";
+vi.mock("@context/current-user/CurrentUserContext", () => ({
+  useCurrentUser: () => ({
+    user: { id: CURRENT_USER_ID, email: "jane.doe@example.com" },
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+}));
 vi.mock("@context/success-banner/SuccessBannerContext", () => ({
   useSuccessBanner: () => ({ showSuccess: vi.fn() }),
 }));

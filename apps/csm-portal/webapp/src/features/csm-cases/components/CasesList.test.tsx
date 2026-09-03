@@ -132,7 +132,36 @@ describe("CasesList — Subject cell has a capped width", () => {
 
     const subjectCell = screen.getByTitle(longSubject).parentElement;
     expect(subjectCell).not.toBeNull();
-    expect(getComputedStyle(subjectCell!).maxWidth).toBe("480px");
+    expect(getComputedStyle(subjectCell!).maxWidth).toBe("360px");
+  });
+
+  // Regression: reported live for Security Reports' Product column, but the
+  // same shared CasesList renders Cases/Service Requests/Engagements too — an
+  // optional column's track is mechanically identical to Subject's
+  // (minmax(140px, 1fr) vs. Subject's minmax(280px, 3fr)), so it needed the
+  // same maxWidth treatment, not just Subject.
+  it("also caps an optional column's wrapping cell for a long value", () => {
+    const longCustomer =
+      "A very long customer account name that goes on and on and would otherwise force this optional column, and the whole table, to grow far past a normal viewport width";
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={
+            <CasesList
+              cases={[{ ...CASE, customer: longCustomer }]}
+              isLoading={false}
+              optionalColumns={["customer"]}
+            />
+          }
+        />
+      </Routes>,
+      ["/cases"],
+    );
+
+    const customerCell = screen.getByTitle(longCustomer).parentElement;
+    expect(customerCell).not.toBeNull();
+    expect(getComputedStyle(customerCell!).maxWidth).toBe("260px");
   });
 });
 

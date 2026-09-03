@@ -53,8 +53,10 @@ type StubSection = (typeof STUB_SECTIONS)[number];
 
 function StubCaseDetailPage() {
   const override = useCaseRouteOverride();
+  const routedNavigate = useNavigate();
   const { caseId: routedCaseId } = useParams();
   const caseId = override?.caseId ?? routedCaseId;
+  const navigate = override?.navigate ?? routedNavigate;
   // A fake "still loading" -> "loaded" transition, matching a real
   // `useGetCsmCaseDetail` query — the label should appear once this
   // resolves, without needing the user to switch tabs away and back.
@@ -74,6 +76,10 @@ function StubCaseDetailPage() {
       <div data-testid="stub-page-section">{section}</div>
       <button onClick={() => setLabel(`Label for ${caseId}`)}>resolve-label</button>
       <button onClick={() => setSection("activities")}>go-to-activities-{caseId}</button>
+      {/* Same shape as `CsmCaseDetailPage`'s own Back button: navigates via
+          whichever `navigate` is in scope (the tab override's, when this
+          instance is an open tab) to a bare non-case route. */}
+      <button onClick={() => navigate("/cases")}>stub-back-button</button>
     </div>
   );
 }
@@ -332,6 +338,66 @@ describe("case tabs — real BrowserRouter integration", () => {
       openCaseIds.includes(id),
     ).length;
     expect(survivingOriginalCount).toBe(MAX_OPEN_CASE_TABS - 1);
+  });
+
+  // Regression test for a reported "Back button in Case view is
+  // unresponsive" bug: clicking Back from an open case TAB used to do
+  // nothing at all, because `CaseTabIsolatedRouter`'s `navigate` only
+  // handled staying on the same case (in-place update) or switching to a
+  // DIFFERENT case (open/activate a tab) — a target that isn't a case route
+  // at all (the case list, the dashboard, ...) fell into the "same case"
+  // branch by default and only updated this tab's own LOCAL override state,
+  // never the real router. `CaseTabsContentHost` decides whether to show
+  // this tab's content at all by comparing the REAL `location.pathname`
+  // against a case-route match, so the real URL — and the visible content —
+  // never changed: from the user's point of view, the click did nothing.
+  it("bug 3 — the Back button from an open case tab actually leaves the case, reaching the real router", async () => {
+    // Isolation from the tests above, which also open real tabs
+    // (`CaseTabsProvider` persists open tabs to sessionStorage — see its own
+    // doc comment) — without this, a leftover tab set (e.g. the cap-eviction
+    // test's own MAX_OPEN_CASE_TABS tabs) could evict CS0001 before this
+    // test ever gets to click its Back button.
+    sessionStorage.clear();
+    function AppWithCaseList() {
+      window.history.pushState({}, "", "/cases/CS0001");
+      return (
+        <BrowserRouter>
+          <ErrorBannerProvider>
+            <CaseTabsBehaviorProvider>
+              <CaseTabsProvider>
+                <CaseTabStripBar />
+                <CaseTabsContentHost />
+                <Routes>
+                  <Route path="/cases" element={<div>stub-case-list</div>} />
+                  <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+                </Routes>
+              </CaseTabsProvider>
+            </CaseTabsBehaviorProvider>
+          </ErrorBannerProvider>
+        </BrowserRouter>
+      );
+    }
+    render(<AppWithCaseList />);
+    await waitFor(() =>
+      expect(screen.getByTestId("stub-page-case-id")).toHaveTextContent("CS0001"),
+    );
+
+    fireEvent.click(screen.getByText("stub-back-button"));
+
+    // The real URL actually moved...
+    await waitFor(() => expect(window.location.pathname).toBe("/cases"));
+    // ...the list view is what's now showing...
+    await waitFor(() => expect(screen.getByText("stub-case-list")).toBeInTheDocument());
+    // ...the case tab's own content is hidden (kept mounted in the
+    // background per `CaseTabIsolatedRouter`'s keep-alive design, not
+    // unmounted or showing on top of the list)...
+    const tabPanel = screen.getByTestId("stub-page-case-id").closest(
+      '[data-testid^="case-tab-panel-"]',
+    );
+    expect(tabPanel).toHaveAttribute("hidden");
+    // ...but the tab itself is still open, ready to be reactivated — Back
+    // doesn't close it.
+    expect(screen.getByText("CS0001")).toBeInTheDocument();
   });
 });
 

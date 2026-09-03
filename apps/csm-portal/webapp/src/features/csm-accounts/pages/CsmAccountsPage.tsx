@@ -107,7 +107,7 @@ function renderAccountCell(id: AccountColumnId, a: Account): ReactNode {
   switch (id) {
     case "name":
       return (
-        <Typography variant="body2" noWrap>
+        <Typography variant="body2" noWrap title={a.name}>
           {a.name}
         </Typography>
       );
@@ -310,7 +310,9 @@ export default function CsmAccountsPage(): JSX.Element {
                       }}
                     >
                       {visibleColumnIds.map((id) => (
-                        <TableCell key={id}>{renderAccountCell(id, a)}</TableCell>
+                        <TableCell key={id} sx={id === "name" ? { maxWidth: 320 } : undefined}>
+                          {renderAccountCell(id, a)}
+                        </TableCell>
                       ))}
                     </TableRow>
                   );

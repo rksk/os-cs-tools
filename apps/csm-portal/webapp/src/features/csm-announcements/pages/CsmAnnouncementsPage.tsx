@@ -386,7 +386,7 @@ export default function CsmAnnouncementsPage(): JSX.Element {
                         key={id}
                         sx={
                           id === "subject"
-                            ? { width: "28%" }
+                            ? { width: "28%", maxWidth: 360 }
                             : id === "updatedAt" || id === "createdAt"
                               ? { whiteSpace: "nowrap" }
                               : undefined

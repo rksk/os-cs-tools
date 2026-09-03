@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
@@ -1078,10 +1079,12 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 
 	// Validate state transition and workState guard before forwarding to the entity service.
 	var patch struct {
-		State     *string `json:"state"`
-		WorkState *string `json:"workState"`
+		State              *string `json:"state"`
+		WorkState          *string `json:"workState"`
+		AutocloseHoldUntil *string `json:"autocloseHoldUntil"`
 	}
-	if err := json.Unmarshal(body, &patch); err == nil && (patch.State != nil || patch.WorkState != nil) {
+	patchErr := json.Unmarshal(body, &patch)
+	if patchErr == nil && (patch.State != nil || patch.WorkState != nil) {
 		current, err := h.entity.GetCase(r.Context(), caseID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during state validation", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1106,6 +1109,34 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The auto-closure hold work note (below) must only fire for an actual change in
+	// the hold date, not for a retry or a no-op PATCH that resends the existing value —
+	// otherwise every duplicate request pollutes the case's activity feed with an
+	// identical note. Read the prior value before the PATCH; after it, the case
+	// already reflects the new value and there'd be nothing to diff against.
+	var priorHoldDate string
+	if patchErr == nil && patch.AutocloseHoldUntil != nil {
+		if current, err := h.entity.GetCase(r.Context(), caseID); err != nil {
+			slog.WarnContext(r.Context(), "entity GetCase failed reading prior autoclose hold date; proceeding without dedup", "userID", user.UserID, "caseID", caseID, "err", err)
+		} else {
+			// autoclosureStateTime is only "the hold date" while the case is actually
+			// ON_HOLD — for every other autoclosureStep it's when that other stage next
+			// advances, a value unrelated to any hold. Without gating on the step, the
+			// very first hold on a case (whose autoclosureStateTime already holds some
+			// unrelated staged-advance date matching the FE's pre-filled picker default)
+			// gets misread as "unchanged" and its note silently skipped.
+			var currentCase struct {
+				AutoclosureStep      *string `json:"autoclosureStep"`
+				AutoclosureStateTime *string `json:"autoclosureStateTime"`
+			}
+			if err := json.Unmarshal(current, &currentCase); err == nil &&
+				currentCase.AutoclosureStep != nil && *currentCase.AutoclosureStep == "ON_HOLD" &&
+				currentCase.AutoclosureStateTime != nil {
+				priorHoldDate = formatHoldDate(*currentCase.AutoclosureStateTime)
+			}
+		}
+	}
+
 	result, err := h.entity.PatchCase(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity PatchCase failed", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1113,7 +1144,64 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Setting/extending the auto-closure hold has no visible trail of its own on the
+	// case (unlike the legacy ticketing UI's equivalent action, which records a work
+	// note). Record one here so CS engineers can see when a hold was set/extended and
+	// until when. Best-effort and fire-and-forget: the hold PATCH above already
+	// succeeded, so this secondary write must not delay the response or fail/roll back
+	// the request if it errors. context.WithoutCancel keeps the request-scoped values
+	// the entity client needs (x-user-id-token, correlation id) while detaching from
+	// the request's own cancellation, which fires as soon as the handler returns —
+	// a bare context.Background() would drop those values and the note would reach
+	// the entity service unattributed.
+	if patchErr == nil && patch.AutocloseHoldUntil != nil && formatHoldDate(*patch.AutocloseHoldUntil) != priorHoldDate {
+		holdUntil := *patch.AutocloseHoldUntil
+		detached := context.WithoutCancel(r.Context())
+		go func() {
+			ctx, cancel := context.WithTimeout(detached, 15*time.Second)
+			defer cancel()
+			h.recordAutocloseHoldWorkNote(ctx, user, caseID, holdUntil)
+		}()
+	}
+
 	writeJSON(w, http.StatusOK, result)
+}
+
+// formatHoldDate renders an auto-closure hold timestamp (RFC3339, as sent by the
+// FE or read back from the entity service) as the date-only form CS engineers see
+// in the UI and in the work note, since the hold is date-granularity. Falls back
+// to the raw input when it doesn't parse, so an already-invalid value is not
+// silently dropped from the comparison/note.
+func formatHoldDate(raw string) string {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return raw
+}
+
+// recordAutocloseHoldWorkNote adds an internal work note documenting an
+// auto-closure hold set/extension, mirroring the work note the legacy
+// ticketing UI's equivalent action used to write. Best-effort: failures are
+// logged, never surfaced to the caller, since the primary hold PATCH already
+// succeeded by the time this runs.
+func (h *CaseHandler) recordAutocloseHoldWorkNote(ctx context.Context, user *middleware.UserInfo, caseID, holdUntil string) {
+	note := "Please note that this case is on-hold until " + formatHoldDate(holdUntil) +
+		", hence it will not go through the auto closure process. It will be eligible " +
+		"for auto-closure again after this date passes, or if the case state is changed " +
+		"to 'Waiting on WSO2'."
+
+	body, err := json.Marshal(map[string]string{
+		"type":    "work_note",
+		"content": note,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to build autoclose hold work note body", "userID", user.UserID, "caseID", caseID, "err", err)
+		return
+	}
+
+	if _, err := h.entity.CreateCaseComment(ctx, caseID, body); err != nil {
+		slog.WarnContext(ctx, "failed to record autoclose hold work note", "userID", user.UserID, "caseID", caseID, "err", err)
+	}
 }
 
 // GetCase handles GET /cases/{id}.

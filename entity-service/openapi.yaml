@@ -5232,11 +5232,15 @@ components:
       type: object
       description: |
         Exactly one of `state`, `severity`, `workState`, `watchList`, `assigneeEmail`,
-        `acknowledge`, `type`, `bestCaseFixEta`, `mostLikelyFixEta`, or `worstCaseFixEta` must be
-        provided. The single exception is `severity`, which may accompany `type` and is
-        required when `type` is `case`.
-        `watchList`, `assigneeEmail`, `bestCaseFixEta`, `mostLikelyFixEta`, and
-        `worstCaseFixEta` are supported only for the ServiceNow data source.
+        `acknowledge`, `type`, or the combinable group (`bestCaseFixEta`, `mostLikelyFixEta`,
+        `worstCaseFixEta`, `workaroundProvided`) must be provided. The single exception is
+        `severity`, which may accompany `type` and is required when `type` is `case`.
+        The combinable group has no cross-field side effects, so any non-empty subset of its
+        four fields may be sent together in one request (e.g. all three fix-ETA estimates plus
+        `workaroundProvided` in the same call) — they must not be combined with any of the
+        exclusive fields above, though.
+        `watchList`, `assigneeEmail`, and the whole combinable group are supported only for the
+        ServiceNow data source.
         `resolutionCode`, `cause`, and `closeNotes` are optional and may only be provided alongside
         `state` when the state is `closed` or `solution_proposed`.
         `type` transfers the case to another type and is supported only for the ServiceNow
@@ -5255,9 +5259,11 @@ components:
         - required: [assigneeEmail]
         - required: [acknowledge]
         - required: [type]
-        - required: [bestCaseFixEta]
-        - required: [mostLikelyFixEta]
-        - required: [worstCaseFixEta]
+        - anyOf:
+            - required: [bestCaseFixEta]
+            - required: [mostLikelyFixEta]
+            - required: [worstCaseFixEta]
+            - required: [workaroundProvided]
       properties:
         state:
           type: string
@@ -5412,6 +5418,12 @@ components:
           description: >-
             Internal-only worst-case fix-commitment date (date-only, YYYY-MM-DD), visible
             to CSM engineers only (ServiceNow only).
+        workaroundProvided:
+          type: boolean
+          description: >-
+            Mark (true) or recall (false) the case's workaround. Stamps the calling
+            engineer as the provider and pauses the case's Workaround SLA clock while
+            set; recalling clears both (ServiceNow only).
 
     UpdateCaseResponse:
       type: object
@@ -6261,6 +6273,18 @@ components:
             Engineer who acknowledged the case, or null if nobody has. Cleared by the
             backing data source when the case's type or severity changes or it is
             reopened, so a materially changed case has to be acknowledged again.
+        workaroundProvidedOn:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the case's workaround was marked provided, or null until marked (and
+            cleared again on recall). Pauses the case's Workaround SLA clock while set
+            (ServiceNow only).
+        workaroundProvidedBy:
+          nullable: true
+          $ref: '#/components/schemas/AssignedEngineerRef'
+          description: Engineer who marked the workaround as provided, or null until marked.
         parentCase:
           nullable: true
           $ref: '#/components/schemas/CaseNumberRef'

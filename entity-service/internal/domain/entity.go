@@ -1275,9 +1275,16 @@ type CaseView struct {
 	// backing data source when the case's type or severity changes or it is
 	// reopened, so that a materially changed case has to be re-acknowledged.
 	AcknowledgedBy *AssignedEngineerRef `json:"acknowledgedBy"`
-	ParentCase     *CaseNumberRef       `json:"parentCase"`
-	RelatedCase    *CaseNumberRef       `json:"relatedCase"`
-	AccountDetails *AccountRef          `json:"account"`
+	// WorkaroundProvidedOn is when the case's workaround was marked provided, null
+	// until marked (and cleared again on recall). Pauses the case's Workaround SLA
+	// clock in the backing data source while set (ServiceNow data source only).
+	WorkaroundProvidedOn *time.Time `json:"workaroundProvidedOn"`
+	// WorkaroundProvidedBy is the engineer who marked the workaround as provided,
+	// null until marked.
+	WorkaroundProvidedBy *AssignedEngineerRef `json:"workaroundProvidedBy"`
+	ParentCase           *CaseNumberRef       `json:"parentCase"`
+	RelatedCase          *CaseNumberRef       `json:"relatedCase"`
+	AccountDetails       *AccountRef          `json:"account"`
 	// LinkedServiceRequests lists any service-request cases whose parent points to this
 	// case. Populated on every case detail response, not just high-severity cases.
 	LinkedServiceRequests []LinkedServiceRequestRef `json:"linkedServiceRequests"`
@@ -1789,6 +1796,12 @@ type UpdateCaseRequest struct {
 	// it cannot be combined with any other field in the same request. Requires an
 	// elevated support role (ServiceNow data source only).
 	Acknowledge *bool `json:"acknowledge"`
+	// WorkaroundProvided marks (true) or recalls (false) the case's workaround.
+	// Unlike Acknowledge, both true and false are meaningful and accepted -- this
+	// is a toggle, not a one-way claim. Marking it stamps the calling engineer as
+	// the provider and pauses the case's Workaround SLA clock in the backing data
+	// source; recalling clears both (ServiceNow data source only).
+	WorkaroundProvided *bool `json:"workaroundProvided"`
 }
 
 // UpdateCaseResponse is the response for PATCH /cases/{id}.
@@ -1852,6 +1865,11 @@ type UpdatedCase struct {
 	// request set it or found it already set. Present only when the update set
 	// acknowledge.
 	AcknowledgedBy *AssignedEngineerRef `json:"acknowledgedBy,omitempty"`
+	// WorkaroundProvidedOn/WorkaroundProvidedBy are not echoed here: ServiceNow's
+	// Update Case response only ever returns {id, updatedOn, updatedBy} for a plain
+	// field write like this one (same as Subject/Description/the fix-ETA fields
+	// above, none of which echo back either) -- the caller re-reads the case detail
+	// to see the new value, same as for those.
 }
 
 // CaseVariable is one answered question on a service request: Name is the

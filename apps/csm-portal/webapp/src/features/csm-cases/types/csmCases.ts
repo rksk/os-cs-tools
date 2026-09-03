@@ -562,6 +562,14 @@ export interface CsmCaseDetail extends CsmCaseRow {
    * severity changes or it is reopened, so it can become absent again.
    */
   acknowledgedBy?: { name: string; email?: string };
+  /**
+   * When the case's workaround was marked provided (ISO date-time), or absent
+   * until marked (and cleared again on recall). Pauses the case's Workaround
+   * SLA clock while set.
+   */
+  workaroundProvidedOn?: string;
+  /** The engineer who marked the workaround as provided. Absent until marked. */
+  workaroundProvidedBy?: { name: string; email?: string };
   /** Category of issue reported, when set (e.g. "total_outage", "question"). */
   issueType?: BeCaseIssueType;
   /**

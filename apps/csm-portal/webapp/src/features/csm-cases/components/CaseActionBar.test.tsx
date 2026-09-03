@@ -870,3 +870,54 @@ describe("acknowledge action", () => {
     expect(screen.getByRole("button", { name: /acknowledge/i })).toBeDisabled();
   });
 });
+
+describe("CaseActionBar — Provide / Recall workaround", () => {
+  it("shows 'Provide workaround' and dispatches toggle_workaround_provided when unset", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{ ...BASE_CASE, workaroundProvidedOn: undefined }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /provide workaround/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({
+      secondary: "toggle_workaround_provided",
+    });
+  });
+
+  it("shows 'Recall workaround' once the workaround is marked provided", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...BASE_CASE,
+          workaroundProvidedOn: "2026-09-02T17:11:47Z",
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /recall workaround/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({
+      secondary: "toggle_workaround_provided",
+    });
+  });
+
+  it("disables the menu item once the case is closed", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar caseDetail={caseInState("closed", [])} onAction={onAction} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /provide workaround/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+});

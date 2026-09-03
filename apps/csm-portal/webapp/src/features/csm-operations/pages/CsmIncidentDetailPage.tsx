@@ -37,7 +37,9 @@ import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { useRecordRecentView } from "@features/csm-recent/hooks/useRecentViews";
 import { useGetIncident } from "@features/csm-operations/api/useGetIncident";
 import { usePatchIncident } from "@features/csm-operations/api/usePatchIncident";
@@ -209,6 +211,11 @@ export default function CsmIncidentDetailPage(): JSX.Element {
     Extract<BeIncidentState, "RESOLVED" | "CLOSED"> | null
   >(null);
   const engineerName = useEngineerDisplayName();
+  // Signed-in engineer's platform UUID (self-subscribe writes) and email
+  // (matching a watch-list entry to "me"), same pair the case detail page
+  // uses for its own watch list.
+  const { user: currentUser } = useCurrentUser();
+  const currentUserEmail = useIdTokenClaims()?.email;
 
   const { data: comments } = useGetCsmIncidentComments(id);
   const { data: activityAudit } = useGetCsmIncidentActivities(id);
@@ -234,15 +241,18 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   // The read model's entries already carry the platform user UUID the write
   // side is keyed by, so the widget can compute a replacement list straight
   // from what is on screen.
-  const watchList = useMemo(
-    () =>
-      (data?.watchList ?? []).map((w) => ({
+  const watchList = useMemo(() => {
+    const myEmail = currentUserEmail?.toLowerCase();
+    return (data?.watchList ?? []).map((w) => {
+      const email = w.email || undefined;
+      return {
         id: w.id,
         name: w.name || w.email,
-        email: w.email || undefined,
-      })),
-    [data?.watchList],
-  );
+        email,
+        isMe: !!email && !!myEmail && email.toLowerCase() === myEmail,
+      };
+    });
+  }, [data?.watchList, currentUserEmail]);
 
   const recordView = useRecordRecentView();
   useEffect(() => {
@@ -728,6 +738,11 @@ export default function CsmIncidentDetailPage(): JSX.Element {
           watchers={watchList}
           onReplace={onReplaceWatchers}
           isSaving={patchIncident.isPending}
+          currentUserId={currentUser?.id}
+          // No `autoWatchingReason`: the incident read model's `assignedTo`
+          // carries only id/name (no email), so — unlike the case page —
+          // there's no reliable signal here for "watching only because
+          // auto-assigned" without a new fetch. Unfollow stays available.
         />
       )}
 

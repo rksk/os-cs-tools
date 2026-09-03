@@ -42,7 +42,9 @@ import {
   Pencil,
   Play,
   Send,
+  Undo2,
   User,
+  Wrench,
 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import type {
@@ -281,6 +283,31 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       label: ongoing ? "Pause work" : "Resume work",
       icon: ongoing ? <PauseCircle size={16} /> : <Play size={16} />,
       divider: true,
+    });
+  }
+
+  // Mark / recall the case's workaround. Pauses the case's Workaround SLA
+  // clock while set; recalling clears it. Not assignee-gated (unlike
+  // pause/resume work above) -- any engineer working the case can mark or
+  // recall it. Blocked once the case is closed, same as every other write
+  // action below.
+  {
+    const caseClosedForWorkaround = caseDetail.state === "closed";
+    items.push({
+      key: "toggle_workaround_provided",
+      label: caseDetail.workaroundProvidedOn
+        ? "Recall workaround"
+        : "Provide workaround",
+      icon: caseDetail.workaroundProvidedOn ? (
+        <Undo2 size={16} />
+      ) : (
+        <Wrench size={16} />
+      ),
+      divider: true,
+      disabled: caseClosedForWorkaround,
+      tooltip: caseClosedForWorkaround
+        ? "This case is closed — it's read-only."
+        : undefined,
     });
   }
 
