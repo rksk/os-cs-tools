@@ -1937,7 +1937,18 @@ func TestGetCaseEscalations(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.GetCaseEscalations(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects malformed case UUID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/not-a-uuid/escalations", nil))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.GetCaseEscalations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
 		assertContentType(t, w, "application/json")
 	})
 
@@ -2013,7 +2024,18 @@ func TestCreateCaseEscalation(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.CreateCaseEscalation(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects malformed case UUID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/escalations", strings.NewReader(`{"action":"ESCALATE"}`)))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
 		assertContentType(t, w, "application/json")
 	})
 
@@ -2065,6 +2087,91 @@ func TestCreateCaseEscalation(t *testing.T) {
 		}
 		if string(capturedBody) != reqBody {
 			t.Errorf("upstream body = %q, want verbatim %q", string(capturedBody), reqBody)
+		}
+	})
+
+	t.Run("de-escalation is disabled for everyone when no roles are configured", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				t.Fatal("upstream CreateCaseEscalation should not be called when the caller is not authorized to de-escalate")
+				return nil, nil
+			},
+		}
+		h := NewCaseHandler(client) // SetDeescalationAllowedRoles never called
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgForbidden)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("de-escalation is rejected for a caller without an allowed role", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","roles":["agent"]}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				t.Fatal("upstream CreateCaseEscalation should not be called when the caller lacks an allowed role")
+				return nil, nil
+			},
+		}
+		h := NewCaseHandler(client)
+		h.SetDeescalationAllowedRoles([]string{"admin"})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgForbidden)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("de-escalation is allowed for a caller with an allowed role, matched case-insensitively", func(t *testing.T) {
+		var upstreamCalled bool
+		client := &mockEntityCaseClient{
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","roles":["Admin"]}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				upstreamCalled = true
+				return []byte(`{"id":"e-1","level":"1","action":"DEESCALATE"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		h.SetDeescalationAllowedRoles([]string{"admin"})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if !upstreamCalled {
+			t.Error("upstream CreateCaseEscalation was not called for an authorized de-escalation")
+		}
+	})
+
+	t.Run("escalation is never role-gated, even with de-escalation roles configured", func(t *testing.T) {
+		var upstreamCalled bool
+		client := &mockEntityCaseClient{
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				t.Fatal("GetUserMe should not be called for an ESCALATE action")
+				return nil, nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				upstreamCalled = true
+				return []byte(`{"id":"e-1","level":"1","action":"ESCALATE"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		h.SetDeescalationAllowedRoles([]string{"admin"})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"reason":"needed","action":"ESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if !upstreamCalled {
+			t.Error("upstream CreateCaseEscalation was not called for an ESCALATE action")
 		}
 	})
 

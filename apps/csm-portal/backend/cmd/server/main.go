@@ -72,6 +72,12 @@ func main() {
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
 	caseHandler := handler.NewCaseHandler(customerEntityClient)
+	// CSM_DEESCALATION_ALLOWED_ROLES: comma-separated platform role names
+	// permitted to de-escalate a case (escalating stays open to any
+	// authenticated user). Unset/empty means de-escalation is disabled for
+	// everyone -- see CaseHandler.SetDeescalationAllowedRoles's doc comment
+	// for why this fails closed rather than defaulting to unrestricted.
+	caseHandler.SetDeescalationAllowedRoles(splitComma(os.Getenv("CSM_DEESCALATION_ALLOWED_ROLES")))
 	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
