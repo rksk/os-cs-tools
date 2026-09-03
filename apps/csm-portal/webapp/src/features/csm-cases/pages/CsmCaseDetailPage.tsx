@@ -1757,10 +1757,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
     (reason: string | undefined) => {
       if (!escalationDialogAction) return;
       setEscalationError(null);
+      // Compared against caseViewTokenRef in the callbacks below, not caseId
+      // itself — see onRequestUpdate's identical guard above for why a plain
+      // caseId comparison can't distinguish this view's request from a
+      // still-pending one left over from an earlier visit to the same case.
+      const submittedViewToken = caseViewTokenRef.current;
       postEscalation.mutate(
         { action: escalationDialogAction, reason },
         {
           onSuccess: () => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
             setEscalationDialogAction(null);
             setFeedback({
               message:
@@ -1772,6 +1778,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             });
           },
           onError: (err) => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
             // A 400 here is actionable (e.g. a reason missing while
             // escalating, or already at the floor/ceiling level) — surface it
             // instead of a generic fallback and keep the dialog open with the

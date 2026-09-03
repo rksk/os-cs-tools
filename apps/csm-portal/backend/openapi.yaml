@@ -7794,6 +7794,19 @@ components:
           items:
             $ref: '#/components/schemas/Tag'
           description: Free-text labels attached to the case. null/absent when none are set.
+        escalationLevel:
+          type: string
+          nullable: true
+          enum:
+            - "0"
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+          description: >-
+            The case's current escalation level (EL0-EL5), or null when not yet known/populated
+            for this case's data source.
 
     CaseSearchView:
       type: object
@@ -7886,6 +7899,19 @@ components:
           $ref: '#/components/schemas/CaseNumberRef'
         account:
           $ref: '#/components/schemas/AccountRef'
+        escalationLevel:
+          type: string
+          nullable: true
+          enum:
+            - "0"
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+          description: >-
+            The case's current escalation level (EL0-EL5), or null when not yet known/populated
+            for this case's data source.
 
     UpdateDescriptionRequest:
       type: object

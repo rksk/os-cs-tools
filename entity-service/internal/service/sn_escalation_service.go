@@ -114,12 +114,14 @@ type snCreateEscalationResponse struct {
 	Escalation snEscalation `json:"escalation"`
 }
 
-// escalationSearchLimit is the fixed page size used when reading a case's
-// escalation history. History lists are short by nature (a handful of
-// escalate/de-escalate steps per case at most) so a single unpaginated page
-// covers every real case; this also keeps the read endpoint's contract simple
-// (no caller-supplied pagination params yet).
-const escalationSearchLimit = 100
+// escalationSearchPageSize is the page size used internally when reading a
+// case's escalation history from the backing service. GET /cases/{id}/escalations
+// promises the case's FULL history (see domain.SearchEscalationsResponse's doc
+// comment), and repeated escalate/de-escalate actions can in principle produce
+// more than one page's worth of records, so SearchEscalations below pages
+// through every result rather than returning just the first page — a case with
+// a long escalation history must not silently lose its oldest records.
+const escalationSearchPageSize = 100
 
 func snEscalationToDomain(ctx context.Context, e snEscalation) (domain.Escalation, error) {
 	createdOn, err := parseSNDateTime(ctx, "SearchEscalations", "createdOn", e.CreatedOn)
@@ -138,7 +140,7 @@ func snEscalationToDomain(ctx context.Context, e snEscalation) (domain.Escalatio
 			Name:     u.Name,
 			Email:    u.Email,
 		}
-		if u.ID != nil {
+		if u.ID != nil && *u.ID != "" {
 			id := sysidToUUID(*u.ID)
 			ref.ID = &id
 		}
@@ -193,7 +195,9 @@ func escalationWorkNoteContent(action domain.EscalationAction, e snEscalation) s
 	return content
 }
 
-// SearchEscalations implements EscalationService.
+// SearchEscalations implements EscalationService. It pages through every
+// upstream result rather than returning only the first page — see
+// escalationSearchPageSize's doc comment for why.
 func (s *snEscalationService) SearchEscalations(ctx context.Context, caseID string) (domain.SearchEscalationsResponse, error) {
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -201,37 +205,47 @@ func (s *snEscalationService) SearchEscalations(ctx context.Context, caseID stri
 		return domain.SearchEscalationsResponse{}, err
 	}
 
-	payload := snEscalationSearchPayload{
-		Filters: &snEscalationSearchFilters{
-			CaseIDs: []string{uuidToSysid(caseID)},
-		},
-		Pagination: snProjectPagination{Limit: escalationSearchLimit, Offset: 0},
-	}
+	sysid := uuidToSysid(caseID)
+	escalations := make([]domain.Escalation, 0, escalationSearchPageSize)
+	total := 0
 
-	raw, err := s.client.Post(ctx, "/escalations/search", token, payload)
-	if err != nil {
-		return domain.SearchEscalationsResponse{}, err
-	}
+	for offset := 0; ; offset += escalationSearchPageSize {
+		payload := snEscalationSearchPayload{
+			Filters: &snEscalationSearchFilters{
+				CaseIDs: []string{sysid},
+			},
+			Pagination: snProjectPagination{Limit: escalationSearchPageSize, Offset: offset},
+		}
 
-	var snResp snEscalationSearchResponse
-	if err := json.Unmarshal(raw, &snResp); err != nil {
-		return domain.SearchEscalationsResponse{}, fmt.Errorf("sn search escalations: parse response: %w", err)
-	}
-
-	escalations := make([]domain.Escalation, 0, len(snResp.Escalations))
-	for _, e := range snResp.Escalations {
-		view, err := snEscalationToDomain(ctx, e)
+		raw, err := s.client.Post(ctx, "/escalations/search", token, payload)
 		if err != nil {
 			return domain.SearchEscalationsResponse{}, err
 		}
-		escalations = append(escalations, view)
+
+		var snResp snEscalationSearchResponse
+		if err := json.Unmarshal(raw, &snResp); err != nil {
+			return domain.SearchEscalationsResponse{}, fmt.Errorf("sn search escalations: parse response: %w", err)
+		}
+
+		for _, e := range snResp.Escalations {
+			view, err := snEscalationToDomain(ctx, e)
+			if err != nil {
+				return domain.SearchEscalationsResponse{}, err
+			}
+			escalations = append(escalations, view)
+		}
+
+		total = snResp.TotalRecords
+		if len(snResp.Escalations) == 0 || len(escalations) >= total {
+			break
+		}
 	}
 
 	return domain.SearchEscalationsResponse{
 		Escalations: escalations,
-		Total:       snResp.TotalRecords,
-		Limit:       snResp.Limit,
-		Offset:      snResp.Offset,
+		Total:       total,
+		Offset:      0,
+		Limit:       len(escalations),
 	}, nil
 }
 
