@@ -706,6 +706,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setPrevCaseId(caseId);
     setFeedback(null);
     setComposerOpen(false);
+    // The lifted composer draft (see clearComposerDraft above) is per-case: a
+    // draft left over from the previous case must not appear — or be
+    // submittable — against the newly opened one.
+    clearComposerDraft();
     setAssignOpen(false);
     setResolutionDialog(null);
     setSeverityOpen(false);
