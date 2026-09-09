@@ -254,11 +254,13 @@ const DISPLAY_NAME_ALIASES: Record<string, string> = {
   "Customer Approval CR": "Cust. Approval CR",
   "Open Service Request": "Open SR",
   "Service Request - In-Progress": "In-Progress SR",
-  // CRE's own — "Escalated" here instead of "Escalations" meant it never
-  // matched CRE_PRIMARY_ORDER's exact "Escalations" entry, so it fell
-  // into the secondary tier instead of its correct 4th primary-grid
-  // position (right of SLA Violations).
+  // CRE's own — the live config has spelled this "Escalated" and, more
+  // recently, "Escalated Cases"; either must alias to "Escalations" so it
+  // matches CRE_PRIMARY_ORDER's exact "Escalations" entry and lands in its
+  // correct 4th primary-grid slot (right of SLA Violations, per
+  // CS_Monitor_Dashboard.png), not the plain secondary tier.
   Escalated: "Escalations",
+  "Escalated Cases": "Escalations",
   // CRE's own — the live widget is named "30+ Days" (see
   // CRE_SECONDARY_ORDER's own note on this), but should DISPLAY as the
   // original's full "30+ Days Cases" text.
