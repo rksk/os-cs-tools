@@ -27,29 +27,34 @@ import {
 import { X } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useRef, useState, type JSX } from "react";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
-import { getAttachmentPreviewKind } from "@features/csm-cases/utils/attachmentPreview";
+import {
+  getAttachmentPreviewKind,
+  type AttachmentPreviewSource,
+} from "@features/csm-cases/utils/attachmentPreview";
 
 interface AttachmentPreviewDialogProps {
   /** Attachment being previewed; the dialog is closed when this is null. */
   attachment: CaseAttachment | null;
   onClose: () => void;
   /**
-   * Fetch the attachment's raw bytes. The BE content endpoint always sets
-   * `Content-Disposition: attachment` and requires auth headers, so a plain
-   * `<img src>` pointed at it would force a download instead of rendering —
-   * the bytes are fetched here as a `Blob` and turned into an object URL for
-   * the preview element instead.
+   * Resolve a previewable URL for the attachment. This is either a `blob:`
+   * object URL created from the attachment's authenticated content (the
+   * BE content endpoint always sets `Content-Disposition: attachment` and
+   * requires auth headers, so a plain `<img src>` pointed at it directly
+   * would force a download instead of rendering) or, for SFTPGo-backed
+   * attachments, a short-lived public share URL that is already directly
+   * usable as-is. See {@link AttachmentPreviewSource}.
    */
-  fetchContent: (attachment: CaseAttachment) => Promise<Blob>;
+  fetchContent: (attachment: CaseAttachment) => Promise<AttachmentPreviewSource>;
 }
 
 /**
  * Preview for image/PDF attachments (the two families in the backend's
  * safe-content-type allowlist that make sense to preview — see
- * {@link getAttachmentPreviewKind}). Fetches the attachment's bytes via
- * `fetchContent` (the same authenticated content endpoint the download
- * action uses) and turns them into a `blob:` object URL, which is revoked on
- * close/unmount to avoid leaking memory. Images render inline; PDFs open in
+ * {@link getAttachmentPreviewKind}). Resolves a previewable URL via
+ * `fetchContent` — either a `blob:` object URL (revoked on close/unmount to
+ * avoid leaking memory) or an already-usable share URL, per
+ * {@link AttachmentPreviewSource}. Images render inline; PDFs open in
  * a new browser tab instead (see the PDF-branch comment below for why).
  */
 export default function AttachmentPreviewDialog({
@@ -86,13 +91,19 @@ export default function AttachmentPreviewDialog({
     if (!attachment) return;
 
     let cancelled = false;
-    let createdUrl: string | null = null;
+    // Only set for a `blob:` object URL that this dialog must revoke itself;
+    // a share URL is left untouched (`revoke: false`) since it isn't owned
+    // by this component and isn't a `blob:` URL to begin with.
+    let revocableUrl: string | null = null;
 
     void fetchContent(attachment)
-      .then((blob) => {
-        if (cancelled) return;
-        createdUrl = URL.createObjectURL(blob);
-        setObjectUrl(createdUrl);
+      .then((source) => {
+        if (cancelled) {
+          if (source.revoke) URL.revokeObjectURL(source.url);
+          return;
+        }
+        if (source.revoke) revocableUrl = source.url;
+        setObjectUrl(source.url);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -107,7 +118,7 @@ export default function AttachmentPreviewDialog({
 
     return () => {
       cancelled = true;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
+      if (revocableUrl) URL.revokeObjectURL(revocableUrl);
     };
     // `fetchContent` is a stable useCallback from the caller's hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps

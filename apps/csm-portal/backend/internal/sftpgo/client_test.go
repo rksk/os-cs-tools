@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +134,7 @@ func TestCreateShareSendsCorrectRequestShape(t *testing.T) {
 	client := NewClient(Config{BaseURL: srv.URL})
 
 	before := time.Now()
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", 5*time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", ShareScopeRead, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -156,8 +157,11 @@ func TestCreateShareSendsCorrectRequestShape(t *testing.T) {
 	if len(paths) != 1 || paths[0] != "/attachments/00000000-0000-0000-0000-000000000000" {
 		t.Errorf("paths = %v, want a single-element array with the storage key", gotBody["paths"])
 	}
-	if scope, _ := gotBody["scope"].(float64); scope != shareScopeRead {
-		t.Errorf("scope = %v, want %d (read-only)", gotBody["scope"], shareScopeRead)
+	if scope, _ := gotBody["scope"].(float64); scope != ShareScopeRead {
+		t.Errorf("scope = %v, want %d (read-only)", gotBody["scope"], ShareScopeRead)
+	}
+	if _, hasPassword := gotBody["password"]; hasPassword {
+		t.Errorf("request body carried a password field, want none")
 	}
 	expiresAtMs, _ := gotBody["expires_at"].(float64)
 	wantMin := float64(before.Add(5 * time.Minute).UnixMilli())
@@ -178,7 +182,7 @@ func TestCreateShareFallsBackToJSONBodyWhenHeaderMissing(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -198,7 +202,7 @@ func TestCreateSharePrefersHeaderOverBody(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -217,7 +221,7 @@ func TestCreateShareErrorsWhenNoIDFound(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	if _, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute); err == nil {
+	if _, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute); err == nil {
 		t.Fatal("expected error when neither header nor body carry an id, got nil")
 	}
 }
@@ -232,7 +236,7 @@ func TestCreateSharePropagatesUpstreamError(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -242,6 +246,40 @@ func TestCreateSharePropagatesUpstreamError(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusForbidden {
 		t.Errorf("StatusCode = %d, want 403", apiErr.StatusCode)
+	}
+}
+
+func TestCreateShareSendsWriteScopeAndNoPassword(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("X-Object-Id", "write-share-abc")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/upload-target", ShareScopeWrite, 45*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	if shareID != "write-share-abc" {
+		t.Errorf("shareID = %q, want write-share-abc", shareID)
+	}
+
+	paths, _ := gotBody["paths"].([]any)
+	if len(paths) != 1 || paths[0] != "/attachments/upload-target" {
+		t.Errorf("paths = %v, want a single-element array with the storage key", gotBody["paths"])
+	}
+	if scope, _ := gotBody["scope"].(float64); scope != ShareScopeWrite {
+		t.Errorf("scope = %v, want %d (write)", gotBody["scope"], ShareScopeWrite)
+	}
+	if _, hasPassword := gotBody["password"]; hasPassword {
+		t.Errorf("request body carried a password field, want none — a server-minted upload share must have no password")
 	}
 }
 
@@ -292,5 +330,253 @@ func TestBaseURL(t *testing.T) {
 	client := NewClient(Config{BaseURL: "https://sftpgo.example.com/"})
 	if got := client.BaseURL(); got != "https://sftpgo.example.com" {
 		t.Errorf("BaseURL() = %q, want trailing slash trimmed", got)
+	}
+}
+
+// TestClientRefusesInsecureRedirect proves the http.Client this package
+// constructs does not follow an HTTPS-to-HTTP redirect (which, under Go's
+// default CheckRedirect, would copy the Authorization header onto the
+// downgraded, cleartext request) — see refuseInsecureRedirect. downgradeSrv
+// stands in for the "same host, now-plain-HTTP" redirect target: since
+// CheckRedirect must refuse the redirect before the client ever issues a
+// request to it, downgradeSrv should never see any request at all, bearer
+// token or otherwise.
+func TestClientRefusesInsecureRedirect(t *testing.T) {
+	t.Parallel()
+
+	downgradeHit := false
+	downgradeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downgradeHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downgradeSrv.Close()
+
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to the same logical host but downgraded to plain HTTP —
+		// the scenario refuseInsecureRedirect exists to block.
+		http.Redirect(w, r, downgradeSrv.URL+"/api/v2/user/shares", http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+
+	client := NewClient(Config{BaseURL: tlsSrv.URL})
+	// Trust the TLS test server's self-signed certificate; keep our own
+	// CheckRedirect override intact.
+	client.http.Transport = tlsSrv.Client().Transport
+
+	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", ShareScopeWrite, 5*time.Minute)
+	if err == nil {
+		t.Fatal("CreateShare: expected an error refusing the insecure redirect, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow redirect") {
+		t.Errorf("CreateShare error = %v, want it to mention refusing the redirect", err)
+	}
+	if downgradeHit {
+		t.Error("downgrade target received a request; CheckRedirect should have refused before dialing it (Authorization would have leaked over plain HTTP)")
+	}
+}
+
+// TestClientRefusesCrossOriginRedirectOnTUSCreate proves a TUS create (POST
+// /api/v2/shares-chunked-uploads) redirected to a DIFFERENT HTTPS origin is
+// refused before the foreign host is ever dialed — a 307/308 there would
+// forward the Upload-Metadata header, whose share_id is the entire upload
+// credential, to a host this client was never configured to trust.
+func TestClientRefusesCrossOriginRedirectOnTUSCreate(t *testing.T) {
+	t.Parallel()
+
+	foreignHit := false
+	foreignSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		foreignHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer foreignSrv.Close()
+
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// HTTPS-to-HTTPS, but a different origin: the scenario the
+		// same-origin check in refuseInsecureRedirect exists to block.
+		http.Redirect(w, r, foreignSrv.URL+"/api/v2/shares-chunked-uploads", http.StatusTemporaryRedirect)
+	}))
+	defer tlsSrv.Close()
+
+	client := NewClient(Config{BaseURL: tlsSrv.URL})
+	client.http.Transport = tlsSrv.Client().Transport
+
+	err := client.UploadBytes(context.Background(), "share-abc", "/attachments/x/img.png", []byte("payload"), "image/png")
+	if err == nil {
+		t.Fatal("UploadBytes: expected an error refusing the cross-origin redirect, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow redirect to foreign origin") {
+		t.Errorf("UploadBytes error = %v, want it to mention refusing the foreign-origin redirect", err)
+	}
+	if foreignHit {
+		t.Error("foreign origin received a request; CheckRedirect should have refused before dialing it (Upload-Metadata's share_id would have leaked)")
+	}
+}
+
+// TestClientRefusesCrossOriginRedirectOnTUSPatch is the PATCH-leg twin of the
+// create-leg test above: the create succeeds on the configured origin, then
+// the PATCH carrying the file bytes is redirected to a different HTTPS origin
+// and must be refused before that host sees the body.
+func TestClientRefusesCrossOriginRedirectOnTUSPatch(t *testing.T) {
+	t.Parallel()
+
+	foreignHit := false
+	foreignSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		foreignHit = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer foreignSrv.Close()
+
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			w.Header().Set("Location", "/api/v2/shares-chunked-uploads/upload-1")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodPatch:
+			http.Redirect(w, r, foreignSrv.URL+"/api/v2/shares-chunked-uploads/upload-1", http.StatusTemporaryRedirect)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer tlsSrv.Close()
+
+	client := NewClient(Config{BaseURL: tlsSrv.URL})
+	client.http.Transport = tlsSrv.Client().Transport
+
+	err := client.UploadBytes(context.Background(), "share-abc", "/attachments/x/img.png", []byte("payload"), "image/png")
+	if err == nil {
+		t.Fatal("UploadBytes: expected an error refusing the cross-origin redirect, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow redirect to foreign origin") {
+		t.Errorf("UploadBytes error = %v, want it to mention refusing the foreign-origin redirect", err)
+	}
+	if foreignHit {
+		t.Error("foreign origin received a request; CheckRedirect should have refused before dialing it (the PATCH body's bytes would have leaked)")
+	}
+}
+
+// TestClientFollowsSameOriginRedirect proves the same-origin check does not
+// over-block: an HTTPS redirect to a different path on the SAME origin is
+// still followed, on both the TUS create and PATCH legs.
+func TestClientFollowsSameOriginRedirect(t *testing.T) {
+	t.Parallel()
+
+	var patchLanded bool
+	var mux http.ServeMux
+	mux.HandleFunc("POST /api/v2/shares-chunked-uploads", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/relocated-create", http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("POST /relocated-create", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/api/v2/shares-chunked-uploads/upload-1")
+		w.WriteHeader(http.StatusCreated)
+	})
+	mux.HandleFunc("PATCH /api/v2/shares-chunked-uploads/upload-1", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/relocated-patch", http.StatusTemporaryRedirect)
+	})
+	mux.HandleFunc("PATCH /relocated-patch", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "payload" {
+			t.Errorf("redirected PATCH body = %q, want %q", body, "payload")
+		}
+		patchLanded = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	tlsSrv := httptest.NewTLSServer(&mux)
+	defer tlsSrv.Close()
+
+	client := NewClient(Config{BaseURL: tlsSrv.URL})
+	client.http.Transport = tlsSrv.Client().Transport
+
+	if err := client.UploadBytes(context.Background(), "share-abc", "/attachments/x/img.png", []byte("payload"), "image/png"); err != nil {
+		t.Fatalf("UploadBytes: %v (a same-origin redirect must still be followed)", err)
+	}
+	if !patchLanded {
+		t.Error("redirected PATCH target was never reached")
+	}
+}
+
+// TestDoTruncatesHugeErrorBody proves a non-2xx response with an arbitrarily
+// large body surfaces as an *apierror.Error whose Body excerpt is bounded at
+// maxErrBodyBytes — the client reads only just past the limit rather than
+// buffering the whole thing.
+func TestDoTruncatesHugeErrorBody(t *testing.T) {
+	t.Parallel()
+
+	huge := strings.Repeat("x", 1<<20) // 1 MiB, far past maxErrBodyBytes
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, huge)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+
+	_, err := client.MintToken(context.Background(), "jane.doe@example.com", "raw-jwt")
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *apierror.Error", err)
+	}
+	if apiErr.StatusCode != http.StatusInternalServerError {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+	if len(apiErr.Body) != maxErrBodyBytes {
+		t.Errorf("len(Body) = %d, want exactly %d (truncated)", len(apiErr.Body), maxErrBodyBytes)
+	}
+	if apiErr.Body != huge[:maxErrBodyBytes] {
+		t.Errorf("Body = %q, want the first %d bytes of the upstream body", apiErr.Body, maxErrBodyBytes)
+	}
+}
+
+func TestRemoveFileSendsCorrectRequestShape(t *testing.T) {
+	t.Parallel()
+
+	var gotMethod, gotPath, gotQueryPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQueryPath = r.URL.Query().Get("path")
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+
+	storageKey := "/attachments/cases/case-1/att-1/report file.pdf"
+	if err := client.RemoveFile(context.Background(), "tok-123", storageKey); err != nil {
+		t.Fatalf("RemoveFile: %v", err)
+	}
+
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/api/v2/user/files" {
+		t.Errorf("path = %q, want /api/v2/user/files", gotPath)
+	}
+	if gotQueryPath != storageKey {
+		t.Errorf("query path = %q, want %q (must round-trip through URL escaping unchanged)", gotQueryPath, storageKey)
+	}
+	if gotAuth != "Bearer tok-123" {
+		t.Errorf("Authorization = %q, want Bearer tok-123", gotAuth)
+	}
+}
+
+func TestRemoveFilePropagatesUpstreamError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"no such file"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+
+	err := client.RemoveFile(context.Background(), "tok-123", "/attachments/missing")
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *apierror.Error", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
 	}
 }

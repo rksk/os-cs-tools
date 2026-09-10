@@ -35,7 +35,10 @@ func TestValidateHTTPSURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "https ok", value: "https://sftpgo.internal.example.com", wantErr: false},
-		{name: "https with path ok", value: "https://sftpgo.internal.example.com/api", wantErr: false},
+		{name: "https with trailing slash ok", value: "https://sftpgo.internal.example.com/", wantErr: false},
+		{name: "https with path rejected", value: "https://sftpgo.internal.example.com/api", wantErr: true},
+		{name: "https with query rejected", value: "https://sftpgo.internal.example.com?x=1", wantErr: true},
+		{name: "https with fragment rejected", value: "https://sftpgo.internal.example.com#frag", wantErr: true},
 		{name: "http rejected", value: "http://sftpgo.internal.example.com", wantErr: true},
 		{name: "scheme-less rejected", value: "sftpgo.internal.example.com", wantErr: true},
 		{name: "unparseable rejected", value: "https://%zz", wantErr: true},

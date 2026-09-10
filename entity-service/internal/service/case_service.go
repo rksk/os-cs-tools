@@ -20,6 +20,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -32,11 +33,18 @@ import (
 type caseService struct {
 	repo     repository.CaseRepository
 	userRepo repository.UserRepository
+	// publisher is nil when Event Hub is not configured — see
+	// snCaseService.publisher's own doc comment for the same convention.
+	// Currently only ever read by UpdateCase's (inert — see
+	// events.TypeCaseBillableStatusChanged's own doc comment)
+	// case.billable_status_changed detection.
+	publisher EventPublisherService
 }
 
 // NewCaseService constructs a CaseService backed by the given repositories.
-func NewCaseService(repo repository.CaseRepository, userRepo repository.UserRepository) CaseService {
-	return &caseService{repo: repo, userRepo: userRepo}
+// publisher may be nil (see caseService.publisher's own doc comment).
+func NewCaseService(repo repository.CaseRepository, userRepo repository.UserRepository, publisher EventPublisherService) CaseService {
+	return &caseService{repo: repo, userRepo: userRepo, publisher: publisher}
 }
 
 var validCaseSortField = map[domain.CaseSortField]bool{
@@ -89,6 +97,11 @@ var validEngagementType = map[domain.EngagementType]bool{
 	domain.EngagementTypeOnboarding:            true,
 }
 
+var validEngagementPaymentType = map[domain.EngagementPaymentType]bool{
+	domain.EngagementPaymentTypePaid: true,
+	domain.EngagementPaymentTypeFOC:  true,
+}
+
 var validCaseSortOrder = map[domain.CaseSortOrder]bool{
 	domain.CaseSortOrderAsc:  true,
 	domain.CaseSortOrderDesc: true,
@@ -112,9 +125,9 @@ var validCaseSeverity = map[domain.CaseSeverity]bool{
 	domain.CaseSeverityLow:          true,
 }
 
-// validCaseGroupByField is the allow-list for GroupCasesByRequest.GroupBy,
-// matching openapi.yaml's GroupCasesByRequest.groupBy enum exactly.
-var validCaseGroupByField = map[string]bool{
+// validCaseAggregateField is the allow-list for AggregateCasesRequest.GroupBy,
+// matching openapi.yaml's AggregateCasesRequest.groupBy enum exactly.
+var validCaseAggregateField = map[string]bool{
 	"account":  true,
 	"state":    true,
 	"severity": true,
@@ -154,11 +167,15 @@ func validateCreateCaseRequest(req *domain.CreateCaseRequest) error {
 	if req.ProjectID == "" {
 		return &apierror.ValidationError{Msg: "projectId is required"}
 	}
-	if req.DeploymentID == "" {
-		return &apierror.ValidationError{Msg: "deploymentId is required"}
-	}
-	if req.DeployedProductID == "" {
-		return &apierror.ValidationError{Msg: "deployedProductId is required"}
+	// Announcements have no deployment/deployed-product concept: these fields
+	// are deliberately omitted at the ServiceNow layer, not just optional.
+	if req.Type != "announcement" {
+		if req.DeploymentID == "" {
+			return &apierror.ValidationError{Msg: "deploymentId is required"}
+		}
+		if req.DeployedProductID == "" {
+			return &apierror.ValidationError{Msg: "deployedProductId is required"}
+		}
 	}
 
 	switch req.Type {
@@ -214,18 +231,16 @@ func validateCreateCaseRequest(req *domain.CreateCaseRequest) error {
 		if !validEngagementType[req.EngagementType] {
 			return &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(req.EngagementType)}
 		}
+		if !validEngagementPaymentType[req.EngagementPaymentType] {
+			return &apierror.ValidationError{Msg: "engagementPaymentType contains invalid value: " + string(req.EngagementPaymentType)}
+		}
 	case "announcement":
-		// "announcement" is a real, valid case type (it's in the Postgres
-		// case_type_enum and is a legitimate case-search/stats filter value —
-		// see validCaseType), but nothing in this codebase knows how to build
-		// an announcement case: this switch has no field-requirement case for
-		// it, and sn_case_service.go's payload-building switch has no case
-		// for it either (so req.Subject/req.Description would be silently
-		// dropped rather than sent to ServiceNow, with no error). Reject
-		// explicitly here rather than letting it fall through and appear to
-		// succeed — remove this case only once both switches gain real
-		// support for creating one.
-		return &apierror.ValidationError{Msg: "case creation for type \"announcement\" is not supported"}
+		if req.Subject == "" {
+			return &apierror.ValidationError{Msg: "subject is required for announcement"}
+		}
+		if req.Description == "" {
+			return &apierror.ValidationError{Msg: "description is required for announcement"}
+		}
 	}
 
 	return nil
@@ -361,11 +376,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if err := validateUUIDs("id", []string{req.ID}); err != nil {
 		return domain.UpdateCaseResponse{}, err
 	}
-	if len(req.WatchList) > 0 || req.AssigneeEmail != nil ||
+	if req.WatchList != nil || req.AssigneeEmail != nil ||
 		req.RelatedCaseID != nil || req.ParentID != nil || req.AutocloseHoldUntil != nil ||
 		req.Subject != nil || req.Description != nil || req.DeploymentID != nil || req.DeployedProductID != nil ||
-		req.BestCaseFixEta != nil || req.MostLikelyFixEta != nil || req.WorstCaseFixEta != nil {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "watchList, assigneeEmail, relatedCaseId, parentId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, bestCaseFixEta, mostLikelyFixEta, and worstCaseFixEta are only supported for the ServiceNow data source"}
+		req.BestCaseFixEta != nil || req.MostLikelyFixEta != nil || req.WorstCaseFixEta != nil ||
+		req.Type != nil || req.EngagementType != nil || req.CatalogID != nil ||
+		req.CatalogItemID != nil || len(req.Variables) > 0 {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "watchList, assigneeEmail, relatedCaseId, parentId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, bestCaseFixEta, mostLikelyFixEta, worstCaseFixEta, type, engagementType, catalogId, catalogItemId, and variables are only supported for the ServiceNow data source"}
 	}
 	fieldCount := 0
 	if req.State != nil {
@@ -392,10 +409,21 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if req.WorkState != nil && !validCaseWorkState[*req.WorkState] {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(*req.WorkState)}
 	}
-	c, err := s.repo.UpdateCase(ctx, req)
+
+	// oldSeverity is the case's severity immediately before this update —
+	// accurate even under a concurrent update to the same case, since the
+	// repository locks the row before reading it whenever req.Severity is
+	// set (see CaseRepository.UpdateCase's own doc comment). Only meaningful
+	// when req.Severity != nil; otherwise it's just the unchanged severity.
+	c, oldSeverity, err := s.repo.UpdateCase(ctx, req)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, err
 	}
+
+	if req.Severity != nil {
+		s.detectBillableStatusChange(ctx, req.ID, oldSeverity, c.Severity)
+	}
+
 	return domain.UpdateCaseResponse{
 		Message: "Case updated successfully",
 		Case: domain.UpdatedCase{
@@ -406,6 +434,48 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 			WorkState: c.WorkState,
 		},
 	}, nil
+}
+
+// detectBillableStatusChange checks whether a severity update just crossed
+// the LOW boundary in either direction — entering LOW means every time
+// card on this case should become billable, leaving it means they should
+// become non-billable (see events.CaseBillableStatusChangedPayload's own
+// doc comment for why LOW is the one severity that matters here). A
+// Postgres-backed case's Type is always "case" and can never change (see
+// this file's own UpdateCase, which rejects req.Type entirely on this data
+// source), so unlike the ServiceNow data source this reduces to a single
+// severity comparison — no Type-transition case to handle.
+//
+// Publishing events.TypeCaseBillableStatusChanged is commented out below
+// rather than live — see that type's own doc comment: nothing consumes it
+// yet (Postgres has no time_cards table/repo/service at all today), so
+// publishing now would produce an event nothing acts on. The detection
+// itself is real; only the actual Publish call is inert.
+func (s *caseService) detectBillableStatusChange(ctx context.Context, caseID string, oldSeverity, newSeverity domain.CaseSeverity) {
+	oldLow := oldSeverity == domain.CaseSeverityLow
+	newLow := newSeverity == domain.CaseSeverityLow
+	if oldLow == newLow {
+		return
+	}
+	isBillable := newLow
+
+	// TODO: enable once a consumer exists for events.TypeCaseBillableStatusChanged
+	// (bulk-flipping every time card's IsBillable for caseId) — see that
+	// type's own doc comment for what's still missing.
+	//
+	// payload, err := json.Marshal(events.CaseBillableStatusChangedPayload{CaseID: caseID, IsBillable: isBillable})
+	// if err != nil {
+	// 	slog.ErrorContext(ctx, "case update: encode case.billable_status_changed payload failed", "caseId", caseID, "error", err)
+	// 	return
+	// }
+	// if s.publisher == nil {
+	// 	return
+	// }
+	// if err := s.publisher.Publish(ctx, events.TypeCaseBillableStatusChanged, caseID, payload); err != nil {
+	// 	slog.ErrorContext(ctx, "case update: publish case.billable_status_changed failed", "caseId", caseID)
+	// }
+
+	slog.InfoContext(ctx, "case update: severity crossed the billable boundary, event hub publish not yet enabled", "caseId", caseID, "isBillable", isBillable)
 }
 
 // SearchCases implements CaseService.
@@ -546,6 +616,12 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if parsed.HasActiveEscalation != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalation" is not supported by this data source`}
 	}
+	if parsed.HasBreachedSLA != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "slaBreached" is not supported by this data source`}
+	}
+	if parsed.HasActiveAccountEscalation != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "accountEscalationActive" is not supported by this data source`}
+	}
 	if len(req.Filters.AnyOf) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "anyOf is not supported by this data source"}
 	}
@@ -579,8 +655,8 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	}, nil
 }
 
-func (s *caseService) GroupCasesBy(_ context.Context, _ domain.GroupCasesByRequest) (domain.GroupByResponse, error) {
-	return domain.GroupByResponse{}, &apierror.ServiceUnavailableError{Msg: "groupBy is only supported for the ServiceNow data source"}
+func (s *caseService) AggregateCases(_ context.Context, _ domain.AggregateCasesRequest) (domain.AggregateResponse, error) {
+	return domain.AggregateResponse{}, &apierror.ServiceUnavailableError{Msg: "groupBy is only supported for the ServiceNow data source"}
 }
 
 // resolveActor authenticates the caller from the x-user-id-token header
@@ -627,6 +703,18 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 	if req.SizeBytes <= 0 {
 		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "sizeBytes must be greater than zero"}
 	}
+	// Empty defaults to complete: every caller before this change (and every
+	// existing Postgres-path caller that doesn't know about the pending
+	// state) gets exactly today's behavior. Only a caller that explicitly
+	// wants the two-step upload flow passes "pending".
+	switch req.Status {
+	case "":
+		req.Status = domain.AttachmentStatusComplete
+	case domain.AttachmentStatusPending, domain.AttachmentStatusComplete:
+		// valid
+	default:
+		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("invalid status %q: must be 'pending' or 'complete'", req.Status)}
+	}
 
 	user, err := s.resolveActor(ctx)
 	if err != nil {
@@ -647,6 +735,7 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 			CreatedOn:  a.CreatedOn,
 			CreatedBy:  user.Email,
 			StorageKey: a.StorageKey,
+			Status:     a.Status,
 			// No DownloadURL: this service holds no bytes for a Postgres-sourced
 			// attachment, only its storage_key. Resolving storage_key to an
 			// actual download location is the downstream CSM backend's job.
@@ -654,8 +743,73 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 	}, nil
 }
 
+// ConfirmCaseAttachment implements CaseService for the CSM-native (Postgres)
+// data source. It is the second half of the two-step upload flow: the caller
+// (the CSM backend) registers a 'pending' row via CreateCaseAttachment
+// *before* minting an SFTPGo upload credential, then calls this once the
+// browser reports the upload succeeded, transitioning the row to 'complete'.
+//
+// Ownership: unlike UpdateAttachment/DeleteCaseAttachment (which any
+// authenticated user may perform on any case attachment -- there is no
+// per-resource ACL in this data source beyond authentication, see
+// resolveActor's doc comment), confirming is restricted to the same actor
+// who created the pending row. A pending row represents an upload a specific
+// user initiated; there is no legitimate case yet for a different user to
+// confirm it on their behalf, and allowing it would let any authenticated
+// user "complete" an attachment they never uploaded.
+func (s *caseService) ConfirmCaseAttachment(ctx context.Context, id string) (domain.ConfirmAttachmentResponse, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return domain.ConfirmAttachmentResponse{}, err
+	}
+
+	user, err := s.resolveActor(ctx)
+	if err != nil {
+		return domain.ConfirmAttachmentResponse{}, err
+	}
+
+	existing, err := s.repo.GetCaseAttachmentByID(ctx, id)
+	if err != nil {
+		return domain.ConfirmAttachmentResponse{}, err
+	}
+	if existing.CreatedBy == nil || existing.CreatedBy.ID == nil || *existing.CreatedBy.ID != user.ID {
+		return domain.ConfirmAttachmentResponse{}, &apierror.ForbiddenError{Msg: "attachment was not created by the current user"}
+	}
+	if existing.Status != domain.AttachmentStatusPending {
+		return domain.ConfirmAttachmentResponse{}, &apierror.ConflictError{Msg: fmt.Sprintf("attachment is not pending (current status: %q)", existing.Status)}
+	}
+
+	a, err := s.repo.ConfirmCaseAttachment(ctx, id)
+	if err != nil {
+		return domain.ConfirmAttachmentResponse{}, err
+	}
+
+	return domain.ConfirmAttachmentResponse{
+		Message: "Attachment confirmed successfully",
+		Attachment: domain.AttachmentDetail{
+			ID:         a.ID,
+			SizeBytes:  a.SizeBytes,
+			CreatedOn:  a.CreatedOn,
+			CreatedBy:  user.Email,
+			StorageKey: a.StorageKey,
+			Status:     a.Status,
+		},
+	}, nil
+}
+
 // SearchCaseAttachments implements CaseService for the CSM-native (Postgres)
 // data source.
+//
+// Read-path status decision: the underlying repository query filters out
+// 'pending' rows entirely (see caseRepo.SearchCaseAttachments), so a case's
+// attachment list never shows a still-uploading placeholder to other users.
+// This is a deliberate product-behavior choice, not an oversight: a pending
+// row may never complete (the upload could fail, or the tab could just
+// close), and showing it in a shared list before that's known risks other
+// team members seeing and trying to act on a file that doesn't exist yet. A
+// specific-id lookup (GetAttachmentByID) is not filtered this way -- it
+// still returns a pending row -- which is what the confirm step relies on,
+// and is also how an uploader could be shown their own in-flight upload if
+// the FE chooses to poll it directly rather than via this list.
 func (s *caseService) SearchCaseAttachments(ctx context.Context, req domain.SearchAttachmentsRequest) (domain.SearchAttachmentsResponse, error) {
 	if err := validateUUIDs("referenceId", []string{req.ReferenceID}); err != nil {
 		return domain.SearchAttachmentsResponse{}, err
@@ -712,8 +866,83 @@ func (s *caseService) DeleteCaseAttachment(ctx context.Context, req domain.Delet
 	return domain.DeleteAttachmentResponse{Message: "Attachment deleted successfully"}, nil
 }
 
-func (s *caseService) AddCaseTag(_ context.Context, _, _ string) (domain.Tag, error) {
+func (s *caseService) GetAttachment(_ context.Context, _ string) (domain.Attachment, error) {
+	return domain.Attachment{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+}
+
+// AddCaseTag implements CaseService.
+//
+// TEMPORARY, DETECTION-ONLY: case tags have no real Postgres storage yet —
+// no case_tags table/migration/repository exists on this data source, so
+// this remains a stub that reports the tag itself as unsupported (matching
+// the two sibling stubs below) — no tag is ever persisted, and no time
+// card's billable status is ever actually changed by this method. The one
+// addition, ahead of real tag storage at explicit request: a "patch" label
+// on a case currently at LOW severity (S4) is DETECTED (and only logged,
+// nothing more) as a special case of detectBillableStatusChange's normal
+// "entering S4 makes time cards billable" rule — see
+// detectPatchTagBillableOverride's own doc comment for exactly what this
+// does and doesn't do yet.
+func (s *caseService) AddCaseTag(ctx context.Context, caseID, label string) (domain.Tag, error) {
+	s.detectPatchTagBillableOverride(ctx, caseID, label)
 	return domain.Tag{}, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
+}
+
+// detectPatchTagBillableOverride DETECTS AND LOGS ONLY — it does not
+// itself change any time card's billable status, publish an event, or
+// persist the tag (see AddCaseTag's own doc comment). It is a special case
+// of detectBillableStatusChange's normal "entering LOW/S4 severity makes
+// time cards billable" rule: a case tagged "patch" while at LOW severity
+// should eventually have its time cards non-billable regardless — WSO2
+// still covers a patch under support even for an otherwise best-efforts S4
+// case — but nothing in this codebase acts on that yet (see the TODO
+// below). Label matching is case/whitespace-insensitive, same reasoning as
+// this codebase's other free-text label lookups (e.g.
+// slaSeverityLabelAndColor in csm-notification-service). Unlike
+// detectBillableStatusChange, the eventual reaction is meant to be
+// one-directional: removing the tag (or adding any other label) should
+// never reverse it — only ever set isBillable=false, never back to true,
+// since there's no natural "un-patch" event to react to.
+//
+// Same commented-out-publish posture as detectBillableStatusChange: logs
+// only, since there is still no time_cards consumer to act on
+// events.TypeCaseBillableStatusChanged (see that type's own doc comment) —
+// and, unlike detectBillableStatusChange, no way to even publish from a
+// real code path yet, since AddCaseTag itself never succeeds on this data
+// source (see its own doc comment).
+func (s *caseService) detectPatchTagBillableOverride(ctx context.Context, caseID, label string) {
+	if !strings.EqualFold(strings.TrimSpace(label), "patch") {
+		return
+	}
+
+	cv, err := s.repo.GetCaseByID(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "add case tag: patch billable override not evaluated, get case failed", "caseId", caseID)
+		return
+	}
+	if cv.Severity != domain.CaseSeverityLow {
+		return
+	}
+
+	// TODO: enable once (a) case tags have real Postgres storage so
+	// AddCaseTag can actually succeed, and (b) a consumer exists for
+	// events.TypeCaseBillableStatusChanged (bulk-flipping every time
+	// card's IsBillable for caseId) — see that type's own doc comment for
+	// what's still missing there.
+	//
+	// payload, err := json.Marshal(events.CaseBillableStatusChangedPayload{CaseID: caseID, IsBillable: false})
+	// if err != nil {
+	// 	slog.ErrorContext(ctx, "add case tag: encode case.billable_status_changed payload failed", "caseId", caseID, "error", err)
+	// 	return
+	// }
+	// if s.publisher == nil {
+	// 	return
+	// }
+	// if err := s.publisher.Publish(ctx, events.TypeCaseBillableStatusChanged, caseID, payload); err != nil {
+	// 	slog.ErrorContext(ctx, "add case tag: publish case.billable_status_changed failed", "caseId", caseID)
+	// }
+
+	slog.InfoContext(ctx, "add case tag: patch tag detected on an S4 case, time cards would need to become non-billable once a real tag/time-card path exists (detection only, no action taken)", "caseId", caseID, "isBillable", false)
 }
 
 func (s *caseService) RemoveCaseTag(_ context.Context, _, _ string) error {
@@ -724,8 +953,8 @@ func (s *caseService) SearchTags(_ context.Context, _ domain.SearchTagsRequest) 
 	return nil, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }
 
-func (s *caseService) GetCaseFeedback(_ context.Context, _ string) (domain.CaseFeedback, error) {
-	return domain.CaseFeedback{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
+func (s *caseService) GetCaseFeedback(_ context.Context, _ string) (domain.CaseEmojiFeedback, error) {
+	return domain.CaseEmojiFeedback{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
 }
 
 func (s *caseService) SubmitCaseFeedback(_ context.Context, _ string, _ domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error) {
@@ -733,7 +962,7 @@ func (s *caseService) SubmitCaseFeedback(_ context.Context, _ string, _ domain.S
 }
 
 // GetAttachmentByID implements CaseService for the CSM-native (Postgres) data
-// source. Content is always "": this service holds no bytes for a
+// source. Content is always nil: this service holds no bytes for a
 // Postgres-sourced attachment, only its storage_key -- see
 // GetCaseAttachmentContent's doc comment for why content must be resolved
 // externally via StorageKey instead.
@@ -753,18 +982,20 @@ func (s *caseService) GetAttachmentByID(ctx context.Context, id string) (domain.
 	}
 
 	return domain.AttachmentDetails{
-		ID:          a.ID,
-		ReferenceID: a.ReferenceID,
-		Name:        a.Name,
-		Type:        a.Type,
-		SizeBytes:   a.SizeBytes,
-		Description: a.Description,
-		CreatedBy:   createdBy,
-		CreatedOn:   a.CreatedOn,
-		DownloadURL: a.DownloadURL,
-		PreviewURL:  a.PreviewURL,
-		Content:     "",
-		StorageKey:  a.StorageKey,
+		ID:            a.ID,
+		ReferenceID:   a.ReferenceID,
+		ReferenceType: &a.ReferenceType,
+		Name:          a.Name,
+		Type:          a.Type,
+		SizeBytes:     a.SizeBytes,
+		Description:   a.Description,
+		CreatedBy:     createdBy,
+		CreatedOn:     a.CreatedOn,
+		DownloadURL:   a.DownloadURL,
+		PreviewURL:    a.PreviewURL,
+		Content:       nil,
+		StorageKey:    a.StorageKey,
+		Status:        a.Status,
 	}, nil
 }
 
@@ -791,7 +1022,7 @@ func validatePGAttachmentUpdate(req domain.UpdateAttachmentRequest) error {
 // ServiceNow path allows for reference type "case" (name required,
 // description forbidden).
 func (s *caseService) UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error) {
-	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+	if err := validateUUIDs("id", []string{req.AttachmentID}); err != nil {
 		return domain.UpdateAttachmentResponse{}, err
 	}
 	if err := validateUUIDs("referenceId", []string{req.ReferenceID}); err != nil {
@@ -806,7 +1037,7 @@ func (s *caseService) UpdateAttachment(ctx context.Context, req domain.UpdateAtt
 		return domain.UpdateAttachmentResponse{}, err
 	}
 
-	updatedOn, err := s.repo.UpdateCaseAttachmentName(ctx, req.ID, strings.TrimSpace(*req.Name), user.ID)
+	updatedOn, err := s.repo.UpdateCaseAttachmentName(ctx, req.AttachmentID, strings.TrimSpace(*req.Name), user.ID)
 	if err != nil {
 		return domain.UpdateAttachmentResponse{}, err
 	}
@@ -814,7 +1045,7 @@ func (s *caseService) UpdateAttachment(ctx context.Context, req domain.UpdateAtt
 	return domain.UpdateAttachmentResponse{
 		Message: "Attachment updated successfully",
 		Attachment: domain.UpdatedAttachment{
-			ID:        req.ID,
+			ID:        req.AttachmentID,
 			UpdatedOn: updatedOn,
 			UpdatedBy: user.Email,
 		},

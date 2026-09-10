@@ -61,11 +61,16 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 }
 
 // NewPoolFromConfig creates a Postgres connection pool from cfg's DSN, with a
-// 10s connect timeout. Always required, regardless of cfg.DataSource: when
-// DATA_SOURCE=servicenow, case/account/etc. entity reads/writes go through
-// the SN integration service instead of this pool, but event_publish_failures
-// (see domain.EventPublishFailure) has no ServiceNow equivalent and is
-// always backed by Postgres, so a pool is always needed.
+// 10s connect timeout.
+//
+// Only call this when cfg.HasDatabase() is true. When DATA_SOURCE=postgres a
+// pool is mandatory and Config.Validate already guarantees the DB variables
+// are present. When DATA_SOURCE=servicenow it is optional: entity reads and
+// writes go through the SN integration service instead, and the two
+// Postgres-only features — event_publish_failures (see
+// domain.EventPublishFailure) and sla_clocks — have no ServiceNow equivalent,
+// so their endpoints are simply not registered when no database is
+// configured. See internal/server/routes.go.
 func NewPoolFromConfig(cfg *config.Config) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

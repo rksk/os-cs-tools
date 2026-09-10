@@ -53,6 +53,7 @@ vi.mock("@utils/saveBlob", () => ({ saveBlob: vi.fn() }));
 import {
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
+  useGetCsmCaseAttachmentPreviewSource,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import { saveBlob } from "@utils/saveBlob";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
@@ -101,13 +102,13 @@ describe("usePostCsmCaseAttachment", () => {
     expect(result.current.uploadProgress).toBeNull();
   });
 
-  it("flag on: mints an upload token, uploads via TUS, then creates metadata with storageKey/sizeBytes and no file", async () => {
+  it("flag on: mints an upload token, uploads via TUS, then confirms with no body", async () => {
     sftpgoFlag.enabled = true;
     postMock.mockImplementation((path: string) => {
       if (path.endsWith("/attachments/upload-token")) {
         return Promise.resolve({
-          sftpgoAccessToken: "tok-1",
-          expiresAt: "2026-01-01T00:00:00Z",
+          id: "att-1",
+          shareId: "share-1",
           sftpgoBaseUrl: "https://sftpgo.example.com",
           storageKey: "/attachments/cases/case-1/att-1",
         });
@@ -128,29 +129,34 @@ describe("usePostCsmCaseAttachment", () => {
       }),
     );
 
-    // Order: mint token, then TUS upload, then metadata create.
+    // Order: mint token, then TUS upload, then confirm.
     expect(postMock).toHaveBeenCalledTimes(2);
-    expect(postMock.mock.calls[0][0]).toBe(
-      "/cases/case-1/attachments/upload-token",
-    );
+    const [tokenPath, tokenPayload] = postMock.mock.calls[0];
+    expect(tokenPath).toBe("/cases/case-1/attachments/upload-token");
+    expect(tokenPayload).toEqual({
+      filename: FILE.name,
+      mimeType: FILE.type,
+      sizeBytes: FILE.size,
+      description: null,
+      referenceType: "case",
+    });
+
     expect(uploadFileViaTusMock).toHaveBeenCalledTimes(1);
     expect(uploadFileViaTusMock.mock.calls[0][0]).toMatchObject({
       sftpgoBaseUrl: "https://sftpgo.example.com",
-      sftpgoAccessToken: "tok-1",
+      shareId: "share-1",
       storageKey: "/attachments/cases/case-1/att-1",
       file: FILE,
     });
 
-    const [metaPath, metaPayload] = postMock.mock.calls[1];
-    expect(metaPath).toBe("/attachments");
-    expect(metaPayload.storageKey).toBe("/attachments/cases/case-1/att-1");
-    expect(metaPayload.sizeBytes).toBe(FILE.size);
-    expect(metaPayload.file).toBeUndefined();
+    const [confirmPath, confirmPayload] = postMock.mock.calls[1];
+    expect(confirmPath).toBe("/cases/case-1/attachments/att-1/confirm");
+    expect(confirmPayload).toEqual({});
 
-    // The TUS call must have happened before the metadata create.
+    // The TUS call must have happened before the confirm call.
     const tusCallOrder = uploadFileViaTusMock.mock.invocationCallOrder[0];
-    const metaCallOrder = postMock.mock.invocationCallOrder[1];
-    expect(tusCallOrder).toBeLessThan(metaCallOrder);
+    const confirmCallOrder = postMock.mock.invocationCallOrder[1];
+    expect(tusCallOrder).toBeLessThan(confirmCallOrder);
 
     expect(result.current.uploadProgress).toBeNull();
   });
@@ -160,8 +166,8 @@ describe("usePostCsmCaseAttachment", () => {
     postMock.mockImplementation((path: string) => {
       if (path.endsWith("/attachments/upload-token")) {
         return Promise.resolve({
-          sftpgoAccessToken: "tok-1",
-          expiresAt: "2026-01-01T00:00:00Z",
+          id: "att-1",
+          shareId: "share-1",
           sftpgoBaseUrl: "https://sftpgo.example.com",
           storageKey: "/attachments/cases/case-1/att-1",
         });
@@ -206,6 +212,36 @@ describe("usePostCsmCaseAttachment", () => {
     });
     await waitFor(() => expect(result.current.uploadProgress).toBeNull());
   });
+
+  it.each(["change_request", "incident"] as const)(
+    "flag on, referenceType %s: skips the mint endpoint and uses the legacy base64 path",
+    async (referenceType) => {
+      sftpgoFlag.enabled = true;
+      postMock.mockResolvedValue({});
+
+      const { result } = renderHook(() => usePostCsmCaseAttachment(), {
+        wrapper,
+      });
+
+      await act(() =>
+        result.current.mutateAsync({
+          caseId: "case-1",
+          file: FILE,
+          uploadedBy: "Jane Doe",
+          referenceType,
+        }),
+      );
+
+      expect(uploadFileViaTusMock).not.toHaveBeenCalled();
+      expect(postMock).toHaveBeenCalledTimes(1);
+      const [path, payload] = postMock.mock.calls[0];
+      expect(path).toBe("/attachments");
+      expect(payload.referenceType).toBe(referenceType);
+      expect(typeof payload.file).toBe("string");
+      expect(payload.file.startsWith("data:")).toBe(true);
+      expect(result.current.uploadProgress).toBeNull();
+    },
+  );
 });
 
 describe("useDownloadCsmCaseAttachment", () => {
@@ -260,5 +296,65 @@ describe("useDownloadCsmCaseAttachment", () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
 
     clickSpy.mockRestore();
+  });
+});
+
+describe("useGetCsmCaseAttachmentPreviewSource", () => {
+  const ATTACHMENT: CaseAttachment = {
+    id: "att-1",
+    filename: "report.pdf",
+    size: 2048,
+    contentType: "application/pdf",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-01T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    postMock.mockReset();
+    getBlobMock.mockReset();
+    sftpgoFlag.enabled = false;
+  });
+
+  it("flag off: fetches the content blob and wraps it in a revocable object URL", async () => {
+    getBlobMock.mockResolvedValue(
+      new Blob(["fake"], { type: "application/pdf" }),
+    );
+    const createObjectUrlSpy = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:mock-url");
+
+    const { result } = renderHook(() => useGetCsmCaseAttachmentPreviewSource(), {
+      wrapper,
+    });
+
+    const source = await result.current(ATTACHMENT);
+
+    expect(postMock).not.toHaveBeenCalled();
+    expect(getBlobMock).toHaveBeenCalledWith("/attachments/att-1/content");
+    expect(createObjectUrlSpy).toHaveBeenCalledTimes(1);
+    expect(source).toEqual({ url: "blob:mock-url", revoke: true });
+
+    createObjectUrlSpy.mockRestore();
+  });
+
+  it("flag on: resolves a read-scoped share URL as-is, without fetching the content blob", async () => {
+    sftpgoFlag.enabled = true;
+    postMock.mockResolvedValue({
+      shareUrl: "https://sftpgo.example.com/web/client/pubshares/abc",
+    });
+
+    const { result } = renderHook(() => useGetCsmCaseAttachmentPreviewSource(), {
+      wrapper,
+    });
+
+    const source = await result.current(ATTACHMENT);
+
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(postMock).toHaveBeenCalledWith("/attachments/att-1/share", {});
+    expect(getBlobMock).not.toHaveBeenCalled();
+    expect(source).toEqual({
+      url: "https://sftpgo.example.com/web/client/pubshares/abc",
+      revoke: false,
+    });
   });
 });

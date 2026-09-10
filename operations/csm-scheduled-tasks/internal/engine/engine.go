@@ -68,12 +68,16 @@ type Engine struct {
 	// long as this is set. Nil is a valid, deliberate choice for "no
 	// standing alert audience configured."
 	AlertRecipients []string
-	// AlertsEnabled is a global kill switch for every failure alert email —
-	// recordFailure still records the failure in the ledger and logs it
-	// either way, this only silences the email itself. Sits above both
-	// AlertRecipients and every task's own To/Cc: set to false to go quiet
-	// for a maintenance window or a known-noisy period without touching
-	// either config. Defaults to true (see cmd/server/main.go's ALERTS_ENABLED).
+	// AlertsEnabled is cmd/server/main.go's ALERTS_ENABLED — the global email
+	// kill switch for this whole component, despite the field name only
+	// describing what it does here. recordFailure still records the failure
+	// in the ledger and logs it either way, this only silences the email
+	// itself. Sits above both AlertRecipients and every task's own To/Cc: set
+	// to false to go quiet for a maintenance window or a known-noisy period
+	// without touching either config. A report-style task (e.g.
+	// internal/stalecases) reads the same underlying value directly, since
+	// its email isn't sent through this struct at all — see that package's
+	// own SendReport doc comment. Defaults to true.
 	AlertsEnabled bool
 }
 

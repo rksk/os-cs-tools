@@ -39,10 +39,13 @@ import (
 
 	"github.com/adhocore/gronx"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/engine"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/entitycases"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/housekeeping"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/ledger"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/notify"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/opencases"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/registry"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/stalecases"
 )
 
 func main() {
@@ -70,15 +73,32 @@ func main() {
 	// or either URL failing httpsec's https-only check, fails startup
 	// loudly rather than surfacing as a per-task error later, unlike the
 	// email client below.
+	entityServiceBaseURL := mustEnv("CUSTOMER_ENTITY_SERVICE_BASE_URL")
+	entityServiceScopes := splitComma(os.Getenv("CUSTOMER_ENTITY_SERVICE_SCOPES"))
 	ledgerClient, err := ledger.NewClient(ledger.Config{
-		BaseURL:      mustEnv("CUSTOMER_ENTITY_SERVICE_BASE_URL"),
+		BaseURL:      entityServiceBaseURL,
 		TokenURL:     oauthTokenURL,
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
-		Scopes:       splitComma(os.Getenv("CUSTOMER_ENTITY_SERVICE_SCOPES")),
+		Scopes:       entityServiceScopes,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service client", "err", err)
+		os.Exit(1)
+	}
+
+	// Same entity-service deployment and credentials as ledgerClient above,
+	// but a separate client — see internal/entitycases' own doc comment for
+	// why case search isn't just another method on ledger.Client.
+	entityCasesClient, err := entitycases.NewClient(entitycases.Config{
+		BaseURL:      entityServiceBaseURL,
+		TokenURL:     oauthTokenURL,
+		ClientID:     oauthClientID,
+		ClientSecret: oauthClientSecret,
+		Scopes:       entityServiceScopes,
+	})
+	if err != nil {
+		slog.Error("failed to construct entity-service case-search client", "err", err)
 		os.Exit(1)
 	}
 
@@ -122,6 +142,18 @@ func main() {
 
 	const housekeepingTaskName = "housekeeping_cleanup"
 	housekeepingTo, housekeepingCc := recipientsFor(recipientOverrides, housekeepingTaskName)
+
+	const staleCasesTaskName = "stale_cases_report"
+	staleCasesTo, staleCasesCc := recipientsFor(recipientOverrides, staleCasesTaskName)
+	// Fixed, not env-configurable — unlike HOUSEKEEPING_RETENTION_DAYS, there's
+	// no operational reason to tune this per deployment today. Revisit as an
+	// env var (mirroring envDays("HOUSEKEEPING_RETENTION_DAYS", 30)'s shape)
+	// if that changes.
+	const staleCaseThreshold = 30 * 24 * time.Hour
+
+	const openCasesTaskName = "open_cases_report"
+	openCasesTo, openCasesCc := recipientsFor(recipientOverrides, openCasesTaskName)
+
 	tasks := []registry.Task{
 		// This component's first real sub-cron: deletes rows from
 		// entity-service's scheduled_task_run table that succeeded or were
@@ -138,6 +170,33 @@ func main() {
 			Handler:  housekeeping.CleanupResolvedRuns(ledgerClient, envDays("HOUSEKEEPING_RETENTION_DAYS", 30)),
 			To:       housekeepingTo,
 			Cc:       housekeepingCc,
+		},
+		// Emails staleCasesTo/Cc a report of every case open more than
+		// staleCaseThreshold — see internal/stalecases's own doc comment.
+		// Sends nothing (but still succeeds) if staleCasesTo is empty, i.e.
+		// this task isn't mentioned in SUB_CRON_RECIPIENTS. Default schedule
+		// is daily at 07:00 (again, TZ=UTC-dependent — see above), ahead of
+		// most business hours; override via SUB_CRON_SCHEDULES if needed.
+		{
+			Name:     staleCasesTaskName,
+			Schedule: scheduleFor(scheduleOverrides, staleCasesTaskName, "0 7 * * *"),
+			Handler: stalecases.SendReport(entityCasesClient, emailClient,
+				staleCaseThreshold, staleCasesTo, staleCasesCc, alertsEnabled),
+			To: staleCasesTo,
+			Cc: staleCasesCc,
+		},
+		// Emails openCasesTo/Cc a report of every case created before
+		// yesterday that's still in "open" state (nobody has moved it out of
+		// initial triage) — see internal/opencases's own doc comment. Sends
+		// nothing (but still succeeds) if openCasesTo is empty. Default
+		// schedule is daily at 08:00 (again, TZ=UTC-dependent — see above);
+		// override via SUB_CRON_SCHEDULES if needed.
+		{
+			Name:     openCasesTaskName,
+			Schedule: scheduleFor(scheduleOverrides, openCasesTaskName, "0 8 * * *"),
+			Handler:  opencases.SendReport(entityCasesClient, emailClient, openCasesTo, openCasesCc, alertsEnabled),
+			To:       openCasesTo,
+			Cc:       openCasesCc,
 		},
 	}
 

@@ -26,6 +26,7 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
@@ -172,5 +173,44 @@ func (s *userService) SearchUsers(ctx context.Context, req domain.SearchUsersReq
 		Limit:   req.Pagination.Limit,
 		Offset:  req.Pagination.Offset,
 		HasMore: req.Pagination.Offset+len(users) < total,
+	}, nil
+}
+
+// GetMe implements UserService.
+//
+// The Postgres data source has no JWT validation of its own (that happens at
+// the BFF), so the caller's identity is resolved the same way the rest of
+// this package resolves an acting user from a forwarded token: decode the
+// (already-validated) x-user-id-token JWT's email claim and look up the
+// matching row. See case_service.go's identical pattern for CreateCase /
+// CreateCaseComment.
+//
+// Postgres users have no roles or group-membership tables (unlike the
+// ServiceNow data source), so Roles and Groups are always empty rather than
+// fabricated — the frontend's team/role resolution is simply a no-op for
+// this data source today.
+func (s *userService) GetMe(ctx context.Context) (domain.GetUserMeResponse, error) {
+	token := middleware.UserIDTokenFromContext(ctx)
+	if token == "" {
+		return domain.GetUserMeResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
+	}
+	email, err := emailFromJWT(token)
+	if err != nil {
+		return domain.GetUserMeResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+	}
+	user, err := s.repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return domain.GetUserMeResponse{}, err
+	}
+
+	firstName := user.FirstName
+	return domain.GetUserMeResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		FirstName: &firstName,
+		LastName:  user.LastName,
+		TimeZone:  user.Timezone,
+		Roles:     []string{},
+		Groups:    []domain.UserGroupRef{},
 	}, nil
 }

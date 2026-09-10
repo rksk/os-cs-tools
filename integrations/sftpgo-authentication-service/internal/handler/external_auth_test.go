@@ -180,6 +180,75 @@ func TestExternalAuthHook_ValidJWT_ReturnsSFTPGoUser(t *testing.T) {
 	}
 }
 
+// TestExternalAuthHook_AttachmentsPathConfigured_GrantsScopedPermissionsOnly
+// proves the fix for the overly-broad "/attachments" grant: the mounted
+// virtual folder must carry exactly attachmentShareMountPermissions (the
+// verbs the attachment-share flow actually exercises) and must NOT include
+// "delete" or "rename" — those let any authenticated caller destructively
+// modify any file anywhere under the shared attachments tree via SFTPGo's own
+// file-management API, entirely outside of any Share object.
+func TestExternalAuthHook_AttachmentsPathConfigured_GrantsScopedPermissionsOnly(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	srv := newTestJWKSServer(t, key, "key-1")
+	defer srv.Close()
+
+	h := newTestHandler(t, srv.URL)
+	h.cfg.AttachmentsPath = "/data/attachments"
+	token := signTestToken(t, key, "key-1", nil)
+
+	w := postExternalAuth(t, h, models.ExternalAuthHookRequest{
+		Username: testEmail,
+		Password: token,
+		Protocol: externalAuthProtocolHTTP,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var got models.MinimalSFTPGoUser
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	perms, ok := got.Permissions["/attachments"]
+	if !ok {
+		t.Fatalf("expected a permission entry for /attachments, got %v", got.Permissions)
+	}
+
+	permSet := make(map[string]bool, len(perms))
+	for _, p := range perms {
+		permSet[p] = true
+	}
+
+	for _, want := range []string{"list", "download", "upload", "create_dirs", "overwrite"} {
+		if !permSet[want] {
+			t.Errorf("expected /attachments permissions to include %q, got %v", want, perms)
+		}
+	}
+	for _, forbidden := range []string{"delete", "rename"} {
+		if permSet[forbidden] {
+			t.Errorf("expected /attachments permissions to NOT include %q (over-broad grant), got %v", forbidden, perms)
+		}
+	}
+
+	found := false
+	for _, folder := range got.VirtualFolders {
+		if folder.VirtualPath == "/attachments" {
+			found = true
+			if folder.MappedPath != h.cfg.AttachmentsPath {
+				t.Errorf("expected mapped path %q, got %q", h.cfg.AttachmentsPath, folder.MappedPath)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a virtual folder mapping onto /attachments, got %v", got.VirtualFolders)
+	}
+}
+
 func TestExternalAuthHook_TamperedSignature_DeniesWithEmptyUsername(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
