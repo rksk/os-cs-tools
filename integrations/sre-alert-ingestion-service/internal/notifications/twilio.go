@@ -82,16 +82,24 @@ type TwilioClient struct {
 
 // NewTwilioClient constructs a TwilioClient from cfg.
 func NewTwilioClient(cfg TwilioConfig) *TwilioClient {
+	return newTwilioClient(cfg, false)
+}
+
+// newTwilioClient is NewTwilioClient's real implementation.
+// allowInsecureLoopback exists only for this package's own tests (see
+// httpsOnlyTransport's doc comment) — NewTwilioClient always passes false, so
+// production code has no path to a non-HTTPS endpoint, loopback included.
+func newTwilioClient(cfg TwilioConfig, allowInsecureLoopback bool) *TwilioClient {
 	if cfg.APIBaseURL == "" {
 		cfg.APIBaseURL = defaultTwilioAPIBaseURL
 	}
 	return &TwilioClient{
-		// httpsOnlyTransport refuses a non-HTTPS APIBaseURL (loopback
-		// exempted for tests) — every request here carries Basic Auth
-		// credentials (AccountSID/AuthToken), which must never go out in
-		// cleartext. See its doc comment for why this is enforced at the
-		// transport level rather than per call site.
-		http: &http.Client{Timeout: 10 * time.Second, Transport: &httpsOnlyTransport{}},
+		// httpsOnlyTransport refuses a non-HTTPS APIBaseURL (test-only
+		// loopback exception, never reachable via NewTwilioClient) — every
+		// request here carries Basic Auth credentials (AccountSID/AuthToken),
+		// which must never go out in cleartext. See its doc comment for why
+		// this is enforced at the transport level rather than per call site.
+		http: &http.Client{Timeout: 10 * time.Second, Transport: &httpsOnlyTransport{allowInsecureLoopback: allowInsecureLoopback}},
 		cfg:  cfg,
 	}
 }

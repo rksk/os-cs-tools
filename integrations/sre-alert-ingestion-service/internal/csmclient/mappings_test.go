@@ -40,7 +40,7 @@ func TestCreateAlertIncidentMapping_Success(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	uid := "uid-1"
 	view, err := client.CreateAlertIncidentMapping(context.Background(), CreateAlertIncidentMappingRequest{
@@ -77,7 +77,7 @@ func TestCreateAlertIncidentMapping_409IsTreatedAsAlreadyRecorded(t *testing.T) 
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	view, err := client.CreateAlertIncidentMapping(context.Background(), CreateAlertIncidentMappingRequest{})
 	if err != nil {
@@ -96,7 +96,7 @@ func TestCreateAlertIncidentMapping_OtherErrorIsReturned(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	_, err := client.CreateAlertIncidentMapping(context.Background(), CreateAlertIncidentMappingRequest{})
 	if err == nil {
@@ -120,7 +120,7 @@ func TestLookupAlertIncidentMappings_ReturnsMappings(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	mappings, err := client.LookupAlertIncidentMappings(context.Background(), "azure", "uid-1")
 	if err != nil {
@@ -145,7 +145,7 @@ func TestLookupAlertIncidentMappings_EmptyWhenNoneFound(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	mappings, err := client.LookupAlertIncidentMappings(context.Background(), "azure", "uid-none")
 	if err != nil {
@@ -166,7 +166,7 @@ func TestSearchOpenIncidentByNumber_SendsNumberAndStateFilter(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	result, found, err := client.SearchOpenIncidentByNumber(context.Background(), "INC0001")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestSearchOpenIncidentByNumber_NoMatch(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	result, found, err := client.SearchOpenIncidentByNumber(context.Background(), "INC0002")
 	if err != nil {

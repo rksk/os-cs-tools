@@ -52,7 +52,7 @@ func TestMakeCall_ValidatesArgumentsBeforeCallingUpstream(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
+	c := newTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL}, true)
 
 	t.Run("rejects empty to", func(t *testing.T) {
 		if err := c.MakeCall(context.Background(), "", "hello"); err == nil {
@@ -85,7 +85,7 @@ func TestMakeCall_SendsExpectedRequest(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000", APIBaseURL: srv.URL})
+	c := newTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000", APIBaseURL: srv.URL}, true)
 	if err := c.MakeCall(context.Background(), "+15551234567", "SRE alert escalation: buffered alert exhausted retries"); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
 	}
@@ -121,14 +121,14 @@ func TestMakeCall_SendsConfiguredVoiceAndLanguage(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{
+	c := newTwilioClient(TwilioConfig{
 		AccountSID: "AC123",
 		AuthToken:  "secret-token",
 		FromNumber: "+15550000000",
 		Voice:      "Polly.Raveena",
 		Language:   "en-IN",
 		APIBaseURL: srv.URL,
-	})
+	}, true)
 	if err := c.MakeCall(context.Background(), "+15551234567", "hello"); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestMakeCall_EscapesMessageInTwiML(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
+	c := newTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL}, true)
 	malicious := `</Say><Redirect>https://evil.example/hijack</Redirect><Say>`
 	if err := c.MakeCall(context.Background(), "+15551234567", malicious); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
@@ -174,7 +174,7 @@ func TestMakeCall_MapsUpstreamError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":21211,"message":"The 'To' number is not a valid phone number."}`))
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
+	c := newTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL}, true)
 	err := c.MakeCall(context.Background(), "not-a-number", "hello")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
@@ -200,13 +200,13 @@ func TestEscalate_UsesConfiguredToNumber(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{
+	c := newTwilioClient(TwilioConfig{
 		AccountSID: "AC123",
 		AuthToken:  "secret",
 		FromNumber: "+15550000000",
 		ToNumber:   "+15559998888",
 		APIBaseURL: srv.URL,
-	})
+	}, true)
 	if err := c.Escalate(context.Background(), "escalation message"); err != nil {
 		t.Fatalf("Escalate returned error: %v", err)
 	}

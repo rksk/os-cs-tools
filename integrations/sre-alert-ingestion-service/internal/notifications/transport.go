@@ -22,19 +22,28 @@ import (
 	"net/url"
 )
 
-// httpsOnlyTransport refuses to send a request whose URL isn't HTTPS, unless
-// the host is loopback — every request this client makes carries Twilio
-// Basic Auth credentials (AccountSID/AuthToken), which must never go out in
-// cleartext. Loopback is exempted so this package's httptest-backed tests
-// (which bind to 127.0.0.1/localhost) keep working without a separate
-// test-only client constructor.
+// httpsOnlyTransport refuses to send a request whose URL isn't HTTPS — every
+// request this client makes carries Twilio Basic Auth credentials
+// (AccountSID/AuthToken), which must never go out in cleartext.
+//
+// allowInsecureLoopback exists only so this package's own tests can construct
+// a client against a plain httptest.NewServer (127.0.0.1) without needing
+// TLS-cert plumbing (httptest.NewTLSServer + a trusted client). It is
+// unexported and set only by newTwilioClient, this package's internal
+// constructor — the public NewTwilioClient always passes false, so no caller
+// outside this package's own _test.go files can ever set it true. There is
+// no production code path that allows a non-HTTPS endpoint, loopback or
+// otherwise.
 type httpsOnlyTransport struct {
-	base http.RoundTripper
+	base                  http.RoundTripper
+	allowInsecureLoopback bool
 }
 
 func (t *httpsOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !isHTTPSOrLoopback(req.URL) {
-		return nil, fmt.Errorf("notifications: refusing non-HTTPS endpoint %s", req.URL.Redacted())
+	if req.URL == nil || req.URL.Scheme != "https" {
+		if !(t.allowInsecureLoopback && isLoopback(req.URL)) {
+			return nil, fmt.Errorf("notifications: refusing non-HTTPS endpoint %s", req.URL.Redacted())
+		}
 	}
 	base := t.base
 	if base == nil {
@@ -43,12 +52,9 @@ func (t *httpsOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return base.RoundTrip(req)
 }
 
-func isHTTPSOrLoopback(u *url.URL) bool {
+func isLoopback(u *url.URL) bool {
 	if u == nil {
 		return false
-	}
-	if u.Scheme == "https" {
-		return true
 	}
 	switch u.Hostname() {
 	case "127.0.0.1", "localhost", "::1":

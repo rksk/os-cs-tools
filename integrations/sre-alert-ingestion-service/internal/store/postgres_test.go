@@ -35,6 +35,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -267,17 +268,32 @@ func TestPostgresStore_AlertNumbersAreSequentialAndUnique(t *testing.T) {
 	}
 	wg.Wait()
 
-	seen := make(map[string]bool, n)
+	altRe := regexp.MustCompile(`^ALT(\d{7})$`)
+	seenValues := make(map[int]bool, n)
 	for i, r := range results {
 		if r.err != nil {
 			t.Fatalf("Enqueue() [%d] error = %v", i, r.err)
 		}
-		if matched, merr := regexp.MatchString(`^ALT\d{7}$`, r.alertNumber); merr != nil || !matched {
-			t.Errorf("alertNumber = %q, want it to match ^ALT\\d{7}$", r.alertNumber)
+		m := altRe.FindStringSubmatch(r.alertNumber)
+		if m == nil {
+			t.Fatalf("alertNumber = %q, want it to match ^ALT\\d{7}$", r.alertNumber)
 		}
-		if seen[r.alertNumber] {
+		value, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("alertNumber %q has a non-numeric suffix: %v", r.alertNumber, err)
+		}
+		if seenValues[value] {
 			t.Fatalf("alertNumber %q was generated more than once across %d concurrent Enqueue calls", r.alertNumber, n)
 		}
-		seen[r.alertNumber] = true
+		seenValues[value] = true
+	}
+	// applyMigration recreates alert_number_seq at 1, so a clean run of n
+	// concurrent Enqueue calls must allocate every value 1..n exactly once —
+	// stronger than "n unique values", since it also rules out the sequence
+	// somehow skipping or double-issuing a value under concurrent load.
+	for want := 1; want <= n; want++ {
+		if !seenValues[want] {
+			t.Errorf("value %d was never allocated across %d concurrent Enqueue calls (seq should be exactly 1..%d)", want, n, n)
+		}
 	}
 }

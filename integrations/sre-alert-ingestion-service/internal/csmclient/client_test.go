@@ -53,7 +53,7 @@ func TestCreateIncident_Success(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	result, err := client.CreateIncident(context.Background(), CreateIncidentRequest{
 		CallerID:  "caller-1",
@@ -90,7 +90,7 @@ func TestCreateIncident_401IsAReturnedAPIError(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	_, err := client.CreateIncident(context.Background(), CreateIncidentRequest{})
 	if err == nil {
@@ -113,7 +113,7 @@ func TestCreateIncident_400IsAReturnedAPIError(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	_, err := client.CreateIncident(context.Background(), CreateIncidentRequest{})
 	if err == nil {
@@ -136,7 +136,7 @@ func TestCreateIncident_ToleratesUnknownResponseFields(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	result, err := client.CreateIncident(context.Background(), CreateIncidentRequest{})
 	if err != nil {
@@ -157,7 +157,7 @@ func TestCreateIncident_ForwardsCorrelationID(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: upstream.URL, TokenURL: tokenSrv.URL, ClientID: "id", ClientSecret: "secret"}, true)
 
 	ctx := WithCorrelationID(context.Background(), "sais-test-id")
 	if _, err := client.CreateIncident(ctx, CreateIncidentRequest{}); err != nil {
@@ -177,7 +177,7 @@ func TestTokenFetchTimeout(t *testing.T) {
 	tokenFetchTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { tokenFetchTimeout = 10 * time.Second })
 
-	client := NewClient(Config{BaseURL: tokenSrv.URL, TokenURL: tokenSrv.URL + "/token", ClientID: "id", ClientSecret: "secret"})
+	client := newClient(Config{BaseURL: tokenSrv.URL, TokenURL: tokenSrv.URL + "/token", ClientID: "id", ClientSecret: "secret"}, true)
 
 	start := time.Now()
 	_, err := client.CreateIncident(context.Background(), CreateIncidentRequest{})
