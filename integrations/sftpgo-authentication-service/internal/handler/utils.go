@@ -45,6 +45,54 @@ var (
 	// generalFileMgtPermissions is the default set of permissions for project folders.
 	generalFileMgtPermissions = []string{"upload", "list", "download", "create_dirs", "delete", "overwrite", "rename"}
 
+	// attachmentShareMountPermissions is the standing permission set granted on
+	// the shared "/attachments" virtual folder to every externally authenticated
+	// caller (see ExternalAuthHook). It is deliberately narrower than
+	// generalFileMgtPermissions.
+	//
+	// Why this can't be scoped to a specific case/project path instead: at the
+	// time this hook runs, all that is known about the caller is their identity
+	// (email/userid/groups from the validated JWT) — the JWT is the CSM
+	// backend's general session assertion, minted once per login and reused for
+	// every SFTPGo call for that session (see MintToken in
+	// apps/csm-portal/backend/internal/sftpgo/client.go), not a per-case or
+	// per-attachment token. The case/attachment path is only known later, when
+	// the CSM backend calls SFTPGo's POST /api/v2/user/shares with the specific
+	// storage key (buildStorageKey in attachment_storage.go). So the underlying
+	// SFTPGo user minted here cannot be scoped to one case's subtree; the actual
+	// per-case boundary is enforced entirely by the short-lived, path-scoped
+	// Share object created afterward.
+	//
+	// What *can* be scoped, and is: SFTPGo's own share-serving code path
+	// (internal/httpd/handler.go's getFileReader/getFileWriter, confirmed
+	// against upstream SFTPGo source) checks the underlying user's standing
+	// Permissions map for every share-based download/upload — share creation
+	// itself (internal/dataprovider/share.go's Share.validate/validatePaths)
+	// performs no permission check at all, so it is exclusively this standing
+	// grant that gates whether a minted share can actually be read from or
+	// written to. Of generalFileMgtPermissions' seven verbs, only five are ever
+	// exercised by the attachment-share flow: "list" and "download" (read
+	// shares — SFTPGo stats the shared path before streaming it) and "upload",
+	// "create_dirs" (the BFF's tus upload always sets mkdir_parents=true), and
+	// "overwrite" (write shares). "delete" and "rename" are never exercised by
+	// any attachment code path — there is no delete/rename-via-share feature —
+	// so granting them here only handed every authenticated caller the ability
+	// to directly delete or rename ANY file anywhere under the shared
+	// "/attachments" tree via SFTPGo's own file-management API, entirely
+	// outside of any Share object. Dropping them closes that off with zero
+	// impact on the real upload/download flow.
+	//
+	// Residual, accepted risk: because the grant is still rooted at
+	// "/attachments" (not a per-case subpath — see above for why that isn't
+	// possible from this hook), a caller can still directly list/download
+	// arbitrary attachments outside the ones they were actually issued a Share
+	// for, by calling SFTPGo's own file API instead of going through a Share.
+	// Closing that fully requires either embedding the specific case/project
+	// path in the token-mint request (a BFF-side change, out of scope here) or
+	// moving to per-case SFTPGo virtual folders, and should be tracked as a
+	// follow-up rather than silently left undocumented.
+	attachmentShareMountPermissions = []string{"list", "download", "upload", "create_dirs", "overwrite"}
+
 	// usernameRegex validates that a username is non-empty, at most 254 characters (RFC 5321),
 	// and contains no carriage return or newline characters.
 	usernameRegex = regexp.MustCompile(`^[^\r\n]{1,254}$`)

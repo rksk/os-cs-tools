@@ -7216,6 +7216,10 @@ components:
           type: string
         downloadUrl:
           type: string
+          nullable: true
+          description: >-
+            Null for a CSM-native (Postgres) data source attachment. Always
+            set for ServiceNow-sourced attachments.
 
     SearchAttachmentsRequest:
       type: object
@@ -9447,8 +9451,12 @@ components:
           type: string
           nullable: true
         content:
-          description: Base64-encoded file content.
+          description: >-
+            Base64-encoded file content. Null for a CSM-native (Postgres)
+            data source attachment. Always set for ServiceNow-sourced
+            attachments.
           type: string
+          nullable: true
 
     AttachmentUpdateRequest:
       description: >-

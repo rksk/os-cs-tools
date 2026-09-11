@@ -15,23 +15,22 @@
 // under the License.
 
 /**
- * Uploads a file directly from the browser to SFTPGo's chunked/TUS upload
- * endpoint, bypassing this app's own backend entirely (the backend only
- * mints the short-lived credential — see `usePostCsmCaseAttachment`).
+ * Uploads a file directly from the browser to SFTPGo's share-scoped
+ * chunked/TUS upload endpoint, bypassing this app's own backend entirely
+ * (the backend only mints the write-scoped share — see
+ * `usePostCsmCaseAttachment`).
  *
  * Deliberately NOT sent through `useBackendApi`/`useAuthApiClient`: that
- * client refuses to attach a bearer token to any origin other than this
- * app's own backend (see `useAuthApiClient.ts`), and the SFTPGo access token
- * minted for this upload is a different credential entirely — it must never
- * be confused with, or sent alongside, this app's own auth tokens.
+ * client only ever attaches a bearer token to this app's own backend (see
+ * `useAuthApiClient.ts`), and this upload carries no bearer credential of any
+ * kind — the write-scoped share id embedded in the TUS `Upload-Metadata`
+ * header is the entire credential (see `UploadFileViaTusInput.shareId`).
  *
  * Follows the TUS resumable-upload protocol (POST to open an upload, then
- * PATCH to send the bytes): this is the wire shape SFTPGo's
- * `chunked-upload` endpoint was specified against for this change, but has
- * not been independently re-verified against a live SFTPGo instance — flagged
- * here the same way the backend's own `internal/sftpgo/client.go` flags its
- * own unverified SFTPGo API-shape assumptions (e.g. the share-scope and
- * share-id-header assumptions there).
+ * PATCH to send the bytes) against SFTPGo's share-authenticated
+ * `POST /api/v2/shares-chunked-uploads` endpoint — confirmed against a live
+ * local SFTPGo instance for this change (see this function's inline notes for
+ * exactly what was verified).
  */
 
 /** Base64-encodes a UTF-8 string for a TUS `Upload-Metadata` entry. */
@@ -48,7 +47,12 @@ function toBase64(value: string): string {
 
 export interface UploadFileViaTusInput {
   sftpgoBaseUrl: string;
-  sftpgoAccessToken: string;
+  /**
+   * The write-scoped SFTPGo share id minted by
+   * `POST /cases/{id}/attachments/upload-token`. This is the entire upload
+   * credential — no bearer token is ever sent alongside it.
+   */
+  shareId: string;
   /** The exact SFTPGo path minted by `POST /cases/{id}/attachments/upload-token`. */
   storageKey: string;
   file: File;
@@ -60,15 +64,16 @@ export interface UploadFileViaTusInput {
 const TUS_RESUMABLE_VERSION = "1.0.0";
 
 /**
- * Opens a TUS upload session (`POST`) for `storageKey`, then uploads the
- * file's bytes in a single `PATCH` at offset 0, reporting progress via
- * `onProgress`. Uses `XMLHttpRequest` for the `PATCH` rather than `fetch`:
- * `fetch` has no cross-browser-reliable upload progress event, while
+ * Opens a TUS upload session (`POST`) against SFTPGo's share-authenticated
+ * `shares-chunked-uploads` endpoint, then uploads the file's bytes in a
+ * single `PATCH` at offset 0, reporting progress via `onProgress`. Uses
+ * `XMLHttpRequest` for the `PATCH` rather than `fetch`: `fetch` has no
+ * cross-browser-reliable upload progress event, while
  * `XMLHttpRequest.upload.onprogress` does.
  */
 export async function uploadFileViaTus({
   sftpgoBaseUrl,
-  sftpgoAccessToken,
+  shareId,
   storageKey,
   file,
   onProgress,
@@ -87,16 +92,25 @@ export async function uploadFileViaTus({
   }
   const trustedOrigin = parsedBaseUrl.origin;
 
-  const createEndpoint = `${sftpgoBaseUrl.replace(/\/+$/, "")}/api/v2/user/files/chunked-upload`;
+  const createEndpoint = `${sftpgoBaseUrl.replace(/\/+$/, "")}/api/v2/shares-chunked-uploads`;
+  // The share's own root already covers storageKey's parent directory (see
+  // BeAttachmentUploadTokenResponse.shareId's doc comment), so only the
+  // final path segment is sent as "path" here — sending the full storageKey
+  // would double up the directory portion and SFTPGo would refuse to write
+  // the file.
+  const fileName = storageKey.slice(storageKey.lastIndexOf("/") + 1);
   const uploadMetadata = [
-    `path ${toBase64(storageKey)}`,
-    `filename ${toBase64(file.name)}`,
+    `path ${toBase64(fileName)}`,
+    `share_id ${toBase64(shareId)}`,
+    `mkdir_parents ${toBase64("true")}`,
   ].join(",");
 
+  // No Authorization header: a write-scoped share id is the entire
+  // credential for this endpoint — see UploadFileViaTusInput.shareId's doc
+  // comment and the backend's AttachmentStorageHandler.MintUploadToken.
   const createResponse = await fetch(createEndpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${sftpgoAccessToken}`,
       "Tus-Resumable": TUS_RESUMABLE_VERSION,
       "Upload-Length": String(file.size),
       "Upload-Metadata": uploadMetadata,
@@ -111,10 +125,10 @@ export async function uploadFileViaTus({
 
   // The TUS spec returns the upload's URL via `Location`, which may be
   // relative to the create endpoint's origin, or an absolute URL. Either
-  // way, the resolved URL's origin must match the configured SFTPGo
-  // origin before the bearer token is attached and sent there — otherwise
-  // a misconfigured or compromised SFTPGo instance could redirect the
-  // upload (and the token) to an attacker-controlled host.
+  // way, the resolved URL's origin must match the configured SFTPGo origin
+  // before the PATCH is sent there — otherwise a misconfigured or
+  // compromised SFTPGo instance could redirect the upload to an
+  // attacker-controlled host.
   const location = createResponse.headers.get("Location");
   const uploadUrl = location
     ? new URL(location, createEndpoint).toString()
@@ -127,7 +141,6 @@ export async function uploadFileViaTus({
 
   await patchWithProgress({
     url: uploadUrl,
-    accessToken: sftpgoAccessToken,
     file,
     onProgress,
     signal,
@@ -136,13 +149,11 @@ export async function uploadFileViaTus({
 
 function patchWithProgress({
   url,
-  accessToken,
   file,
   onProgress,
   signal,
 }: {
   url: string;
-  accessToken: string;
   file: File;
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
@@ -150,7 +161,10 @@ function patchWithProgress({
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PATCH", url, true);
-    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+    // No Authorization header: the share id embedded in the TUS
+    // Upload-Metadata sent to the create call above is the only credential
+    // this upload uses — confirmed empirically that SFTPGo's
+    // shares-chunked-uploads flow needs none on the follow-up PATCH either.
     xhr.setRequestHeader("Tus-Resumable", TUS_RESUMABLE_VERSION);
     xhr.setRequestHeader("Upload-Offset", "0");
     xhr.setRequestHeader("Content-Type", "application/offset+octet-stream");

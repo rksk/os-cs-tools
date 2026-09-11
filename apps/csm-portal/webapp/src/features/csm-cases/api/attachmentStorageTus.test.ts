@@ -79,7 +79,7 @@ describe("uploadFileViaTus", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(null, {
         status: 201,
-        headers: { Location: "/api/v2/user/files/chunked-upload/abc123" },
+        headers: { Location: "/api/v2/shares-chunked-uploads/abc123" },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -87,7 +87,7 @@ describe("uploadFileViaTus", () => {
     const onProgress = vi.fn();
     await uploadFileViaTus({
       sftpgoBaseUrl: "https://sftpgo.example.com",
-      sftpgoAccessToken: "tok-1",
+      shareId: "share-1",
       storageKey: "/attachments/cases/case-1/att-1",
       file,
       onProgress,
@@ -96,27 +96,31 @@ describe("uploadFileViaTus", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [createUrl, createInit] = fetchMock.mock.calls[0];
     expect(createUrl).toBe(
-      "https://sftpgo.example.com/api/v2/user/files/chunked-upload",
+      "https://sftpgo.example.com/api/v2/shares-chunked-uploads",
     );
     expect(createInit.method).toBe("POST");
-    expect(createInit.headers.Authorization).toBe("Bearer tok-1");
+    expect(createInit.headers.Authorization).toBeUndefined();
     expect(createInit.headers["Upload-Length"]).toBe(String(file.size));
-    // Upload-Metadata carries the base64-encoded storage key under "path".
+    // Upload-Metadata carries the base64-encoded final path segment,
+    // share id, and mkdir_parents flag.
     const metadata = createInit.headers["Upload-Metadata"] as string;
-    const pathEntry = metadata
-      .split(",")
-      .find((entry: string) => entry.startsWith("path "));
-    expect(pathEntry).toBeDefined();
-    const decodedPath = atob(pathEntry!.split(" ")[1]);
-    expect(decodedPath).toBe("/attachments/cases/case-1/att-1");
+    const entries = Object.fromEntries(
+      metadata.split(",").map((entry: string) => {
+        const [key, value] = entry.split(" ");
+        return [key, atob(value)];
+      }),
+    );
+    expect(entries.path).toBe("att-1");
+    expect(entries.share_id).toBe("share-1");
+    expect(entries.mkdir_parents).toBe("true");
 
     expect(FakeXhr.instances).toHaveLength(1);
     const xhr = FakeXhr.instances[0];
     expect(xhr.method).toBe("PATCH");
     expect(xhr.url).toBe(
-      "https://sftpgo.example.com/api/v2/user/files/chunked-upload/abc123",
+      "https://sftpgo.example.com/api/v2/shares-chunked-uploads/abc123",
     );
-    expect(xhr.headers.Authorization).toBe("Bearer tok-1");
+    expect(xhr.headers.Authorization).toBeUndefined();
     expect(xhr.headers["Upload-Offset"]).toBe("0");
     expect(xhr.headers["Content-Type"]).toBe("application/offset+octet-stream");
     expect(xhr.sentBody).toBe(file);
@@ -133,13 +137,13 @@ describe("uploadFileViaTus", () => {
 
     await uploadFileViaTus({
       sftpgoBaseUrl: "https://sftpgo.example.com/",
-      sftpgoAccessToken: "tok-1",
+      shareId: "share-1",
       storageKey: "/attachments/cases/case-1/att-1",
       file,
     });
 
     expect(FakeXhr.instances[0].url).toBe(
-      "https://sftpgo.example.com/api/v2/user/files/chunked-upload",
+      "https://sftpgo.example.com/api/v2/shares-chunked-uploads",
     );
   });
 
@@ -152,7 +156,7 @@ describe("uploadFileViaTus", () => {
     await expect(
       uploadFileViaTus({
         sftpgoBaseUrl: "https://sftpgo.example.com",
-        sftpgoAccessToken: "tok-1",
+        shareId: "share-1",
         storageKey: "/attachments/cases/case-1/att-1",
         file,
       }),
@@ -167,7 +171,7 @@ describe("uploadFileViaTus", () => {
       vi.fn().mockResolvedValue(
         new Response(null, {
           status: 201,
-          headers: { Location: "/api/v2/user/files/chunked-upload/abc123" },
+          headers: { Location: "/api/v2/shares-chunked-uploads/abc123" },
         }),
       ),
     );
@@ -184,7 +188,7 @@ describe("uploadFileViaTus", () => {
     await expect(
       uploadFileViaTus({
         sftpgoBaseUrl: "https://sftpgo.example.com",
-        sftpgoAccessToken: "tok-1",
+        shareId: "share-1",
         storageKey: "/attachments/cases/case-1/att-1",
         file,
       }),
@@ -198,7 +202,7 @@ describe("uploadFileViaTus", () => {
     await expect(
       uploadFileViaTus({
         sftpgoBaseUrl: "http://sftpgo.example.com",
-        sftpgoAccessToken: "tok-1",
+        shareId: "share-1",
         storageKey: "/attachments/cases/case-1/att-1",
         file,
       }),
@@ -214,7 +218,7 @@ describe("uploadFileViaTus", () => {
       vi.fn().mockResolvedValue(
         new Response(null, {
           status: 201,
-          headers: { Location: "https://evil.example.com/steal-the-token" },
+          headers: { Location: "https://evil.example.com/steal-the-share" },
         }),
       ),
     );
@@ -222,7 +226,7 @@ describe("uploadFileViaTus", () => {
     await expect(
       uploadFileViaTus({
         sftpgoBaseUrl: "https://sftpgo.example.com",
-        sftpgoAccessToken: "tok-1",
+        shareId: "share-1",
         storageKey: "/attachments/cases/case-1/att-1",
         file,
       }),
@@ -239,7 +243,7 @@ describe("uploadFileViaTus", () => {
           status: 201,
           headers: {
             Location:
-              "https://sftpgo.example.com/api/v2/user/files/chunked-upload/abc123",
+              "https://sftpgo.example.com/api/v2/shares-chunked-uploads/abc123",
           },
         }),
       ),
@@ -247,14 +251,14 @@ describe("uploadFileViaTus", () => {
 
     await uploadFileViaTus({
       sftpgoBaseUrl: "https://sftpgo.example.com",
-      sftpgoAccessToken: "tok-1",
+      shareId: "share-1",
       storageKey: "/attachments/cases/case-1/att-1",
       file,
     });
 
     expect(FakeXhr.instances).toHaveLength(1);
     expect(FakeXhr.instances[0].url).toBe(
-      "https://sftpgo.example.com/api/v2/user/files/chunked-upload/abc123",
+      "https://sftpgo.example.com/api/v2/shares-chunked-uploads/abc123",
     );
   });
 });

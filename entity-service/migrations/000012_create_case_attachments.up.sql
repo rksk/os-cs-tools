@@ -1,3 +1,5 @@
+BEGIN;
+
 -- case_attachments stores metadata only. File bytes for this data source live
 -- externally in SFTPGo, addressed by storage_key -- there is no base64-payload
 -- alternative here, unlike the ServiceNow data source's /attachments API.
@@ -21,3 +23,5 @@ CREATE INDEX IF NOT EXISTS idx_case_attachments_uploaded_by ON case_attachments(
 
 -- Composite index for the paginated per-case feed (most recent first).
 CREATE INDEX IF NOT EXISTS idx_case_attachments_case_created ON case_attachments(case_id, created_at DESC);
+
+COMMIT;

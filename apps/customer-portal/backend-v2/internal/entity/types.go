@@ -366,11 +366,17 @@ type AccountSummary struct {
 	AgentEnabled        *bool   `json:"agentEnabled,omitempty"`
 	KbReferencesEnabled *bool   `json:"kbReferencesEnabled,omitempty"`
 	// ServiceNow-only.
-	Classification  *string    `json:"classification,omitempty"`
-	Pod             *string    `json:"pod,omitempty"`
-	SupportTier     *string    `json:"supportTier,omitempty"`
-	ArrToday        *string    `json:"arrToday,omitempty"`
-	Owner           *EntityRef `json:"owner,omitempty"`
+	Classification *string    `json:"classification,omitempty"`
+	Pod            *string    `json:"pod,omitempty"`
+	SupportTier    *string    `json:"supportTier,omitempty"`
+	ArrToday       *string    `json:"arrToday,omitempty"`
+	Owner          *EntityRef `json:"owner,omitempty"`
+	// AccountManager is entity-service's current name for what this backend
+	// exposes as `owner`. The unified account view renamed `owner` ->
+	// `accountManager`; both are decoded so the mapping survives either
+	// service deploying first. PersonRef carries an extra `email` field that
+	// EntityRef simply ignores.
+	AccountManager  *EntityRef `json:"accountManager,omitempty"`
 	TechnicalOwner  *EntityRef `json:"technicalOwner,omitempty"`
 	HasAgent        *bool      `json:"hasAgent,omitempty"`
 	HasKbReferences *bool      `json:"hasKbReferences,omitempty"`
@@ -405,15 +411,17 @@ type AccountDetail struct {
 	AgentEnabled        *bool   `json:"agentEnabled,omitempty"`
 	KbReferencesEnabled *bool   `json:"kbReferencesEnabled,omitempty"`
 	// ServiceNow-only.
-	Classification  *string         `json:"classification,omitempty"`
-	Pod             *string         `json:"pod,omitempty"`
-	SupportTier     *SupportTierRef `json:"supportTier,omitempty"`
-	ArrToday        *string         `json:"arrToday,omitempty"`
-	Owner           *EntityRef      `json:"owner,omitempty"`
-	TechnicalOwner  *EntityRef      `json:"technicalOwner,omitempty"`
-	HasAgent        *bool           `json:"hasAgent,omitempty"`
-	HasKbReferences *bool           `json:"hasKbReferences,omitempty"`
-	CreatedBy       *string         `json:"createdBy,omitempty"`
+	Classification *string         `json:"classification,omitempty"`
+	Pod            *string         `json:"pod,omitempty"`
+	SupportTier    *SupportTierRef `json:"supportTier,omitempty"`
+	ArrToday       *string         `json:"arrToday,omitempty"`
+	Owner          *EntityRef      `json:"owner,omitempty"`
+	// See AccountDetail.AccountManager -- same rename, same reason.
+	AccountManager  *EntityRef `json:"accountManager,omitempty"`
+	TechnicalOwner  *EntityRef `json:"technicalOwner,omitempty"`
+	HasAgent        *bool      `json:"hasAgent,omitempty"`
+	HasKbReferences *bool      `json:"hasKbReferences,omitempty"`
+	CreatedBy       *string    `json:"createdBy,omitempty"`
 	// Shared (identical key/type on both data sources).
 	ActivationDate   *string `json:"activationDate,omitempty"`
 	DeactivationDate *string `json:"deactivationDate,omitempty"`
@@ -1003,11 +1011,14 @@ type CreateAttachmentRequest struct {
 
 // AttachmentDetail holds the core fields returned after creating an attachment.
 type AttachmentDetail struct {
-	ID          string    `json:"id"`
-	SizeBytes   int       `json:"sizeBytes"`
-	CreatedOn   time.Time `json:"createdOn"`
-	CreatedBy   string    `json:"createdBy"`
-	DownloadURL string    `json:"downloadUrl"`
+	ID        string    `json:"id"`
+	SizeBytes int       `json:"sizeBytes"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+	// DownloadURL is nil for a CSM-native (Postgres) data source attachment:
+	// entity-service holds no download location for it, only its storage key.
+	// Always non-nil for ServiceNow-sourced attachments.
+	DownloadURL *string `json:"downloadUrl"`
 }
 
 // CreateAttachmentResponse is entity-service's response for POST /attachments.
@@ -2013,7 +2024,10 @@ type AttachmentDetails struct {
 	CreatedOn   time.Time `json:"createdOn"`
 	DownloadURL *string   `json:"downloadUrl"`
 	PreviewURL  *string   `json:"previewUrl"`
-	Content     string    `json:"content"`
+	// Content is nil for a CSM-native (Postgres) data source attachment:
+	// entity-service holds no bytes for it, only its storage key. Always
+	// non-nil for ServiceNow-sourced attachments.
+	Content *string `json:"content"`
 }
 
 // UpdateAttachmentRequest is entity-service's request body for PATCH /attachments/{id}.

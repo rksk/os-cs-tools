@@ -54,6 +54,17 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GetMe handles GET /users/me for the postgres data source.
+func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.svc.GetMe(r.Context())
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // SNUserHandler handles HTTP requests for the user resource backed by ServiceNow.
 type SNUserHandler struct {
 	svc service.SNUserService

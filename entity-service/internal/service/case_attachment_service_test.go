@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -77,7 +78,7 @@ func TestCaseService_CreateCaseAttachment_Succeeds(t *testing.T) {
 		},
 	}
 
-	svc := NewCaseService(repo, actorUserRepo(t))
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	resp, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
@@ -109,7 +110,7 @@ func TestCaseService_CreateCaseAttachment_RequiresStorageKey(t *testing.T) {
 			return domain.Attachment{}, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t))
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	req := validCreateAttachmentRequest()
@@ -126,7 +127,7 @@ func TestCaseService_CreateCaseAttachment_RequiresStorageKey(t *testing.T) {
 // must be a positive value: this service cannot compute it (it never sees
 // the file bytes for this data source).
 func TestCaseService_CreateCaseAttachment_RequiresSizeBytes(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t))
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	req := validCreateAttachmentRequest()
@@ -143,7 +144,7 @@ func TestCaseService_CreateCaseAttachment_RequiresSizeBytes(t *testing.T) {
 // this data source only models case attachments -- conversation, deployment,
 // change_request, and incident have no Postgres schema backing here.
 func TestCaseService_CreateCaseAttachment_RejectsNonCaseReferenceType(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t))
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	req := validCreateAttachmentRequest()
@@ -160,10 +161,228 @@ func TestCaseService_CreateCaseAttachment_RejectsNonCaseReferenceType(t *testing
 // the same "must be a known, authenticated user" gate CreateCaseComment
 // already enforces also protects attachment creation.
 func TestCaseService_CreateCaseAttachment_RejectsUnauthenticatedCaller(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil)
 	ctx := contextWithUserIDToken("") // no x-user-id-token header
 
 	_, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
+	var ue *apierror.UnauthorizedError
+	if !errorsAsUnauthorized(err, &ue) {
+		t.Fatalf("expected *apierror.UnauthorizedError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_CreateCaseAttachment_DefaultsToComplete proves every
+// existing caller that doesn't specify a status (the ServiceNow path is
+// unaffected since it never sets Status at all, but any pre-existing
+// Postgres-path caller behaves the same way) still gets a 'complete' row --
+// this field must be fully backward compatible.
+func TestCaseService_CreateCaseAttachment_DefaultsToComplete(t *testing.T) {
+	repo := &stubCaseRepo{
+		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
+			if req.Status != domain.AttachmentStatusComplete {
+				t.Fatalf("expected repo to receive status 'complete' by default, got %q", req.Status)
+			}
+			return domain.Attachment{
+				ID:         testAttachmentID,
+				Status:     req.Status,
+				StorageKey: req.StorageKey,
+				CreatedBy:  domain.NewUserReference(req.CreatedBy, "", ""),
+			}, nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := validCreateAttachmentRequest() // Status left unset
+	resp, err := svc.CreateCaseAttachment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateCaseAttachment returned error: %v", err)
+	}
+	if resp.Attachment.Status != domain.AttachmentStatusComplete {
+		t.Fatalf("expected response status 'complete', got %q", resp.Attachment.Status)
+	}
+}
+
+// TestCaseService_CreateCaseAttachment_Pending proves an explicit
+// status="pending" request reaches the repository unchanged and the response
+// reports the pending status, so a caller can register a row before the
+// browser has actually uploaded anything to SFTPGo.
+func TestCaseService_CreateCaseAttachment_Pending(t *testing.T) {
+	var capturedStatus domain.AttachmentStatus
+	repo := &stubCaseRepo{
+		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
+			capturedStatus = req.Status
+			return domain.Attachment{
+				ID:         testAttachmentID,
+				Status:     req.Status,
+				StorageKey: req.StorageKey,
+				CreatedBy:  domain.NewUserReference(req.CreatedBy, "", ""),
+			}, nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := validCreateAttachmentRequest()
+	req.Status = domain.AttachmentStatusPending
+	resp, err := svc.CreateCaseAttachment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateCaseAttachment returned error: %v", err)
+	}
+	if capturedStatus != domain.AttachmentStatusPending {
+		t.Fatalf("expected repo to receive status 'pending', got %q", capturedStatus)
+	}
+	if resp.Attachment.Status != domain.AttachmentStatusPending {
+		t.Fatalf("expected response status 'pending', got %q", resp.Attachment.Status)
+	}
+}
+
+// TestCaseService_CreateCaseAttachment_RejectsInvalidStatus proves an
+// unrecognized status value is rejected rather than silently passed through
+// to the database (where the CHECK constraint would catch it anyway, but the
+// service should fail fast with a clear message).
+func TestCaseService_CreateCaseAttachment_RejectsInvalidStatus(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := validCreateAttachmentRequest()
+	req.Status = "uploading"
+
+	_, err := svc.CreateCaseAttachment(ctx, req)
+	var ve *apierror.ValidationError
+	if !asValidationError(err, &ve) {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_ConfirmCaseAttachment_TransitionsToComplete proves a
+// pending row owned by the calling actor is transitioned to complete.
+func TestCaseService_ConfirmCaseAttachment_TransitionsToComplete(t *testing.T) {
+	key := testStorageKey
+	var confirmedID string
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(_ context.Context, id string) (domain.Attachment, error) {
+			return domain.Attachment{
+				ID:         id,
+				Status:     domain.AttachmentStatusPending,
+				StorageKey: &key,
+				CreatedBy:  domain.NewUserReference("user-jane", "jane.doe@example.com", "Jane Doe"),
+			}, nil
+		},
+		confirmCaseAttachment: func(_ context.Context, id string) (domain.Attachment, error) {
+			confirmedID = id
+			return domain.Attachment{
+				ID:         id,
+				Status:     domain.AttachmentStatusComplete,
+				StorageKey: &key,
+				CreatedBy:  domain.NewUserReference("user-jane", "jane.doe@example.com", "Jane Doe"),
+			}, nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	resp, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
+	if err != nil {
+		t.Fatalf("ConfirmCaseAttachment returned error: %v", err)
+	}
+	if confirmedID != testAttachmentID {
+		t.Fatalf("expected repo to receive id %q, got %q", testAttachmentID, confirmedID)
+	}
+	if resp.Attachment.Status != domain.AttachmentStatusComplete {
+		t.Fatalf("expected response status 'complete', got %q", resp.Attachment.Status)
+	}
+}
+
+// TestCaseService_ConfirmCaseAttachment_RejectsAlreadyComplete proves
+// confirming a row that is already 'complete' fails clearly (a ConflictError)
+// instead of silently succeeding as a no-op.
+func TestCaseService_ConfirmCaseAttachment_RejectsAlreadyComplete(t *testing.T) {
+	key := testStorageKey
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(_ context.Context, id string) (domain.Attachment, error) {
+			return domain.Attachment{
+				ID:         id,
+				Status:     domain.AttachmentStatusComplete,
+				StorageKey: &key,
+				CreatedBy:  domain.NewUserReference("user-jane", "jane.doe@example.com", "Jane Doe"),
+			}, nil
+		},
+		confirmCaseAttachment: func(context.Context, string) (domain.Attachment, error) {
+			t.Fatal("repository mutation should not be reached for an already-complete row")
+			return domain.Attachment{}, nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
+	var ce *apierror.ConflictError
+	if !errorsAsConflict(err, &ce) {
+		t.Fatalf("expected *apierror.ConflictError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_ConfirmCaseAttachment_RejectsDifferentActor proves a user
+// other than the one who created the pending row cannot confirm it.
+func TestCaseService_ConfirmCaseAttachment_RejectsDifferentActor(t *testing.T) {
+	key := testStorageKey
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(_ context.Context, id string) (domain.Attachment, error) {
+			return domain.Attachment{
+				ID:         id,
+				Status:     domain.AttachmentStatusPending,
+				StorageKey: &key,
+				CreatedBy:  domain.NewUserReference("someone-else", "someone.else@example.com", "Someone Else"),
+			}, nil
+		},
+		confirmCaseAttachment: func(context.Context, string) (domain.Attachment, error) {
+			t.Fatal("repository mutation should not be reached for a non-owning actor")
+			return domain.Attachment{}, nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
+	var fe *apierror.ForbiddenError
+	if !errorsAsForbidden(err, &fe) {
+		t.Fatalf("expected *apierror.ForbiddenError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_ConfirmCaseAttachment_NotFound proves confirming a
+// nonexistent attachment surfaces as a NotFoundError.
+func TestCaseService_ConfirmCaseAttachment_NotFound(t *testing.T) {
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(context.Context, string) (domain.Attachment, error) {
+			return domain.Attachment{}, &apierror.NotFoundError{Msg: "attachment not found"}
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
+	var nfe *apierror.NotFoundError
+	if !errorsAsNotFound(err, &nfe) {
+		t.Fatalf("expected *apierror.NotFoundError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_ConfirmCaseAttachment_RejectsUnauthenticatedCaller proves
+// confirming is gated behind the same authentication check as every other
+// attachment mutation.
+func TestCaseService_ConfirmCaseAttachment_RejectsUnauthenticatedCaller(t *testing.T) {
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(context.Context, string) (domain.Attachment, error) {
+			t.Fatal("repository should not be reached for an unauthenticated caller")
+			return domain.Attachment{}, nil
+		},
+	}
+	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	ctx := contextWithUserIDToken("")
+
+	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
 	var ue *apierror.UnauthorizedError
 	if !errorsAsUnauthorized(err, &ue) {
 		t.Fatalf("expected *apierror.UnauthorizedError, got %T: %v", err, err)
@@ -193,7 +412,7 @@ func TestCaseService_SearchCaseAttachments_ReturnsStorageKey(t *testing.T) {
 		},
 	}
 
-	svc := NewCaseService(repo, stubUserRepo{})
+	svc := NewCaseService(repo, stubUserRepo{}, nil)
 	resp, err := svc.SearchCaseAttachments(context.Background(), domain.SearchAttachmentsRequest{
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeCase,
@@ -234,19 +453,25 @@ func TestCaseService_GetAttachmentByID_ReturnsStorageKeyNotContent(t *testing.T)
 		},
 	}
 
-	svc := NewCaseService(repo, stubUserRepo{})
+	svc := NewCaseService(repo, stubUserRepo{}, nil)
 	details, err := svc.GetAttachmentByID(context.Background(), testAttachmentID)
 	if err != nil {
 		t.Fatalf("GetAttachmentByID returned error: %v", err)
 	}
-	if details.Content != "" {
-		t.Fatalf("expected empty Content for a Postgres-sourced attachment, got %q", details.Content)
+	if details.Content != nil {
+		t.Fatalf("expected nil Content for a Postgres-sourced attachment, got %q", *details.Content)
 	}
 	if details.StorageKey == nil || *details.StorageKey != testStorageKey {
 		t.Fatalf("expected storageKey %q, got %v", testStorageKey, details.StorageKey)
 	}
 	if details.CreatedBy != "jane.doe@example.com" {
 		t.Fatalf("expected createdBy email, got %q", details.CreatedBy)
+	}
+	if details.ReferenceID != testCaseID {
+		t.Fatalf("expected referenceId %q, got %q", testCaseID, details.ReferenceID)
+	}
+	if details.ReferenceType == nil || *details.ReferenceType != domain.ReferenceTypeCase {
+		t.Fatalf("expected referenceType %q, got %v", domain.ReferenceTypeCase, details.ReferenceType)
 	}
 }
 
@@ -258,7 +483,7 @@ func TestCaseService_GetAttachmentByID_NotFound(t *testing.T) {
 			return domain.Attachment{}, &apierror.NotFoundError{Msg: "attachment not found"}
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{})
+	svc := NewCaseService(repo, stubUserRepo{}, nil)
 
 	_, err := svc.GetAttachmentByID(context.Background(), testAttachmentID)
 	var nfe *apierror.NotFoundError
@@ -272,7 +497,7 @@ func TestCaseService_GetAttachmentByID_NotFound(t *testing.T) {
 // it returns an accurate, typed error instead of fabricating a response or
 // reaching out to SFTPGo itself.
 func TestCaseService_GetCaseAttachmentContent_ReturnsTypedError(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil)
 
 	content, contentType, err := svc.GetCaseAttachmentContent(context.Background(), testAttachmentID)
 	if content != nil {
@@ -297,7 +522,7 @@ func TestCaseService_DeleteCaseAttachment_RemovesRow(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t))
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	resp, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -321,7 +546,7 @@ func TestCaseService_DeleteCaseAttachment_RejectsUnauthenticatedCaller(t *testin
 			return nil
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{})
+	svc := NewCaseService(repo, stubUserRepo{}, nil)
 	ctx := contextWithUserIDToken("")
 
 	_, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -339,7 +564,7 @@ func TestCaseService_DeleteCaseAttachment_NotFound(t *testing.T) {
 			return &apierror.NotFoundError{Msg: "attachment not found"}
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t))
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	_, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -361,12 +586,12 @@ func TestCaseService_UpdateAttachment_RenamesFile(t *testing.T) {
 			return updatedOn, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t))
+	svc := NewCaseService(repo, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
 	resp, err := svc.UpdateAttachment(ctx, domain.UpdateAttachmentRequest{
-		ID:            testAttachmentID,
+		AttachmentID:  testAttachmentID,
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeCase,
 		Name:          &name,
@@ -389,17 +614,17 @@ func TestCaseService_UpdateAttachment_RenamesFile(t *testing.T) {
 // ServiceNow path's validateAttachmentUpdate rule: description is not a
 // valid field to update for reference type "case".
 func TestCaseService_UpdateAttachment_RejectsDescriptionForCase(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t))
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
-	description := "not allowed"
+	description := json.RawMessage(`"not allowed"`)
 	_, err := svc.UpdateAttachment(ctx, domain.UpdateAttachmentRequest{
-		ID:            testAttachmentID,
+		AttachmentID:  testAttachmentID,
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeCase,
 		Name:          &name,
-		Description:   &description,
+		Description:   description,
 	})
 	var ve *apierror.ValidationError
 	if !asValidationError(err, &ve) {
@@ -411,12 +636,12 @@ func TestCaseService_UpdateAttachment_RejectsDescriptionForCase(t *testing.T) {
 // data source rejects the "deployment" reference type ServiceNow allows for
 // updates: deployment attachments have no Postgres schema backing here.
 func TestCaseService_UpdateAttachment_RejectsDeploymentReferenceType(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t))
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
 	_, err := svc.UpdateAttachment(ctx, domain.UpdateAttachmentRequest{
-		ID:            testAttachmentID,
+		AttachmentID:  testAttachmentID,
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeDeployment,
 		Name:          &name,
@@ -446,6 +671,22 @@ func errorsAsNotFound(err error, target **apierror.NotFoundError) bool {
 func errorsAsServiceUnavailable(err error, target **apierror.ServiceUnavailableError) bool {
 	if sue, ok := err.(*apierror.ServiceUnavailableError); ok {
 		*target = sue
+		return true
+	}
+	return false
+}
+
+func errorsAsConflict(err error, target **apierror.ConflictError) bool {
+	if ce, ok := err.(*apierror.ConflictError); ok {
+		*target = ce
+		return true
+	}
+	return false
+}
+
+func errorsAsForbidden(err error, target **apierror.ForbiddenError) bool {
+	if fe, ok := err.(*apierror.ForbiddenError); ok {
+		*target = fe
 		return true
 	}
 	return false
