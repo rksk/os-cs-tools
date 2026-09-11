@@ -178,6 +178,14 @@ deployed alongside any other component, and its buffer database is its own dedic
 instance, never shared with the CSM platform's database. Do not add an import of, or a
 deploy-time dependency on, any other `cs-tools` component without revisiting this decision.
 
+**Run exactly one instance of this worker today.** `PendingBatch` (`internal/store`) reads
+pending rows without a lease or row lock, and `Worker.attempt` skips its dedup search whenever
+`RetryCount == 0` — so two worker instances polling concurrently can both pick up the same
+brand-new row and both call `CreateIncident` for it, creating a duplicate incident. Scaling
+this service to more than one instance requires an atomic claim mechanism first (e.g. `SELECT
+... FOR UPDATE SKIP LOCKED` held through dispatch, which needs a store/worker transaction-
+boundary change, not just a query tweak) — tracked as a known follow-up, not built here.
+
 ## Postgres driver: `jackc/pgx/v5` via `database/sql`, matching repo convention
 
 Confirmed by checking `entity-service/go.mod` and

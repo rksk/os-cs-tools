@@ -45,3 +45,21 @@ func TestHealth_UnavailableWhenDatabaseUnreachable(t *testing.T) {
 
 	assertStatus(t, w, http.StatusServiceUnavailable)
 }
+
+func TestHealth_PingReceivesABoundedDeadline(t *testing.T) {
+	var gotDeadline bool
+	store := &mockStore{pingFn: func(ctx context.Context) error {
+		_, gotDeadline = ctx.Deadline()
+		return nil
+	}}
+	h := NewHealthHandler(store)
+
+	r := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.Health(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if !gotDeadline {
+		t.Error("Ping's context has no deadline, want one bounded by healthPingTimeout so a stalled database can't ride the server's own WriteTimeout")
+	}
+}

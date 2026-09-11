@@ -53,9 +53,19 @@ func Delay(retryCount int) time.Duration {
 // if never attempted) is due for its next attempt as of now. A row that has
 // never been attempted is always due — its buffered receipt, not a prior
 // attempt, is what makes it eligible.
+//
+// retryCount is the count of prior *failed* attempts (MarkAttemptFailed
+// increments it before this is next consulted), so the delay already elapsed
+// once corresponds to Delay(retryCount-1): after exactly one failure
+// (retryCount == 1) the wait is BaseDelay == Delay(0), after two failures
+// Delay(1), and so on. Passing retryCount straight into Delay would apply one
+// extra doubling to every wait — Delay clamps negative input to 0, so
+// retryCount == 0 (defensive; Due returns true before this line whenever
+// lastAttemptAt is nil, which is the only time retryCount should be 0) still
+// resolves to BaseDelay.
 func Due(now time.Time, lastAttemptAt *time.Time, retryCount int) bool {
 	if lastAttemptAt == nil {
 		return true
 	}
-	return !now.Before(lastAttemptAt.Add(Delay(retryCount)))
+	return !now.Before(lastAttemptAt.Add(Delay(retryCount - 1)))
 }

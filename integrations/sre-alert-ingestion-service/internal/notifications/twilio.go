@@ -86,7 +86,12 @@ func NewTwilioClient(cfg TwilioConfig) *TwilioClient {
 		cfg.APIBaseURL = defaultTwilioAPIBaseURL
 	}
 	return &TwilioClient{
-		http: &http.Client{Timeout: 10 * time.Second},
+		// httpsOnlyTransport refuses a non-HTTPS APIBaseURL (loopback
+		// exempted for tests) — every request here carries Basic Auth
+		// credentials (AccountSID/AuthToken), which must never go out in
+		// cleartext. See its doc comment for why this is enforced at the
+		// transport level rather than per call site.
+		http: &http.Client{Timeout: 10 * time.Second, Transport: &httpsOnlyTransport{}},
 		cfg:  cfg,
 	}
 }

@@ -88,10 +88,22 @@ func NewClient(cfg Config) *Client {
 		Scopes:       cfg.Scopes,
 	}
 
-	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: tokenFetchTimeout})
+	// Both the token fetch (carries ClientID/ClientSecret) and every
+	// subsequent API call (carries the bearer token it returns) go out over
+	// httpsOnlyTransport, which refuses to send either over a non-HTTPS
+	// endpoint — loopback is exempted so this service's own httptest-backed
+	// tests keep working unchanged. This is enforced once, at the transport
+	// level, rather than per call site, so neither the oauth2 library's own
+	// token-endpoint request nor a future new call added to this client can
+	// accidentally bypass it.
+	tokenHTTPClient := &http.Client{
+		Timeout:   tokenFetchTimeout,
+		Transport: &httpsOnlyTransport{},
+	}
+	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
+	httpClient.Transport = &httpsOnlyTransport{base: httpClient.Transport}
 	// oauth2.Transport reattaches the Authorization bearer token to every
 	// request it processes, including a followed redirect to a different
 	// host. Refuse to follow so the token can never leak to wherever

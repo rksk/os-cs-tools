@@ -65,14 +65,14 @@ func TestDue_RespectsBackoffWindow(t *testing.T) {
 	now := time.Now()
 	lastAttempt := now.Add(-45 * time.Second) // 45s ago
 
-	// retryCount 0 -> 30s delay -> due (45s > 30s elapsed).
-	if !backoff.Due(now, &lastAttempt, 0) {
-		t.Error("Due() = false, want true: elapsed 45s exceeds the 30s delay for retryCount 0")
+	// retryCount 1 (one prior failure) -> Delay(0) == 30s -> due (45s > 30s elapsed).
+	if !backoff.Due(now, &lastAttempt, 1) {
+		t.Error("Due() = false, want true: elapsed 45s exceeds the 30s delay for retryCount 1")
 	}
 
-	// retryCount 1 -> 60s delay -> not yet due (only 45s elapsed).
-	if backoff.Due(now, &lastAttempt, 1) {
-		t.Error("Due() = true, want false: elapsed 45s is under the 60s delay for retryCount 1")
+	// retryCount 2 (two prior failures) -> Delay(1) == 60s -> not yet due (only 45s elapsed).
+	if backoff.Due(now, &lastAttempt, 2) {
+		t.Error("Due() = true, want false: elapsed 45s is under the 60s delay for retryCount 2")
 	}
 }
 
@@ -81,7 +81,8 @@ func TestDue_ExactBoundaryIsDue(t *testing.T) {
 
 	now := time.Now()
 	lastAttempt := now.Add(-30 * time.Second)
-	if !backoff.Due(now, &lastAttempt, 0) {
+	// retryCount 1 -> Delay(0) == 30s -> the boundary case.
+	if !backoff.Due(now, &lastAttempt, 1) {
 		t.Error("Due() = false at the exact 30s boundary, want true (inclusive)")
 	}
 }

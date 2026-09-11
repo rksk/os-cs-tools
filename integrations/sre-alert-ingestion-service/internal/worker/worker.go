@@ -243,7 +243,27 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	result, err := w.csm.CreateIncident(attemptCtx, req)
 	if err == nil {
 		if merr := w.store.MarkDelivered(ctx, row.ID, result.IncidentID); merr != nil {
-			slog.ErrorContext(attemptCtx, "worker: MarkDelivered failed", "id", row.ID, "err", merr)
+			// The incident now exists in CSM, but this row is still
+			// 'pending' with RetryCount unchanged — left as-is, the next
+			// scan would call CreateIncident again (RetryCount == 0 skips
+			// the pre-retry dedup search above, which only runs when
+			// RetryCount > 0) and create a duplicate. Fall back to
+			// MarkAttemptFailed instead of a bare return: it bumps
+			// RetryCount, so the next attempt runs that dedup search first
+			// (which finds this incident via its Subject tag) before
+			// considering a second create. Not a complete fix — the dedup
+			// search is itself SN-backed and 401s today (see
+			// SearchIncidentByTag's doc comment), so it still fails open to
+			// creating again in practice until that infrastructure gap is
+			// closed — but it is strictly better than leaving RetryCount at
+			// 0, which guarantees skipping the dedup check entirely. A full
+			// fix needs a persisted "incident created, not yet confirmed
+			// delivered" state (or an idempotency key CSM itself enforces),
+			// tracked as follow-up, not done here.
+			slog.ErrorContext(attemptCtx, "worker: MarkDelivered failed after a successful create; falling back to MarkAttemptFailed so the next attempt's dedup search runs first", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "err", merr)
+			if aerr := w.store.MarkAttemptFailed(ctx, row.ID, fmt.Sprintf("incident %s was created but MarkDelivered failed: %v", result.IncidentID, merr)); aerr != nil {
+				slog.ErrorContext(attemptCtx, "worker: MarkAttemptFailed (post-create MarkDelivered fallback) also failed", "id", row.ID, "err", aerr)
+			}
 			return
 		}
 		slog.InfoContext(attemptCtx, "worker: alert delivered", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "incidentNumber", result.IncidentNumber)
@@ -269,9 +289,6 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	nextRetryCount := row.RetryCount + 1
 	if nextRetryCount >= w.cfg.MaxRetries {
 		slog.WarnContext(attemptCtx, "worker: retry budget exhausted, escalating", "id", row.ID, "alertNumber", row.AlertNumber, "retryCount", nextRetryCount, "maxRetries", w.cfg.MaxRetries, "err", err)
-		if merr := w.store.MarkEscalated(ctx, row.ID, err.Error()); merr != nil {
-			slog.ErrorContext(attemptCtx, "worker: MarkEscalated (store) failed", "id", row.ID, "err", merr)
-		}
 		// row.AlertNumber leads the message (it's this alert's externally-facing
 		// identifier — see internal/store.PostgresStore.Enqueue); row.ID follows
 		// for anyone cross-referencing this service's own logs/database directly.
@@ -279,14 +296,33 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 			"SRE alert ingestion service: alert %s (id %s) could not be delivered to CSM after %d attempts. Last error: %s",
 			row.AlertNumber, row.ID, nextRetryCount, truncate(err.Error(), 200),
 		)
+		// Call before marking the row terminal, not after: if this attempt
+		// call was the terminal marker, a process exit between MarkEscalated
+		// and Escalate would leave the row permanently 'escalated' with no
+		// call ever having gone out — the exact failure this service exists
+		// to prevent (CSM down *and* the independent channel silently
+		// skipped). Reordered so the worst case on a mid-attempt crash is
+		// instead a possible duplicate call on the next scan (MarkEscalated
+		// succeeds after a call that already went out, or the process dies
+		// between the two and a future scan repeats it) — a second phone
+		// call is a far smaller cost than zero calls. A complete fix needs a
+		// durable, idempotent notification identifier (an outbox record
+		// Twilio's own call SID confirms against); tracked as follow-up, not
+		// done here.
 		if terr := w.twilio.Escalate(ctx, message); terr != nil {
 			// The escalation call itself failing is the worst case this
 			// service can be in — CSM is unreachable *and* the
 			// CSM-independent notification channel just failed too. There
 			// is no further fallback by design (see this service's
 			// README/CLAUDE.md); log loudly and move on rather than retry
-			// the call in a tight loop against Twilio.
+			// the call in a tight loop against Twilio. Still mark the row
+			// escalated below: MaxRetries is already exhausted, and a bare
+			// retry loop against a failing Twilio call is not this
+			// service's job to run.
 			slog.ErrorContext(attemptCtx, "worker: twilio escalation call failed", "id", row.ID, "err", terr)
+		}
+		if merr := w.store.MarkEscalated(ctx, row.ID, err.Error()); merr != nil {
+			slog.ErrorContext(attemptCtx, "worker: MarkEscalated (store) failed", "id", row.ID, "err", merr)
 		}
 		return
 	}

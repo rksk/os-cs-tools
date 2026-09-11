@@ -257,6 +257,12 @@ to work around — documented here rather than as scattered code comments.
   no second notification channel. This is the worst case this service can
   be in by design; a wider on-call/paging integration was out of scope for
   this iteration.
+- **Run exactly one instance of this worker.** `PendingBatch` has no
+  claim/lease mechanism, so two instances polling concurrently can both pick
+  up and dispatch the same new row (`RetryCount == 0` skips the dedup search
+  that would otherwise catch this), creating a duplicate incident. See this
+  service's `CLAUDE.md` ("Deployment isolation") for what a safe multi-
+  instance design needs before scaling past one.
 
 ## Testing
 

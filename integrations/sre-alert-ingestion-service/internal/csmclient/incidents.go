@@ -109,6 +109,14 @@ func (c *Client) CreateIncident(ctx context.Context, req CreateIncidentRequest) 
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("csmclient: decode CreateIncident response: %w", err)
 	}
+	if resp.Incident.ID == "" {
+		// A 2xx with no incident ID is malformed, not a successful create —
+		// treat it as a failure so the worker's normal retry path handles
+		// it, rather than reporting success and persisting an empty
+		// incident_id the rest of this service (dedup search, escalation
+		// logging, the CSM-side mapping record) would then treat as real.
+		return nil, fmt.Errorf("csmclient: CreateIncident response missing incident id")
+	}
 
 	return &CreateIncidentResult{
 		IncidentID:     resp.Incident.ID,

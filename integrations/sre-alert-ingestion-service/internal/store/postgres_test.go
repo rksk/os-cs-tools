@@ -36,6 +36,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -78,7 +79,6 @@ func applyMigration(t *testing.T, dsn string) {
 
 	ups := []string{
 		"0001_create_alert_buffer.up.sql",
-		"0002_add_alert_number.up.sql",
 	}
 	for _, name := range ups {
 		sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir, name)) // #nosec G304 -- fixed, repo-relative test fixture path
@@ -231,8 +231,11 @@ func TestPostgresStore_MarkEscalatedAndMarkFailedLeavePendingSet(t *testing.T) {
 // (see internal/store.PostgresStore.Enqueue's "ALT" + 7-digit format) and
 // that alert_number_seq actually enforces uniqueness across concurrent
 // Enqueue calls -- the UNIQUE constraint added by
-// migrations/0002_add_alert_number.up.sql is what CreateAlertIncidentMapping
-// and the dedup tag both depend on never colliding.
+// migrations/0001_create_alert_buffer.up.sql is what CreateAlertIncidentMapping
+// and the dedup tag both depend on never colliding. Runs the n calls
+// concurrently, not sequentially, since a sequential loop can't exercise the
+// actual failure mode this test guards against: two goroutines racing
+// nextval('alert_number_seq') and the row insert.
 func TestPostgresStore_AlertNumbersAreSequentialAndUnique(t *testing.T) {
 	dsn := testDSN(t)
 	applyMigration(t, dsn)
@@ -247,19 +250,34 @@ func TestPostgresStore_AlertNumbersAreSequentialAndUnique(t *testing.T) {
 	buildPayload := func(alertNumber string) ([]byte, error) { return []byte(`{}`), nil }
 
 	const n = 20
-	seen := make(map[string]bool, n)
+	type result struct {
+		alertNumber string
+		err         error
+	}
+	results := make([]result, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
 	for i := 0; i < n; i++ {
-		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
-		alertNumber, err := s.Enqueue(ctx, id, buildPayload)
-		if err != nil {
-			t.Fatalf("Enqueue() [%d] error = %v", i, err)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
+			alertNumber, err := s.Enqueue(ctx, id, buildPayload)
+			results[i] = result{alertNumber: alertNumber, err: err}
+		}(i)
+	}
+	wg.Wait()
+
+	seen := make(map[string]bool, n)
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("Enqueue() [%d] error = %v", i, r.err)
 		}
-		if matched, merr := regexp.MatchString(`^ALT\d{7}$`, alertNumber); merr != nil || !matched {
-			t.Errorf("alertNumber = %q, want it to match ^ALT\\d{7}$", alertNumber)
+		if matched, merr := regexp.MatchString(`^ALT\d{7}$`, r.alertNumber); merr != nil || !matched {
+			t.Errorf("alertNumber = %q, want it to match ^ALT\\d{7}$", r.alertNumber)
 		}
-		if seen[alertNumber] {
-			t.Fatalf("alertNumber %q was generated more than once across %d Enqueue calls", alertNumber, n)
+		if seen[r.alertNumber] {
+			t.Fatalf("alertNumber %q was generated more than once across %d concurrent Enqueue calls", r.alertNumber, n)
 		}
-		seen[alertNumber] = true
+		seen[r.alertNumber] = true
 	}
 }

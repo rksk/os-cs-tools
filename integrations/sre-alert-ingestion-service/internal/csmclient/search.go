@@ -27,7 +27,7 @@ import (
 // embeds in every CreateIncidentRequest.Subject it builds, keyed off the
 // buffered alert row's own human-readable alert number (this service's own
 // Postgres sequence — see internal/store.Store.Enqueue's doc comment and
-// migrations/0002_add_alert_number.up.sql). The row's internal UUID primary
+// migrations/0001_create_alert_buffer.up.sql). The row's internal UUID primary
 // key (internal/idgen) is unaffected by this and remains what every
 // Store method keys its UPDATE/WHERE off of — this tag is purely the
 // externally-facing identifier.
@@ -207,10 +207,15 @@ func (c *Client) searchFirstIncident(ctx context.Context, req SearchIncidentsReq
 	}
 
 	hit := resp.Incidents[0]
-	result := &CreateIncidentResult{}
-	if hit.ID != nil {
-		result.IncidentID = *hit.ID
+	if hit.ID == nil || *hit.ID == "" {
+		// A "match" with no incident ID is malformed, not a real hit —
+		// treat it as no-match (fail open to the caller's own fallback,
+		// same posture as a failed search call) rather than handing back a
+		// result callers would treat as a confirmed existing incident.
+		return nil, false, fmt.Errorf("csmclient: incident search hit missing incident id")
 	}
+
+	result := &CreateIncidentResult{IncidentID: *hit.ID}
 	if hit.Number != nil {
 		result.IncidentNumber = *hit.Number
 	}

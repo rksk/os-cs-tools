@@ -19,7 +19,14 @@ package handler
 import (
 	"context"
 	"net/http"
+	"time"
 )
+
+// healthPingTimeout bounds how long Health waits on the database ping before
+// answering 503 — without this, a stalled Ping would ride the server's own
+// 30s WriteTimeout instead of failing fast, since WriteTimeout governs the
+// connection's write deadline, not request cancellation.
+const healthPingTimeout = 5 * time.Second
 
 // healthPinger is the subset of internal/store.Store the health handler
 // depends on.
@@ -44,7 +51,9 @@ func NewHealthHandler(store healthPinger) *HealthHandler {
 
 // Health handles GET /health.
 func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
-	if err := h.store.Ping(r.Context()); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), healthPingTimeout)
+	defer cancel()
+	if err := h.store.Ping(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Database unreachable.")
 		return
 	}

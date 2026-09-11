@@ -358,7 +358,7 @@ func TestRunOnce_SkipsRowsNotYetDue(t *testing.T) {
 	if csm.calls != 0 {
 		t.Errorf("CreateIncident called %d times, want 0 — row is not yet due per backoff", csm.calls)
 	}
-	if len(s.delivered) != 0 && len(s.attemptFailed) != 0 {
+	if len(s.delivered) != 0 || len(s.attemptFailed) != 0 {
 		t.Error("no store transition should occur for a row that isn't due")
 	}
 }

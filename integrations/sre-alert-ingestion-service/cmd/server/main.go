@@ -102,7 +102,11 @@ func main() {
 	// server's own lifecycle, stopped by the same shutdown signal.
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
-	go w.Run(workerCtx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		w.Run(workerCtx)
+	}()
 
 	slog.Info("SRE Alert Ingestion Service started", "addr", addr)
 
@@ -137,6 +141,18 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
+	}
+
+	// Wait for the worker to actually stop before closing dbStore (deferred
+	// above) and exiting. Without this, an in-flight w.attempt can still be
+	// mid-CreateIncident when the process exits: CSM creates the incident,
+	// MarkDelivered never runs, the row stays pending with RetryCount == 0,
+	// and the next start's retry skips the pre-retry dedup search (which
+	// only runs when RetryCount > 0) and creates a duplicate incident.
+	select {
+	case <-workerDone:
+	case <-time.After(15 * time.Second):
+		slog.Warn("worker did not stop within the shutdown timeout")
 	}
 	slog.Info("SRE Alert Ingestion Service stopped")
 }
