@@ -201,3 +201,16 @@ func (m *mockEntityAlertIncidentMappingClient) LookupAlertIncidentMappings(ctx c
 	}
 	return []byte(`{}`), nil
 }
+
+// ----- mock entity vulnerability client -----
+
+type mockEntityVulnerabilityClient struct {
+	syncProductVulnerabilitiesFn func(ctx context.Context, body []byte) ([]byte, error)
+}
+
+func (m *mockEntityVulnerabilityClient) SyncProductVulnerabilities(ctx context.Context, body []byte) ([]byte, error) {
+	if m.syncProductVulnerabilitiesFn != nil {
+		return m.syncProductVulnerabilitiesFn(ctx, body)
+	}
+	return []byte(`{}`), nil
+}

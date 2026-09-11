@@ -80,10 +80,12 @@ func BuildEntityCreateCaseAttachmentRequest(caseID string, req CreateCaseAttachm
 
 // AttachmentCreateResponse is the portal's response for POST /attachments.
 type AttachmentCreateResponse struct {
-	ID          string    `json:"id"`
-	SizeBytes   int       `json:"sizeBytes"`
-	CreatedOn   time.Time `json:"createdOn"`
-	DownloadURL string    `json:"downloadUrl"`
+	ID        string    `json:"id"`
+	SizeBytes int       `json:"sizeBytes"`
+	CreatedOn time.Time `json:"createdOn"`
+	// DownloadURL is nil for a CSM-native (Postgres) data source attachment.
+	// Always non-nil for ServiceNow-sourced attachments.
+	DownloadURL *string `json:"downloadUrl"`
 }
 
 // MapAttachmentCreate builds the portal response from entity-service's CreateAttachmentResponse.
@@ -225,7 +227,9 @@ type AttachmentDetails struct {
 	CreatedOn   time.Time `json:"createdOn"`
 	DownloadURL *string   `json:"downloadUrl"`
 	PreviewURL  *string   `json:"previewUrl"`
-	Content     string    `json:"content"`
+	// Content is nil for a CSM-native (Postgres) data source attachment.
+	// Always non-nil for ServiceNow-sourced attachments.
+	Content *string `json:"content"`
 }
 
 // MapAttachmentDetails builds the portal response from entity-service's AttachmentDetails.

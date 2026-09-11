@@ -97,12 +97,12 @@ func NewServiceNowAccountService(client *integrationservice.Client) SNAccountSer
 	return &snAccountService{client: client}
 }
 
-func (s *snAccountService) SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchSNAccountsResponse, error) {
+func (s *snAccountService) SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchAccountsResponse, error) {
 	if err := normalizePagination(&req.Pagination); err != nil {
-		return domain.SearchSNAccountsResponse{}, err
+		return domain.SearchAccountsResponse{}, err
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
-		return domain.SearchSNAccountsResponse{}, err
+		return domain.SearchAccountsResponse{}, err
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
@@ -119,20 +119,20 @@ func (s *snAccountService) SearchAccounts(ctx context.Context, req domain.Search
 
 	raw, err := s.client.Post(ctx, "/accounts/search", token, payload)
 	if err != nil {
-		return domain.SearchSNAccountsResponse{}, err
+		return domain.SearchAccountsResponse{}, err
 	}
 
 	var snResp snAccountsResponse
 	if err := json.Unmarshal(raw, &snResp); err != nil {
-		return domain.SearchSNAccountsResponse{}, fmt.Errorf("sn accounts: parse response: %w", err)
+		return domain.SearchAccountsResponse{}, fmt.Errorf("sn accounts: parse response: %w", err)
 	}
 
-	accounts := make([]domain.SNAccountView, 0, len(snResp.Accounts))
+	accounts := make([]domain.AccountView, 0, len(snResp.Accounts))
 	for _, a := range snResp.Accounts {
 		accounts = append(accounts, snAccountToDomain(a))
 	}
 
-	return domain.SearchSNAccountsResponse{
+	return domain.SearchAccountsResponse{
 		Accounts: accounts,
 		Total:    snResp.TotalRecords,
 		Limit:    req.Pagination.Limit,
@@ -141,21 +141,21 @@ func (s *snAccountService) SearchAccounts(ctx context.Context, req domain.Search
 	}, nil
 }
 
-func (s *snAccountService) GetAccountByID(ctx context.Context, id string) (domain.SNAccountDetail, error) {
+func (s *snAccountService) GetAccountByID(ctx context.Context, id string) (domain.AccountDetail, error) {
 	if err := validateUUIDs("id", []string{id}); err != nil {
-		return domain.SNAccountDetail{}, err
+		return domain.AccountDetail{}, err
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	raw, err := s.client.Get(ctx, "/accounts/"+uuidToSysid(id), token)
 	if err != nil {
-		return domain.SNAccountDetail{}, err
+		return domain.AccountDetail{}, err
 	}
 
 	var a snAccount
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return domain.SNAccountDetail{}, fmt.Errorf("sn accounts: parse account response: %w", err)
+		return domain.AccountDetail{}, fmt.Errorf("sn accounts: parse account response: %w", err)
 	}
 
 	return snAccountToDetail(a), nil
@@ -194,7 +194,7 @@ func snAccountCommonFields(a snAccount) (deactivationDate *string, technicalOwne
 	return
 }
 
-func snAccountToDomain(a snAccount) domain.SNAccountView {
+func snAccountToDomain(a snAccount) domain.AccountView {
 	deactivationDate, technicalOwner, accountManager, renewalAccountManager, creTeam, sreTeam := snAccountCommonFields(a)
 
 	var supportTier *string
@@ -202,7 +202,7 @@ func snAccountToDomain(a snAccount) domain.SNAccountView {
 		supportTier = &a.SupportTier.Label
 	}
 
-	return domain.SNAccountView{
+	return domain.AccountView{
 		ID:                    sysidToUUID(a.ID),
 		Name:                  a.Name,
 		Classification:        a.Classification,
@@ -216,7 +216,7 @@ func snAccountToDomain(a snAccount) domain.SNAccountView {
 		RenewalAccountManager: renewalAccountManager,
 		CreTeam:               creTeam,
 		SreTeam:               sreTeam,
-		ActivationDate:        a.ActivationDate,
+		ActivationDate:        nilIfEmpty(&a.ActivationDate),
 		DeactivationDate:      deactivationDate,
 		HasAgent:              a.HasAgent,
 		HasKbReferences:       a.HasKbReferences,
@@ -226,7 +226,7 @@ func snAccountToDomain(a snAccount) domain.SNAccountView {
 	}
 }
 
-func snAccountToDetail(a snAccount) domain.SNAccountDetail {
+func snAccountToDetail(a snAccount) domain.AccountDetail {
 	deactivationDate, technicalOwner, accountManager, renewalAccountManager, creTeam, sreTeam := snAccountCommonFields(a)
 
 	var supportTier *domain.SNSupportTierRef
@@ -237,7 +237,7 @@ func snAccountToDetail(a snAccount) domain.SNAccountDetail {
 		}
 	}
 
-	return domain.SNAccountDetail{
+	return domain.AccountDetail{
 		ID:                    sysidToUUID(a.ID),
 		Name:                  a.Name,
 		Classification:        a.Classification,
@@ -251,7 +251,7 @@ func snAccountToDetail(a snAccount) domain.SNAccountDetail {
 		RenewalAccountManager: renewalAccountManager,
 		CreTeam:               creTeam,
 		SreTeam:               sreTeam,
-		ActivationDate:        a.ActivationDate,
+		ActivationDate:        nilIfEmpty(&a.ActivationDate),
 		DeactivationDate:      deactivationDate,
 		HasAgent:              a.HasAgent,
 		HasKbReferences:       a.HasKbReferences,

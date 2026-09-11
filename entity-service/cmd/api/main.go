@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/config"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/db"
@@ -42,11 +43,22 @@ func main() {
 		log.Fatalf("invalid configuration: %v", err)
 	}
 
-	pool, err := db.NewPoolFromConfig(cfg)
-	if err != nil {
-		log.Fatalf("connect to database: %v", err)
+	// A database is mandatory for DATA_SOURCE=postgres and optional for
+	// servicenow, where entity traffic goes to the SN integration service
+	// instead. With no database configured the two Postgres-only feature sets
+	// (event_publish_failures, sla_clocks) are left unregistered rather than
+	// failing startup — see config.Config.HasDatabase and server.NewRouter.
+	var pool *pgxpool.Pool
+	if cfg.HasDatabase() {
+		var err error
+		pool, err = db.NewPoolFromConfig(cfg)
+		if err != nil {
+			log.Fatalf("connect to database: %v", err)
+		}
+		defer pool.Close()
+	} else {
+		log.Printf("no database configured (DATA_SOURCE=%s): event-publish-failures and sla-clocks endpoints are disabled", cfg.DataSource)
 	}
-	defer pool.Close()
 
 	addr := ":" + cfg.ServerPort
 	srv, eventPublisher := server.New(addr, pool, cfg)

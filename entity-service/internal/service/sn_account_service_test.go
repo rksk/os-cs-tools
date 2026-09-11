@@ -43,7 +43,7 @@ func snAccountJSON(id, sfID string) string {
 
 // TestSNAccountService_GetAccountByID_SfIDRoundTrips verifies that the SF ID
 // ServiceNow's AccountUtils now emits (u_account_id, surfaced as sfId) survives
-// the SN JSON -> domain.SNAccountDetail conversion in GetAccountByID.
+// the SN JSON -> domain.AccountDetail conversion in GetAccountByID.
 func TestSNAccountService_GetAccountByID_SfIDRoundTrips(t *testing.T) {
 	const wantSfID = "001E2000014mQ2hIAE"
 

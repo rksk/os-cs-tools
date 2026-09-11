@@ -78,6 +78,14 @@ type Config struct {
 	FolderPath string
 	// DIRPath is the base system path for user home directories.
 	DIRPath string
+	// AttachmentsPath is the base system path of the shared in-app-attachment
+	// tree (e.g. "/srv/sftpgo/attachments"), mounted as a "/attachments"
+	// virtual folder on every identity ExternalAuthHook mints, so its
+	// VirtualPath lines up with apps/csm-portal/backend's
+	// buildStorageKey convention ("/attachments/project-<id>/cases/<id>/<id>").
+	// Optional: when unset, ExternalAuthHook keeps its previous
+	// isolated-home/list-only behavior and mints no virtual folder.
+	AttachmentsPath string
 	// CheckRole is the name of the role required for a user to be authorized.
 	CheckRole string
 
@@ -221,6 +229,7 @@ func Load() (*Config, error) {
 		FolderPath:           os.Getenv("FOLDER_PATH"),
 		CheckRole:            os.Getenv("CHECK_ROLE"),
 		DIRPath:              os.Getenv("DIR_PATH"),
+		AttachmentsPath:      os.Getenv("ATTACHMENTS_DIR_PATH"),
 		SCIMScope:            os.Getenv("SCIM_SCOPE"),
 		InternalUserSuffix:   getEnvStr("INTERNAL_USER_SUFFIX", "@wso2.com"),
 		LogLevel:             os.Getenv("LOG_LEVEL"),
@@ -325,6 +334,7 @@ func validateEnvVars(cfg *Config) error {
 		{"ADMIN_KEY", &cfg.AdminKey, true, true},
 		{"FOLDER_PATH", &cfg.FolderPath, false, true},
 		{"DIR_PATH", &cfg.DIRPath, false, true},
+		{"ATTACHMENTS_DIR_PATH", &cfg.AttachmentsPath, false, false},
 		{"CHECK_ROLE", &cfg.CheckRole, false, true},
 
 		// External APIs

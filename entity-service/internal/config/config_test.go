@@ -140,3 +140,93 @@ func TestConfig_Validate_ServiceNowRequiresIntegrationServiceFields(t *testing.T
 		})
 	}
 }
+
+// baseValidServiceNowConfig returns a minimally valid servicenow-backed
+// Config with NO database configured — the DB-less deployment shape this
+// service must keep supporting.
+func baseValidServiceNowConfig() Config {
+	return Config{
+		DataSource:                               DataSourceServiceNow,
+		ServiceNowIntegrationServiceBaseURL:      "https://example.com",
+		ServiceNowIntegrationServiceTokenURL:     "https://example.com/token",
+		ServiceNowIntegrationServiceClientID:     "client-id",
+		ServiceNowIntegrationServiceClientSecret: "client-secret",
+	}
+}
+
+// TestConfig_Validate_ServiceNowDatabaseIsOptional is the regression guard for
+// the crash-loop this branch exists to prevent: requiring DB_USER/DB_PASSWORD/
+// DB_NAME in every mode would fail startup for existing DB-less
+// DATA_SOURCE=servicenow deployments, which serve every entity endpoint from
+// the SN integration service and never touch Postgres.
+func TestConfig_Validate_ServiceNowDatabaseIsOptional(t *testing.T) {
+	c := baseValidServiceNowConfig()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil for servicenow with no database configured", err)
+	}
+	if c.HasDatabase() {
+		t.Error("HasDatabase() = true, want false when no DB variables are set")
+	}
+}
+
+// TestConfig_Validate_ServiceNowAcceptsAFullDatabase covers the other valid
+// servicenow shape — a database IS configured, so event_publish_failures and
+// sla_clocks stay available.
+func TestConfig_Validate_ServiceNowAcceptsAFullDatabase(t *testing.T) {
+	c := baseValidServiceNowConfig()
+	c.DBUser, c.DBPassword, c.DBName = "user", "password", "db"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil for servicenow with a full database config", err)
+	}
+	if !c.HasDatabase() {
+		t.Error("HasDatabase() = false, want true when all three DB variables are set")
+	}
+}
+
+// TestConfig_Validate_DatabaseAllOrNothing verifies a partial DB set is
+// rejected in BOTH modes. Without this, a typo in one variable would silently
+// disable the Postgres-only endpoints on a servicenow deployment rather than
+// failing loudly — the same reasoning as the Event Hub group.
+func TestConfig_Validate_DatabaseAllOrNothing(t *testing.T) {
+	tests := []struct {
+		name     string
+		user     string
+		password string
+		dbName   string
+		wantErr  bool
+	}{
+		{name: "none set", wantErr: false},
+		{name: "all three set", user: "u", password: "p", dbName: "d", wantErr: false},
+		{name: "only user", user: "u", wantErr: true},
+		{name: "only password", password: "p", wantErr: true},
+		{name: "only name", dbName: "d", wantErr: true},
+		{name: "user and password, missing name", user: "u", password: "p", wantErr: true},
+		{name: "user and name, missing password", user: "u", dbName: "d", wantErr: true},
+		{name: "password and name, missing user", password: "p", dbName: "d", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := baseValidServiceNowConfig()
+			c.DBUser, c.DBPassword, c.DBName = tt.user, tt.password, tt.dbName
+
+			err := c.Validate()
+			if tt.wantErr && err == nil {
+				t.Error("Validate() = nil, want an error for a partial database configuration")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestConfig_Validate_PostgresStillRequiresDatabase guards the other side:
+// making the DB optional for servicenow must not make it optional for
+// postgres, where every entity read and write depends on the pool.
+func TestConfig_Validate_PostgresStillRequiresDatabase(t *testing.T) {
+	c := Config{DataSource: DataSourcePostgres}
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil, want an error for postgres with no database configured")
+	}
+}

@@ -95,11 +95,43 @@ func (h *Handler) ExternalAuthHook(w http.ResponseWriter, r *http.Request) {
 	// keeps email as the identity key. Switching to userid is a separate,
 	// not-yet-decided item.
 	home := filepath.Join(h.cfg.DIRPath, sanitizeUsername(userInfo.Email))
+	perms := map[string][]string{"/": {PermissionList}}
+	var vfs []models.UserVirtualFolder
+
+	// Without this, every identity minted here got only list-only
+	// permission on an isolated per-user home_dir, with no mapping onto
+	// the shared attachments tree at all. That makes
+	// apps/csm-portal/backend's CreateShare (write-scoped upload shares,
+	// read-scoped download shares) fail for every caller, since the
+	// storage keys it mints ("/attachments/project-<id>/cases/<id>/<id>",
+	// see internal/handler/attachment_storage.go buildStorageKey) never
+	// resolved to anything inside this per-user home. Mounting the shared
+	// tree as a "/attachments" virtual folder makes that path convention
+	// resolve correctly for any authenticated caller. ATTACHMENTS_DIR_PATH
+	// is optional and unset by default, so a deployment that hasn't wired
+	// it yet keeps the prior (broken-for-this-feature, but unchanged)
+	// behavior rather than a new failure mode.
+	//
+	// The permission set granted here is attachmentShareMountPermissions,
+	// not generalFileMgtPermissions — see that var's doc comment for why it
+	// is scoped down to only the verbs the attachment-share flow actually
+	// exercises (no delete/rename), and for the residual risk that still
+	// isn't closeable from this hook alone.
+	if h.cfg.AttachmentsPath != "" {
+		perms["/attachments"] = attachmentShareMountPermissions
+		vfs = append(vfs, models.UserVirtualFolder{
+			Name:        "attachments",
+			VirtualPath: "/attachments",
+			MappedPath:  h.cfg.AttachmentsPath,
+		})
+	}
+
 	res := models.MinimalSFTPGoUser{
-		Username:    userInfo.Email,
-		HomeDir:     home,
-		Permissions: map[string][]string{"/": {PermissionList}},
-		Status:      1,
+		Username:       userInfo.Email,
+		HomeDir:        home,
+		Permissions:    perms,
+		Status:         1,
+		VirtualFolders: vfs,
 	}
 
 	h.auditLog(r, userInfo.Email, "external-auth-hook", "success",

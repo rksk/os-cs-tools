@@ -25,11 +25,13 @@ import {
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import type {
+  BeAttachmentConfirmResponse,
   BeAttachmentCreatePayload,
   BeAttachmentCreateResponse,
   BeAttachmentSearchPayload,
   BeAttachmentSearchResponse,
   BeAttachmentShareResponse,
+  BeAttachmentUploadTokenRequest,
   BeAttachmentUploadTokenResponse,
   BeDeleteAttachmentResponse,
   BeReferenceType,
@@ -37,7 +39,10 @@ import type {
 import { uiAttachmentFromBe } from "@api/backend/mappers";
 import { saveBlob } from "@utils/saveBlob";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
-import { isSafeAttachmentContentType } from "@features/csm-cases/utils/attachmentPreview";
+import {
+  isSafeAttachmentContentType,
+  type AttachmentPreviewSource,
+} from "@features/csm-cases/utils/attachmentPreview";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { uploadFileViaTus } from "@features/csm-cases/api/attachmentStorageTus";
 
@@ -134,15 +139,24 @@ export type PostCsmCaseAttachmentResult = UseMutationResult<
  * Upload a file attachment to a reference entity.
  *
  * Two mutually exclusive paths, gated on the signed-in user's
- * `sftpgoAttachmentStorageEnabled` flag (`GET /users/me`):
- *  - Off (default, unchanged): the file is sent as a base64 data URI in a
- *    single `POST /attachments`.
- *  - On: the file's bytes go straight from the browser to SFTPGo (mirroring
- *    `uploadProgress`), then `POST /attachments` is called with `storageKey`
- *    + `sizeBytes` instead of `file` — see `BeAttachmentCreatePayload`.
+ * `sftpgoAttachmentStorageEnabled` flag (`GET /users/me`) AND on
+ * `referenceType`:
+ *  - Off, or `referenceType` is `"change_request"`/`"incident"`: the file is
+ *    sent as a base64 data URI in a single `POST /attachments`. Direct-upload
+ *    storage only supports `"case"` today — the BE authorizes but then
+ *    rejects change-request/incident mint requests with a deterministic 422,
+ *    so those two reference types always take this path regardless of the
+ *    flag.
+ *  - On, and `referenceType` is `"case"` (or absent): `POST
+ *    /cases/{id}/attachments/upload-token` registers the attachment's
+ *    metadata (in "pending" status) and mints a write-scoped SFTPGo share;
+ *    the file's bytes then go straight from the browser to SFTPGo via that
+ *    share (mirroring `uploadProgress`); finally `POST
+ *    /cases/{id}/attachments/{attachmentId}/confirm` transitions the row to
+ *    "complete".
  *
- * The create response is a thin ack either way, so the list is refetched on
- * success to hydrate the new entry from search.
+ * The confirm/create response is a thin ack either way, so the list is
+ * refetched on success to hydrate the new entry from search.
  */
 export function usePostCsmCaseAttachment(): PostCsmCaseAttachmentResult {
   const api = useBackendApi();
@@ -169,39 +183,43 @@ export function usePostCsmCaseAttachment(): PostCsmCaseAttachmentResult {
       const name = input.name?.trim() || input.file.name;
       const type = input.file.type || "application/octet-stream";
 
-      if (sftpgoEnabled) {
+      // Direct-upload storage only supports "case" today; change-request and
+      // incident uploads always fall through to the legacy base64 path below,
+      // regardless of the flag.
+      if (sftpgoEnabled && referenceType === "case") {
         setUploadProgress(0);
         try {
+          const tokenRequest: BeAttachmentUploadTokenRequest = {
+            filename: name,
+            mimeType: type,
+            sizeBytes: input.file.size,
+            description: input.description?.trim() || null,
+            referenceType,
+          };
           const tokenResponse = await api.post<
-            Record<string, never>,
+            BeAttachmentUploadTokenRequest,
             BeAttachmentUploadTokenResponse
-          >(`/cases/${encodeURIComponent(input.caseId)}/attachments/upload-token`, {});
+          >(
+            `/cases/${encodeURIComponent(input.caseId)}/attachments/upload-token`,
+            tokenRequest,
+          );
 
           await uploadFileViaTus({
             sftpgoBaseUrl: tokenResponse.sftpgoBaseUrl,
-            sftpgoAccessToken: tokenResponse.sftpgoAccessToken,
+            shareId: tokenResponse.shareId,
             storageKey: tokenResponse.storageKey,
             file: input.file,
             onProgress: setUploadProgress,
           });
 
-          const payload: BeAttachmentCreatePayload = {
-            referenceId: input.caseId,
-            referenceType,
-            name,
-            type,
-            storageKey: tokenResponse.storageKey,
-            sizeBytes: input.file.size,
-            description: input.description?.trim() || null,
-          };
-          await api.post<BeAttachmentCreatePayload, BeAttachmentCreateResponse>(
-            "/attachments",
-            payload,
+          await api.post<Record<string, never>, BeAttachmentConfirmResponse>(
+            `/cases/${encodeURIComponent(input.caseId)}/attachments/${encodeURIComponent(tokenResponse.id)}/confirm`,
+            {},
           );
         } finally {
           setUploadProgress(null);
         }
-        // The create response is a thin ack; refetch hydrates the full entry.
+        // The confirm response is a thin ack; refetch hydrates the full entry.
         return null;
       }
 
@@ -327,6 +345,46 @@ export function useDownloadCsmCaseAttachment(): (
       }
       const blob = await getContent(attachment);
       saveBlob(blob, attachment.filename);
+    },
+    [api, getContent, sftpgoEnabled],
+  );
+}
+
+/**
+ * Returns a function that resolves a previewable {@link AttachmentPreviewSource}
+ * for {@link AttachmentPreviewDialog}, mirroring the same
+ * `sftpgoAttachmentStorageEnabled` branching {@link useDownloadCsmCaseAttachment}
+ * already uses instead of always going through the authenticated content
+ * endpoint (which the entity-service deliberately 503s for SFTPGo-backed
+ * attachments — bytes for that data source are only reachable via a share
+ * URL, never the raw content endpoint).
+ *
+ * When the flag is on, a read-scoped share (`POST /attachments/{id}/share`)
+ * is minted and its `shareUrl` is returned as-is (`revoke: false`) — it is
+ * already a directly usable public URL, so there is no reason to also fetch
+ * it as a `Blob` just to re-wrap it in an object URL. Otherwise, falls back
+ * to {@link useGetCsmCaseAttachmentContent} and wraps the resulting `Blob` in
+ * an object URL (`revoke: true`); the caller is responsible for revoking it.
+ */
+export function useGetCsmCaseAttachmentPreviewSource(): (
+  attachment: CaseAttachment,
+) => Promise<AttachmentPreviewSource> {
+  const api = useBackendApi();
+  const getContent = useGetCsmCaseAttachmentContent();
+  const { user } = useCurrentUser();
+  const sftpgoEnabled = !!user?.sftpgoAttachmentStorageEnabled;
+
+  return useCallback(
+    async (attachment: CaseAttachment): Promise<AttachmentPreviewSource> => {
+      if (sftpgoEnabled) {
+        const { shareUrl } = await api.post<
+          Record<string, never>,
+          BeAttachmentShareResponse
+        >(`/attachments/${encodeURIComponent(attachment.id)}/share`, {});
+        return { url: shareUrl, revoke: false };
+      }
+      const blob = await getContent(attachment);
+      return { url: URL.createObjectURL(blob), revoke: true };
     },
     [api, getContent, sftpgoEnabled],
   );

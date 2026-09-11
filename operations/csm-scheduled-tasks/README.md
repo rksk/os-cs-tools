@@ -28,13 +28,16 @@ csm-scheduled-tasks/
 ├── cmd/server/main.go       # Entry point — builds the registry, runs one Engine.Tick, exits
 ├── internal/
 │   ├── schedule/period.go   # PeriodKey(cronExpr, now) — the "most recent scheduled firing" concept
-│   ├── registry/registry.go # Task{Name, Schedule, Handler, RetryBackoff}
+│   ├── registry/registry.go # Task{Name, Schedule, Handler, RetryBackoff, To, Cc}
 │   ├── engine/engine.go     # Tick: claim → run → report back, once per task per invocation
-│   ├── ledger/client.go     # entity-service client (Attempt/Complete/Fail/DeleteResolvedBefore) — this component's only durable state
-│   ├── notify/              # Alert email sending — same internal email service csm-notification-service uses; templates/alert.html is the only template today (see CLAUDE.md, "Future: per-task report emails")
-│   ├── httpsec/httpsec.go   # Shared HTTPS/redirect guards for ledger and notify's OAuth2 clients
-│   ├── housekeeping/        # The first real sub-cron — deletes old resolved scheduled_task_run rows (see CLAUDE.md, "Housekeeping")
-│   └── apierror/errors.go   # Typed upstream-error wrapper, shared by ledger and notify
+│   ├── ledger/client.go     # entity-service client for this component's own durable state (Attempt/Complete/Fail/DeleteResolvedBefore)
+│   ├── entitycases/client.go # Separate, read-only entity-service client for case search — used by report-style sub-crons (see CLAUDE.md, "Per-task report emails")
+│   ├── notify/              # Email sending — same internal email service csm-notification-service uses; alert.html (failure alerts) plus one template per report-style sub-cron (see CLAUDE.md, "Per-task report emails")
+│   ├── httpsec/httpsec.go   # Shared HTTPS/redirect guards for ledger, entitycases, and notify's OAuth2 clients
+│   ├── housekeeping/        # Sub-cron: deletes old resolved scheduled_task_run rows (see CLAUDE.md, "Housekeeping")
+│   ├── stalecases/          # Sub-cron: reports cases open too long (see CLAUDE.md, "Stale cases report")
+│   ├── opencases/           # Sub-cron: reports cases still in Open state (see CLAUDE.md, "Open cases report")
+│   └── apierror/errors.go   # Typed upstream-error wrapper, shared by ledger, entitycases, and notify
 ```
 
 No `.choreo/component.yaml` here — this component is created as a Choreo "Scheduled Task" (not
@@ -50,8 +53,10 @@ go run ./cmd/server
 ```
 
 Each run is one tick against whichever entity-service `.env` points at, then the process exits.
-`housekeeping_cleanup` (see `CLAUDE.md`, "Housekeeping") is the one sub-cron registered today; see
-`CLAUDE.md` ("Adding a sub-cron") for how to register another.
+Three sub-crons are registered today: `housekeeping_cleanup` (see `CLAUDE.md`, "Housekeeping"),
+`stale_cases_report` (see `CLAUDE.md`, "Stale cases report"), and `open_cases_report` (see
+`CLAUDE.md`, "Open cases report"); see `CLAUDE.md` ("Adding a sub-cron") for how to register
+another.
 
 ## Environment variables
 

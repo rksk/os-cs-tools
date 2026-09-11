@@ -184,13 +184,13 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GroupCasesBy handles POST /cases/group-by.
-func (h *CaseHandler) GroupCasesBy(w http.ResponseWriter, r *http.Request) {
-	var req domain.GroupCasesByRequest
+// AggregateCases handles POST /cases/aggregate.
+func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
+	var req domain.AggregateCasesRequest
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	resp, err := h.svc.GroupCasesBy(r.Context(), req)
+	resp, err := h.svc.AggregateCases(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return
@@ -212,6 +212,17 @@ func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ConfirmCaseAttachment handles POST /attachments/{id}/confirm.
+func (h *CaseHandler) ConfirmCaseAttachment(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.svc.ConfirmCaseAttachment(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -279,7 +290,7 @@ func (h *CaseHandler) UpdateAttachment(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	req.ID = r.PathValue("id")
+	req.AttachmentID = r.PathValue("id")
 	resp, err := h.svc.UpdateAttachment(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,15 +30,40 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// AccountRepository defines the persistence operations for the accounts table.
+// AccountRow is the raw shape of one row read from the account table, together
+// with the joined technical-owner/account-manager person refs. It is mapped to
+// domain.AccountView / domain.AccountDetail by the service layer.
+type AccountRow struct {
+	ID                  string
+	Name                string
+	Classification      *string
+	Pod                 *string
+	SfID                *string
+	Region              *string
+	ActivationDate      *time.Time
+	DeactivationDate    *time.Time
+	TechnicalOwnerID    *string
+	TechnicalOwnerName  *string
+	TechnicalOwnerEmail *string
+	AccountManagerID    *string
+	AccountManagerName  *string
+	AccountManagerEmail *string
+	HasAgent            *bool
+	HasKbReferences     *bool
+	CreatedOn           time.Time
+	CreatedBy           string
+	UpdatedOn           time.Time
+}
+
+// AccountRepository defines the persistence operations for the account table.
 type AccountRepository interface {
 	// SearchAccounts returns a filtered, paginated slice of accounts together
 	// with the total count of matching rows before pagination.
 	// COUNT and SELECT are executed concurrently on separate pool connections.
-	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) ([]domain.Account, int, error)
+	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) ([]AccountRow, int, error)
 	// GetAccountByID returns the account with the given UUID, or a NotFoundError
 	// if no such account exists.
-	GetAccountByID(ctx context.Context, id string) (domain.Account, error)
+	GetAccountByID(ctx context.Context, id string) (AccountRow, error)
 }
 
 type accountRepo struct {
@@ -49,8 +75,34 @@ func NewAccountRepository(db *pgxpool.Pool) AccountRepository {
 	return &accountRepo{db: db}
 }
 
+const accountSelectColumns = `
+	a.id, a.name, a.classification, a.global_pod, a.sf_id, a.region,
+	a.activation_date, a.deactivation_date,
+	tow.id, COALESCE(tow.name, NULLIF(TRIM(CONCAT_WS(' ', tow.first_name, tow.last_name)), '')), tow.email,
+	mgr.id, COALESCE(mgr.name, NULLIF(TRIM(CONCAT_WS(' ', mgr.first_name, mgr.last_name)), '')), mgr.email,
+	a.ai_gen_response_enabled, a.smart_knowledge_base_suggestions_enabled,
+	a.created_on, a.created_by, a.updated_on`
+
+const accountFromJoins = `
+	FROM account a
+	LEFT JOIN "user" tow ON tow.id = a.technical_owner_id
+	LEFT JOIN "user" mgr ON mgr.id = a.account_manager_id`
+
+func scanAccountRow(row interface{ Scan(...any) error }) (AccountRow, error) {
+	var a AccountRow
+	err := row.Scan(
+		&a.ID, &a.Name, &a.Classification, &a.Pod, &a.SfID, &a.Region,
+		&a.ActivationDate, &a.DeactivationDate,
+		&a.TechnicalOwnerID, &a.TechnicalOwnerName, &a.TechnicalOwnerEmail,
+		&a.AccountManagerID, &a.AccountManagerName, &a.AccountManagerEmail,
+		&a.HasAgent, &a.HasKbReferences,
+		&a.CreatedOn, &a.CreatedBy, &a.UpdatedOn,
+	)
+	return a, err
+}
+
 // SearchAccounts implements AccountRepository.
-func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) ([]domain.Account, int, error) {
+func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) ([]AccountRow, int, error) {
 	filterArgs := []any{}
 	argIdx := 1
 
@@ -59,27 +111,39 @@ func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccou
 	if req.Filters.SearchQuery != "" {
 		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(req.Filters.SearchQuery)
 		pattern := "%" + escaped + "%"
-		where += fmt.Sprintf(" AND (name ILIKE $%d ESCAPE '\\' OR sf_id ILIKE $%d ESCAPE '\\')", argIdx, argIdx)
+		where += fmt.Sprintf(" AND (a.name ILIKE $%d ESCAPE '\\' OR a.sf_id ILIKE $%d ESCAPE '\\')", argIdx, argIdx)
 		filterArgs = append(filterArgs, pattern)
 		argIdx++
 	}
+	if req.Filters.Pod != "" {
+		where += fmt.Sprintf(" AND a.global_pod = $%d", argIdx)
+		filterArgs = append(filterArgs, req.Filters.Pod)
+		argIdx++
+	}
+	if req.Filters.Classification != "" {
+		where += fmt.Sprintf(" AND a.classification = $%d", argIdx)
+		filterArgs = append(filterArgs, req.Filters.Classification)
+		argIdx++
+	}
+	if req.Filters.Active != nil {
+		if *req.Filters.Active {
+			where += " AND a.deactivation_date IS NULL"
+		} else {
+			where += " AND a.deactivation_date IS NOT NULL"
+		}
+	}
 
-	countQuery := "SELECT COUNT(*) FROM accounts " + where
+	countQuery := "SELECT COUNT(*) " + accountFromJoins + " " + where
 
 	dataQuery := fmt.Sprintf(
-		`SELECT id, sf_id, name, tier, region, activation_date, deactivation_date,
-		        owner_id, technical_owner_id, agent_enabled, kb_references_enabled,
-		        created_at, updated_at
-		 FROM accounts %s
-		 ORDER BY created_at DESC, id
-		 LIMIT $%d OFFSET $%d`,
-		where, argIdx, argIdx+1,
+		"SELECT %s %s %s ORDER BY a.created_on DESC, a.id LIMIT $%d OFFSET $%d",
+		accountSelectColumns, accountFromJoins, where, argIdx, argIdx+1,
 	)
 	dataArgs := append(append([]any{}, filterArgs...), req.Pagination.Limit, req.Pagination.Offset)
 
 	// Run COUNT and SELECT in parallel goroutines — each uses its own pool connection.
 	var total int
-	var accounts []domain.Account
+	var accounts []AccountRow
 
 	eg, egCtx := errgroup.WithContext(ctx)
 
@@ -97,16 +161,10 @@ func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccou
 		}
 		defer rows.Close()
 
-		result := make([]domain.Account, 0, req.Pagination.Limit)
+		result := make([]AccountRow, 0, req.Pagination.Limit)
 		for rows.Next() {
-			var a domain.Account
-			if err := rows.Scan(
-				&a.ID, &a.SfID, &a.Name, &a.Tier, &a.Region,
-				&a.ActivationDate, &a.DeactivationDate,
-				&a.OwnerID, &a.TechnicalOwnerID,
-				&a.AgentEnabled, &a.KbReferencesEnabled,
-				&a.CreatedOn, &a.UpdatedOn,
-			); err != nil {
+			a, err := scanAccountRow(rows)
+			if err != nil {
 				return fmt.Errorf("scan account: %w", err)
 			}
 			result = append(result, a)
@@ -126,25 +184,14 @@ func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccou
 }
 
 // GetAccountByID implements AccountRepository.
-func (r *accountRepo) GetAccountByID(ctx context.Context, id string) (domain.Account, error) {
-	var a domain.Account
-	err := r.db.QueryRow(ctx,
-		`SELECT id, sf_id, name, tier, region, activation_date, deactivation_date,
-		        owner_id, technical_owner_id, agent_enabled, kb_references_enabled,
-		        created_at, updated_at
-		 FROM accounts WHERE id = $1`, id,
-	).Scan(
-		&a.ID, &a.SfID, &a.Name, &a.Tier, &a.Region,
-		&a.ActivationDate, &a.DeactivationDate,
-		&a.OwnerID, &a.TechnicalOwnerID,
-		&a.AgentEnabled, &a.KbReferencesEnabled,
-		&a.CreatedOn, &a.UpdatedOn,
-	)
+func (r *accountRepo) GetAccountByID(ctx context.Context, id string) (AccountRow, error) {
+	query := "SELECT " + accountSelectColumns + " " + accountFromJoins + " WHERE a.id = $1"
+	a, err := scanAccountRow(r.db.QueryRow(ctx, query, id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Account{}, &apierror.NotFoundError{Msg: "account not found"}
+		return AccountRow{}, &apierror.NotFoundError{Msg: "account not found"}
 	}
 	if err != nil {
-		return domain.Account{}, fmt.Errorf("get account by id: %w", err)
+		return AccountRow{}, fmt.Errorf("get account by id: %w", err)
 	}
 	return a, nil
 }
