@@ -177,7 +177,33 @@ func TestPostgresStore_EnqueueAndLifecycle(t *testing.T) {
 		t.Errorf("LastError = %q, want the recorded error", batch[0].LastError)
 	}
 
-	// Delivered: row leaves the pending batch.
+	// RecordIncidentID persists the incident id WITHOUT changing status or
+	// retry_count -- the row stays pending, at RetryCount 1, exactly as the
+	// duplicate-incident fix in internal/worker relies on: a caller can
+	// durably record an incident id from a successful create even when the
+	// subsequent MarkDelivered call fails, and pick it back up next attempt.
+	if err := s.RecordIncidentID(ctx, id, "inc-durable"); err != nil {
+		t.Fatalf("RecordIncidentID() error = %v", err)
+	}
+	batch, err = s.PendingBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("PendingBatch() after RecordIncidentID error = %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("PendingBatch() after RecordIncidentID = %d rows, want 1 (still pending)", len(batch))
+	}
+	if batch[0].IncidentID != "inc-durable" {
+		t.Errorf("IncidentID = %q, want %q", batch[0].IncidentID, "inc-durable")
+	}
+	if batch[0].RetryCount != 1 {
+		t.Errorf("RetryCount = %d, want unchanged at 1 -- RecordIncidentID must not touch it", batch[0].RetryCount)
+	}
+	if batch[0].Status != store.StatusPending {
+		t.Errorf("Status = %q, want unchanged at %q", batch[0].Status, store.StatusPending)
+	}
+
+	// Delivered: row leaves the pending batch. (MarkDelivered overwrites the
+	// incident_id set above with its own value, same as any normal delivery.)
 	if err := s.MarkDelivered(ctx, id, "inc-123"); err != nil {
 		t.Fatalf("MarkDelivered() error = %v", err)
 	}

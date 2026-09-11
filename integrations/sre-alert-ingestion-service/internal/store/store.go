@@ -106,6 +106,20 @@ type Store interface {
 	// MarkDelivered transitions a row to StatusDelivered and records the
 	// CSM incident it produced.
 	MarkDelivered(ctx context.Context, id, incidentID string) error
+	// RecordIncidentID durably persists incidentID on a row WITHOUT changing
+	// its status or retry_count — unlike MarkDelivered, this does not mark
+	// the row terminal. It exists for exactly one purpose: closing the
+	// window between "CreateIncident succeeded" and "MarkDelivered
+	// recorded that success," where a MarkDelivered failure would otherwise
+	// leave a row that looks like it was never attempted (RetryCount still
+	// reflecting no created incident), risking a second CreateIncident call
+	// for the same alert on the next retry. A caller that already recorded
+	// an IncidentID this way must check for it (AlertRecord.IncidentID) on
+	// every subsequent attempt and retry MarkDelivered directly instead of
+	// calling CreateIncident again — see internal/worker.attempt's use of
+	// this method and its short-circuit at the top of that function. Safe
+	// to call more than once with the same value (idempotent).
+	RecordIncidentID(ctx context.Context, id, incidentID string) error
 	// MarkAttemptFailed records a failed, still-retryable attempt: increments
 	// RetryCount, stamps LastAttemptAt, records lastError, and leaves the row
 	// in StatusPending for a later retry.

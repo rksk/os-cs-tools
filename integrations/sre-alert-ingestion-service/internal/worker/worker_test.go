@@ -42,11 +42,20 @@ import (
 // mockStore is a hand-rolled Store double recording every call it receives.
 type mockStore struct {
 	pendingBatchFn func(ctx context.Context, limit int) ([]store.AlertRecord, error)
+	// markDeliveredErr, when non-nil, is returned by every MarkDelivered
+	// call instead of the usual nil — for exercising the "MarkDelivered
+	// fails after a successful create/short-circuit" paths.
+	markDeliveredErr error
+	// recordIncidentIDErr, when non-nil, is returned by every
+	// RecordIncidentID call — for exercising "this service's own database
+	// failed to persist the incident id" paths.
+	recordIncidentIDErr error
 
-	delivered     []struct{ id, incidentID string }
-	attemptFailed []struct{ id, lastError string }
-	escalated     []struct{ id, lastError string }
-	failed        []struct{ id, lastError string }
+	delivered        []struct{ id, incidentID string }
+	recordedIncident []struct{ id, incidentID string }
+	attemptFailed    []struct{ id, lastError string }
+	escalated        []struct{ id, lastError string }
+	failed           []struct{ id, lastError string }
 }
 
 func (m *mockStore) PendingBatch(ctx context.Context, limit int) ([]store.AlertRecord, error) {
@@ -54,7 +63,18 @@ func (m *mockStore) PendingBatch(ctx context.Context, limit int) ([]store.AlertR
 }
 
 func (m *mockStore) MarkDelivered(ctx context.Context, id, incidentID string) error {
+	if m.markDeliveredErr != nil {
+		return m.markDeliveredErr
+	}
 	m.delivered = append(m.delivered, struct{ id, incidentID string }{id, incidentID})
+	return nil
+}
+
+func (m *mockStore) RecordIncidentID(ctx context.Context, id, incidentID string) error {
+	if m.recordIncidentIDErr != nil {
+		return m.recordIncidentIDErr
+	}
+	m.recordedIncident = append(m.recordedIncident, struct{ id, incidentID string }{id, incidentID})
 	return nil
 }
 
@@ -833,5 +853,136 @@ func TestRunOnce_MappingCreateFailureAfterNewIncidentDoesNotFailDelivery(t *test
 	}
 	if len(tw.messages) != 0 {
 		t.Error("Twilio should not be called just because the best-effort mapping-create call failed")
+	}
+}
+
+// TestRunOnce_RecordsIncidentIDBeforeMarkDelivered confirms RecordIncidentID
+// is called (durably persisting the incident id) as part of a normal
+// successful create, ahead of/alongside MarkDelivered — see attempt's own
+// comment for why this ordering is what closes the duplicate-incident gap
+// on a later MarkDelivered failure.
+func TestRunOnce_RecordsIncidentIDBeforeMarkDelivered(t *testing.T) {
+	row := rowWithPayload(t, "alert-1", 0, nil)
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		return &csmclient.CreateIncidentResult{IncidentID: "inc-1", IncidentNumber: "INC0001"}, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if len(s.recordedIncident) != 1 || s.recordedIncident[0].id != "alert-1" || s.recordedIncident[0].incidentID != "inc-1" {
+		t.Errorf("recordedIncident = %+v, want one row for alert-1/inc-1", s.recordedIncident)
+	}
+	if len(s.delivered) != 1 || s.delivered[0].incidentID != "inc-1" {
+		t.Errorf("delivered = %+v, want one row for alert-1/inc-1", s.delivered)
+	}
+}
+
+// TestRunOnce_MarkDeliveredFailsAfterCreate_IncidentIDStillDurablyRecorded is
+// the actual fix for the gap CodeRabbit flagged in review: even though
+// MarkDelivered fails right after a successful CreateIncident, the incident
+// id must already be durably persisted (via RecordIncidentID, called
+// first) — so a later attempt for this row can retry MarkDelivered directly
+// without ever risking a second CreateIncident call.
+func TestRunOnce_MarkDeliveredFailsAfterCreate_IncidentIDStillDurablyRecorded(t *testing.T) {
+	row := rowWithPayload(t, "alert-1", 0, nil)
+	s := &mockStore{
+		pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+			return []store.AlertRecord{row}, nil
+		},
+		markDeliveredErr: errors.New("db: connection reset"),
+	}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		return &csmclient.CreateIncidentResult{IncidentID: "inc-1", IncidentNumber: "INC0001"}, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if len(s.recordedIncident) != 1 || s.recordedIncident[0].incidentID != "inc-1" {
+		t.Fatalf("recordedIncident = %+v, want the incident id durably recorded even though MarkDelivered failed", s.recordedIncident)
+	}
+	if len(s.delivered) != 0 {
+		t.Errorf("delivered = %+v, want none — MarkDelivered failed", s.delivered)
+	}
+	if len(s.attemptFailed) != 1 || s.attemptFailed[0].id != "alert-1" {
+		t.Errorf("attemptFailed = %+v, want one row for alert-1 (bounds the retry loop toward escalation)", s.attemptFailed)
+	}
+	if csm.calls != 1 {
+		t.Errorf("CreateIncident called %d times, want exactly 1 for this attempt", csm.calls)
+	}
+}
+
+// TestRunOnce_ShortCircuitsToMarkDeliveredWhenIncidentIDAlreadyRecorded is
+// the other half of the fix: a row that already has an IncidentID persisted
+// (from an earlier attempt whose MarkDelivered failed) must retry
+// MarkDelivered directly on the next attempt, with CreateIncident never
+// called again — no dependency on SearchIncidentByTag succeeding, unlike
+// the pre-retry dedup check.
+func TestRunOnce_ShortCircuitsToMarkDeliveredWhenIncidentIDAlreadyRecorded(t *testing.T) {
+	row := rowWithPayload(t, "alert-1", 1, nil)
+	row.IncidentID = "inc-already-created"
+	s := &mockStore{pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+		return []store.AlertRecord{row}, nil
+	}}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		t.Fatal("CreateIncident must not be called when row.IncidentID is already set")
+		return nil, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if csm.calls != 0 {
+		t.Errorf("CreateIncident called %d times, want 0", csm.calls)
+	}
+	if csm.searchCalls != 0 {
+		t.Errorf("SearchIncidentByTag called %d times, want 0 — the durable short-circuit needs no network call to confirm this", csm.searchCalls)
+	}
+	if len(s.delivered) != 1 || s.delivered[0].id != "alert-1" || s.delivered[0].incidentID != "inc-already-created" {
+		t.Errorf("delivered = %+v, want one row for alert-1/inc-already-created", s.delivered)
+	}
+	if csm.createMappingCalls != 1 || csm.createMappingReqs[0].IncidentID != "inc-already-created" {
+		t.Errorf("createMappingReqs = %+v, want one call recording inc-already-created (the original attempt never reached this step)", csm.createMappingReqs)
+	}
+}
+
+// TestRunOnce_ShortCircuitRetryFails_FallsBackToAttemptFailed confirms the
+// short-circuit path is itself bounded: if retrying MarkDelivered for an
+// already-recorded incident keeps failing (this service's own database,
+// not CSM), the row still advances toward the normal retry-budget/
+// escalation path rather than looping on it forever.
+func TestRunOnce_ShortCircuitRetryFails_FallsBackToAttemptFailed(t *testing.T) {
+	row := rowWithPayload(t, "alert-1", 1, nil)
+	row.IncidentID = "inc-already-created"
+	s := &mockStore{
+		pendingBatchFn: func(ctx context.Context, limit int) ([]store.AlertRecord, error) {
+			return []store.AlertRecord{row}, nil
+		},
+		markDeliveredErr: errors.New("db: connection reset"),
+	}
+	csm := &mockIncidentCreator{createFn: func(ctx context.Context, req csmclient.CreateIncidentRequest) (*csmclient.CreateIncidentResult, error) {
+		t.Fatal("CreateIncident must not be called when row.IncidentID is already set")
+		return nil, nil
+	}}
+	tw := &mockEscalator{}
+
+	w := New(s, csm, tw, Config{MaxRetries: 3})
+	w.RunOnce(context.Background())
+
+	if csm.calls != 0 {
+		t.Errorf("CreateIncident called %d times, want 0", csm.calls)
+	}
+	if len(s.delivered) != 0 {
+		t.Errorf("delivered = %+v, want none — MarkDelivered failed again", s.delivered)
+	}
+	if len(s.attemptFailed) != 1 || s.attemptFailed[0].id != "alert-1" {
+		t.Errorf("attemptFailed = %+v, want one row for alert-1", s.attemptFailed)
 	}
 }

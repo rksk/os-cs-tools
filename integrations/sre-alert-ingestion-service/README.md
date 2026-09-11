@@ -214,14 +214,30 @@ service guards against that in two parts:
    the search call itself failing, both **fail open toward attempting
    delivery** — the search existing at all must never become a new way to
    silently drop a buffered alert.
+3. **The incident id is durably recorded the instant `CreateIncident`
+   succeeds — before `MarkDelivered` is even attempted.**
+   `internal/store.Store.RecordIncidentID` persists `incident_id` on the row
+   without changing its status or `retry_count`, so a subsequent
+   `MarkDelivered` failure (this service's own database, not CSM) does not
+   leave the row looking as if nothing happened. On the next attempt,
+   `internal/worker.attempt`'s very first check is `row.IncidentID != ""`:
+   if it's already set, the worker retries `MarkDelivered` directly and
+   **never calls `CreateIncident` again** — no network call to CSM at all,
+   so unlike mechanism 2 above, this cannot fail open into creating a
+   duplicate. This is the actual fix for the gap mechanism 2 alone left
+   open (a `MarkDelivered` failure right after a successful create, followed
+   by a retry whose dedup search 401s and fails open) — mechanism 2 still
+   matters for the *cross-request* dedup case (a genuinely different retry
+   racing a lost response), which this mechanism doesn't cover.
 
-**Known limitation:** `POST /incidents/search`, like `POST /incidents`
-itself, is ServiceNow-backed and currently also always 401s for the same
-missing-end-user-identity reason (see "Known limitations" below). Until
-that infrastructure gap is closed, every retry today hits "search 401'd,
-proceeding to create anyway" — the dedup check is **structurally correct
-and ready to work**, but **not yet actually effective in production**. It
-does not itself resolve the identity gap.
+**Known limitation, mechanism 2 only:** `POST /incidents/search`, like
+`POST /incidents` itself, is ServiceNow-backed and currently also always
+401s for the same missing-end-user-identity reason (see "Known
+limitations" below). Until that infrastructure gap is closed, every retry
+that reaches mechanism 2 hits "search 401'd, proceeding to create anyway" —
+that check is **structurally correct and ready to work**, but **not yet
+actually effective in production**. Mechanism 3 has no such dependency —
+it works today, unconditionally.
 
 ## Known limitations
 

@@ -168,6 +168,17 @@ func (s *PostgresStore) MarkDelivered(ctx context.Context, id, incidentID string
 	return nil
 }
 
+func (s *PostgresStore) RecordIncidentID(ctx context.Context, id, incidentID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE alert_buffer SET incident_id = $2 WHERE id = $1`,
+		id, incidentID,
+	)
+	if err != nil {
+		return fmt.Errorf("store: record incident id: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) MarkAttemptFailed(ctx context.Context, id, lastError string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE alert_buffer

@@ -92,6 +92,39 @@ prevent. In today's state (search also 401s), this makes the dedup check
 401'd, proceed to create anyway" — but it is structurally correct and
 requires zero changes once the identity gap closes.
 
+## The MarkDelivered-fails-after-create gap: closed via a durably persisted incident id, not the dedup search above
+
+The dedup search above only helps a *cross-request* duplicate (a distinct
+retry racing a lost response). It does **not** help the specific case where
+`CreateIncident` succeeds and `MarkDelivered` fails on the very next line —
+that row's `RetryCount` was still 0 going in, and even after
+`MarkAttemptFailed` bumps it, the search above 401s and fails open, so a
+naive retry could still create a second incident. Relying only on
+`SearchIncidentByTag` to cover this specific failure window was flagged in
+review (CodeRabbit, cs-tools#1616) as an unresolved data-integrity gap, not
+a merely-partial mitigation — correctly.
+
+The actual fix does not depend on `SearchIncidentByTag` at all:
+`internal/store.Store.RecordIncidentID` persists `incident_id` the instant
+`CreateIncident` succeeds, *before* `MarkDelivered` is even attempted, and
+without changing the row's status or `retry_count`. `internal/worker.attempt`
+checks `row.IncidentID != ""` as its very first branch, ahead of the dedup
+search and incident-grouping check: if set, it retries `MarkDelivered`
+directly and returns — `CreateIncident` is never reachable from that path.
+Because this check reads the row this service already has in hand rather
+than calling out to CSM, it cannot fail open into creating a duplicate the
+way the search-based mechanism can. If `RecordIncidentID` itself fails
+(this service's own database, not CSM), `MarkDelivered` is still attempted
+immediately after — it would also persist `incident_id` if it succeeds
+despite `RecordIncidentID` failing moments earlier — so only two
+consecutive independent failures against this service's own dedicated
+database reopen the original gap; a single failure of either call does not.
+
+Do not remove or bypass this short-circuit to "simplify" `attempt` — it is
+the one part of this file's duplicate-prevention story that does not
+depend on the identity-gap infrastructure closing, and removing it
+regresses to relying solely on the fail-open search above.
+
 ## Persist-first is not an optimization
 
 `internal/handler.AlertHandler.CreateAlert` does the full alert→incident

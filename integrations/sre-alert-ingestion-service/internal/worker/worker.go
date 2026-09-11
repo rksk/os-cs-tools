@@ -43,6 +43,7 @@ import (
 type Store interface {
 	PendingBatch(ctx context.Context, limit int) ([]store.AlertRecord, error)
 	MarkDelivered(ctx context.Context, id, incidentID string) error
+	RecordIncidentID(ctx context.Context, id, incidentID string) error
 	MarkAttemptFailed(ctx context.Context, id, lastError string) error
 	MarkEscalated(ctx context.Context, id, lastError string) error
 	MarkFailed(ctx context.Context, id, lastError string) error
@@ -190,6 +191,42 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 	}
 	req := bp.CreateIncidentRequest
 
+	// Durable short-circuit: if a prior attempt's CreateIncident already
+	// succeeded and recorded this row's IncidentID (via RecordIncidentID,
+	// see below and that method's doc comment) but MarkDelivered failed
+	// before it could mark the row terminal, do NOT call CreateIncident
+	// again — the incident is confirmed to already exist, durably, in this
+	// service's own database, independent of CSM's or SearchIncidentByTag's
+	// availability. Just retry MarkDelivered directly. This is the actual
+	// fix for the gap the fallback-to-MarkAttemptFailed path further below
+	// only partially mitigated (that path still relied on SearchIncidentByTag,
+	// which 401s today and fails open to creating a second incident) — this
+	// check needs no network call to CSM at all, so it cannot fail open.
+	if row.IncidentID != "" {
+		if merr := w.store.MarkDelivered(ctx, row.ID, row.IncidentID); merr != nil {
+			slog.ErrorContext(attemptCtx, "worker: retrying MarkDelivered for an already-recorded incident failed; will retry again next scan", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", row.IncidentID, "err", merr)
+			// Bump RetryCount so this doesn't retry MarkDelivered forever
+			// with no bound: if this service's own database is genuinely
+			// unable to complete the update, that's a real operational
+			// problem distinct from CSM's availability, and should still
+			// eventually reach the normal retry-budget/escalation path
+			// rather than loop indefinitely.
+			if aerr := w.store.MarkAttemptFailed(ctx, row.ID, fmt.Sprintf("incident %s already recorded but retrying MarkDelivered failed: %v", row.IncidentID, merr)); aerr != nil {
+				slog.ErrorContext(attemptCtx, "worker: MarkAttemptFailed (post-MarkDelivered-retry) also failed", "id", row.ID, "err", aerr)
+			}
+			return
+		}
+		slog.InfoContext(attemptCtx, "worker: alert delivered (MarkDelivered retried for an already-recorded incident)", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", row.IncidentID)
+		// The original attempt failed before ever reaching the mapping call
+		// (it failed at MarkDelivered, one step earlier) — fire it now,
+		// same best-effort/non-blocking contract as the normal create path.
+		// incidentNumber is unavailable here (only IncidentID is persisted
+		// on the row); recordMapping/strOrNil already treat that as
+		// optional.
+		w.recordMapping(attemptCtx, row, bp, row.IncidentID, "")
+		return
+	}
+
 	// Pre-retry dedup check: only on a retry (row.RetryCount > 0), never on
 	// the first attempt — on attempt 1 nothing could possibly exist yet for
 	// this row, so searching first would just be a wasted call. From the
@@ -242,25 +279,31 @@ func (w *Worker) attempt(ctx context.Context, row store.AlertRecord) {
 
 	result, err := w.csm.CreateIncident(attemptCtx, req)
 	if err == nil {
+		// Durably record the incident id BEFORE attempting MarkDelivered,
+		// not after: this is what closes the window a bare
+		// CreateIncident-then-MarkDelivered sequence leaves open. If
+		// MarkDelivered fails below, this row's IncidentID is already
+		// persisted, so the short-circuit at the top of this function will
+		// retry MarkDelivered directly on the next attempt — never
+		// CreateIncident again — regardless of whether SearchIncidentByTag
+		// is reachable. RecordIncidentID failing here (this service's own
+		// database, not CSM) is logged but not fatal: MarkDelivered below
+		// would also persist incident_id if it succeeds despite this call
+		// failing, and the fallback path after it is unchanged for the
+		// remaining edge case where both fail.
+		if rerr := w.store.RecordIncidentID(ctx, row.ID, result.IncidentID); rerr != nil {
+			slog.ErrorContext(attemptCtx, "worker: RecordIncidentID failed after a successful create (this service's own database, not CSM) — proceeding to MarkDelivered anyway", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "err", rerr)
+		}
 		if merr := w.store.MarkDelivered(ctx, row.ID, result.IncidentID); merr != nil {
-			// The incident now exists in CSM, but this row is still
-			// 'pending' with RetryCount unchanged — left as-is, the next
-			// scan would call CreateIncident again (RetryCount == 0 skips
-			// the pre-retry dedup search above, which only runs when
-			// RetryCount > 0) and create a duplicate. Fall back to
-			// MarkAttemptFailed instead of a bare return: it bumps
-			// RetryCount, so the next attempt runs that dedup search first
-			// (which finds this incident via its Subject tag) before
-			// considering a second create. Not a complete fix — the dedup
-			// search is itself SN-backed and 401s today (see
-			// SearchIncidentByTag's doc comment), so it still fails open to
-			// creating again in practice until that infrastructure gap is
-			// closed — but it is strictly better than leaving RetryCount at
-			// 0, which guarantees skipping the dedup check entirely. A full
-			// fix needs a persisted "incident created, not yet confirmed
-			// delivered" state (or an idempotency key CSM itself enforces),
-			// tracked as follow-up, not done here.
-			slog.ErrorContext(attemptCtx, "worker: MarkDelivered failed after a successful create; falling back to MarkAttemptFailed so the next attempt's dedup search runs first", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "err", merr)
+			// Residual case only: RecordIncidentID above already persisted
+			// IncidentID in the common case (MarkDelivered failing here is
+			// a *second* independent failure against this service's own
+			// database), so the top-of-function short-circuit will retry
+			// MarkDelivered directly next scan without ever calling
+			// CreateIncident again. MarkAttemptFailed still runs so this
+			// keeps advancing toward the retry budget/escalation path
+			// rather than looping on a broken database forever.
+			slog.ErrorContext(attemptCtx, "worker: MarkDelivered failed after a successful create; IncidentID is durably recorded regardless, next attempt retries MarkDelivered directly", "id", row.ID, "alertNumber", row.AlertNumber, "incidentID", result.IncidentID, "err", merr)
 			if aerr := w.store.MarkAttemptFailed(ctx, row.ID, fmt.Sprintf("incident %s was created but MarkDelivered failed: %v", result.IncidentID, merr)); aerr != nil {
 				slog.ErrorContext(attemptCtx, "worker: MarkAttemptFailed (post-create MarkDelivered fallback) also failed", "id", row.ID, "err", aerr)
 			}
