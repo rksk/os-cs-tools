@@ -2752,3 +2752,49 @@ func TestSNCaseService_GetCaseByID_TagsFetchFailureDoesNotFailRead(t *testing.T)
 		t.Fatalf("expected the rest of the case detail to still be populated, got %+v", cv)
 	}
 }
+
+// --- AggregateCases: state groupBy key remap ---
+//
+// SN's own groupBy implementation returns the raw internal case state value
+// (e.g. "1003" for "Waiting On WSO2") as the bucket key, not this platform's
+// domain enum string. This test pins the remap through snCaseStateMap
+// (SN state label, lowercased -> domain CaseState), mirroring the equivalent
+// fix already applied to change_request/incident/problem.
+func TestSNCaseService_AggregateCases_StateGroupByRemapsKeyToDomainEnum(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/aggregate", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"groups": []map[string]any{
+				{"key": "1", "label": "Open", "count": 4},
+				{"key": "1003", "label": "Waiting On WSO2", "count": 3},
+				{"key": "9999", "label": "Unrecognized Label", "count": 1},
+			},
+			"othersCount":  0,
+			"totalRecords": 8,
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil, nil)
+
+	resp, err := svc.AggregateCases(contextWithUserIDToken("token"), domain.AggregateCasesRequest{
+		GroupBy: "state",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Groups) != 3 {
+		t.Fatalf("groups: got %d, want 3", len(resp.Groups))
+	}
+	if got, want := resp.Groups[0].Key, string(domain.CaseStateOpen); got != want {
+		t.Errorf("groups[0].Key: got %q, want %q (domain enum, not raw SN value %q)", got, want, "1")
+	}
+	if got, want := resp.Groups[1].Key, string(domain.CaseStateWaitingOnWSO2); got != want {
+		t.Errorf("groups[1].Key: got %q, want %q (domain enum, not raw SN value %q)", got, want, "1003")
+	}
+	// Unrecognized label: falls back to leaving the key as-is rather than
+	// crashing or dropping the bucket.
+	if got, want := resp.Groups[2].Key, "9999"; got != want {
+		t.Errorf("groups[2].Key: got %q, want %q (unrecognized label falls back to raw key)", got, want)
+	}
+}

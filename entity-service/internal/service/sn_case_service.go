@@ -3980,13 +3980,29 @@ func (s *snCaseService) AggregateCases(ctx context.Context, req domain.Aggregate
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.AggregateResponse{}, fmt.Errorf("sn cases: parse aggregate response: %w", err)
 	}
-	// "account" is the only ID-valued field in validCaseAggregateField; SN
+	// "account" is an ID-valued field in validCaseAggregateField; SN
 	// returns its bucket keys as raw sys_ids, so convert them to this
-	// platform's UUIDs before returning. Every other allowed field (state,
-	// severity, type) is a plain enum and is left as-is.
+	// platform's UUIDs before returning.
 	if req.GroupBy == "account" {
 		for i := range resp.Groups {
 			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
+	// "state" is a plain enum, but SN's own groupBy implementation returns
+	// its raw internal state value as the bucket key (e.g. "1003" for
+	// "Waiting On WSO2"), not this platform's domain enum string. SN's
+	// response already carries the correct human-readable label for each
+	// bucket, so remap the key through the existing label lookup
+	// (snCaseStateMap), the same map used elsewhere in this file to build
+	// Case.State from the SN state label.
+	if req.GroupBy == "state" {
+		for i := range resp.Groups {
+			if v, ok := snCaseStateMap[strings.ToLower(resp.Groups[i].Label)]; ok {
+				resp.Groups[i].Key = string(v)
+			}
+			// else: leave the key as-is, mirroring the change-request,
+			// incident, and problem equivalents' own defensive fallback
+			// for an unrecognized label.
 		}
 	}
 	return resp, nil

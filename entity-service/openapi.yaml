@@ -8739,10 +8739,10 @@ components:
           type: string
           description: >-
             The grouped field's value for this bucket. For an assignment-group
-            grouping this is a raw sys_id-derived value; for change_request,
-            incident, and problem's own "state" grouping, a recognized
-            ServiceNow value is normalized to that resource's own domain
-            state enum (the same values its own "state" search filter
+            grouping this is a raw sys_id-derived value; for case,
+            change_request, incident, and problem's own "state" grouping, a
+            recognized ServiceNow value is normalized to that resource's own
+            domain state enum (the same values its own "state" search filter
             accepts) — an unrecognized value is left as the raw ServiceNow
             value instead of being dropped. Other groupings return the raw
             grouped-field value unchanged.
