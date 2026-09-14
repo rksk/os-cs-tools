@@ -10129,6 +10129,11 @@ components:
             Calendar duration in whole seconds. Accepted only when it exactly
             matches the effective planned window (plannedStartDate to
             plannedEndDate in this same request).
+        isPlanningVisibleToCustomers:
+          type: boolean
+          description: >-
+            Whether the Implementation Plan is visible to customers on the
+            customer-facing portal.
 
     CreateChangeRequestResponse:
       type: object
@@ -10232,6 +10237,11 @@ components:
           type: boolean
         requestApproval:
           type: boolean
+        isPlanningVisibleToCustomers:
+          type: boolean
+          description: >-
+            Whether the Implementation Plan is visible to customers on the
+            customer-facing portal.
         implementationPlan:
           type: string
           nullable: true

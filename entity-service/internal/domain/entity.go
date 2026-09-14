@@ -1621,9 +1621,9 @@ type CaseFilterBranch struct {
 // where the pre-redesign per-field validation and query/payload-building
 // logic still lives, unchanged.
 type ParsedCaseFilters struct {
-	Types             []string
-	ProjectIDs        []string
-	DeploymentIDs     []string
+	Types         []string
+	ProjectIDs    []string
+	DeploymentIDs []string
 	// ExcludeProjectIDs filters to cases whose project is NOT one of these
 	// project UUIDs (optional). Inverse of ProjectIDs, and the two are
 	// independent: a request may carry either, both, or neither.
@@ -2798,6 +2798,11 @@ type CreateChangeRequestRequest struct {
 	// disagree with the planned window on a column a customer-facing calendar
 	// view reads.
 	DurationInput *int `json:"durationInput,omitempty"`
+	// IsPlanningVisibleToCustomers ("Implementation Plan visible to customers")
+	// controls whether the Implementation Plan is exposed to the customer on
+	// the customer-facing portal. Optional; when omitted, the backing data
+	// source's own default applies.
+	IsPlanningVisibleToCustomers *bool `json:"isPlanningVisibleToCustomers,omitempty"`
 }
 
 // CreateChangeRequestResponse is the output for POST /change-requests.
@@ -3117,6 +3122,13 @@ type PatchChangeRequestRequest struct {
 	IsCustomerApproved *bool                `json:"isCustomerApproved,omitempty"`
 	IsCustomerReviewed *bool                `json:"isCustomerReviewed,omitempty"`
 	RequestApproval    *bool                `json:"requestApproval,omitempty"`
+	// IsPlanningVisibleToCustomers ("Implementation Plan visible to customers")
+	// controls whether the Implementation Plan is exposed to the customer on
+	// the customer-facing portal. Like IsCustomerApproved/IsCustomerReviewed
+	// above, a plain *bool is sufficient here: nil means omitted, and a
+	// non-nil pointer -- including one pointing at false -- is forwarded
+	// as-is, so an explicit false is never confused with "not provided".
+	IsPlanningVisibleToCustomers *bool `json:"isPlanningVisibleToCustomers,omitempty"`
 
 	// The fields below are the change-request field-parity additions. Except
 	// Comment and WorkNote (journal entries, append-only, cannot be cleared),
@@ -5182,6 +5194,7 @@ type OutageMetadataResponse struct {
 	CommunicationChannels []OutageCommunicationChannelMeta `json:"communicationChannels"`
 	StatusPageClouds      []string                         `json:"statusPageClouds"`
 }
+
 // ConversationDetails is the response for GET /conversations/{id}.
 type ConversationDetails struct {
 	ID             string     `json:"id"`

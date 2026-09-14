@@ -498,20 +498,22 @@ func TestSNChangeRequestService_PatchChangeRequest_SetsNewWritableFields(t *test
 
 	comment := "a comment"
 	workNote := "a work note"
+	planningVisible := false
 	req := domain.PatchChangeRequestRequest{
-		ImplementationPlan:     strPtrPtr("<p>plan</p>"),
-		Priority:               priorityPtrPtr(domain.ChangeRequestPriorityHigh),
-		Category:               categoryPtrPtr(domain.ChangeRequestCategoryNetwork),
-		RequestedByID:          strPtrPtr(testCaseUUID),
-		AffectedServicesText:   strPtrPtr("services"),
-		AffectedComponentsText: strPtrPtr("components"),
-		RollbackDurationText:   strPtrPtr("10 mins"),
-		CustomerGroupID:        strPtrPtr(testCaseUUID),
-		EnvironmentIDs:         &[]string{testCaseUUID},
-		DeploymentProductIDs:   &[]string{testCaseUUID},
-		Comment:                &comment,
-		WorkNote:               &workNote,
-		DurationInput:          intPtrPtr(21600),
+		ImplementationPlan:           strPtrPtr("<p>plan</p>"),
+		Priority:                     priorityPtrPtr(domain.ChangeRequestPriorityHigh),
+		Category:                     categoryPtrPtr(domain.ChangeRequestCategoryNetwork),
+		RequestedByID:                strPtrPtr(testCaseUUID),
+		AffectedServicesText:         strPtrPtr("services"),
+		AffectedComponentsText:       strPtrPtr("components"),
+		RollbackDurationText:         strPtrPtr("10 mins"),
+		CustomerGroupID:              strPtrPtr(testCaseUUID),
+		EnvironmentIDs:               &[]string{testCaseUUID},
+		DeploymentProductIDs:         &[]string{testCaseUUID},
+		Comment:                      &comment,
+		WorkNote:                     &workNote,
+		DurationInput:                intPtrPtr(21600),
+		IsPlanningVisibleToCustomers: &planningVisible,
 	}
 
 	if _, err := svc.PatchChangeRequest(contextWithUserIDToken("token"), testCaseUUID, req); err != nil {
@@ -542,6 +544,13 @@ func TestSNChangeRequestService_PatchChangeRequest_SetsNewWritableFields(t *test
 	}
 	if gotBody["durationInput"] != float64(21600) {
 		t.Errorf("durationInput: got %v", gotBody["durationInput"])
+	}
+	// An explicit false must be forwarded, not dropped as if the field were
+	// omitted -- omitempty on a *bool only checks the pointer, not the
+	// pointed-to value, so this also guards against a future regression.
+	v, ok := gotBody["isPlanningVisibleToCustomers"]
+	if !ok || v != false {
+		t.Errorf("isPlanningVisibleToCustomers: got %v (present=%v), want false (present=true)", v, ok)
 	}
 }
 
@@ -609,17 +618,19 @@ func TestSNChangeRequestService_CreateChangeRequest_SendsNewCreateFields(t *test
 	svc := NewServiceNowChangeRequestService(client)
 
 	duration := 21600
+	planningVisible := true
 	req := domain.CreateChangeRequestRequest{
-		Subject:                "subject",
-		AffectedServicesText:   strPtr("services"),
-		AffectedComponentsText: strPtr("components"),
-		RollbackDurationText:   strPtr("2 hours"),
-		CustomerGroupID:        strPtr(testCaseUUID),
-		EnvironmentIDs:         []string{testCaseUUID},
-		DeploymentProductIDs:   []string{testCaseUUID},
-		PlannedStartDate:       strPtr("2026-01-01 00:00:00"),
-		PlannedEndDate:         strPtr("2026-01-01 06:00:00"),
-		DurationInput:          &duration,
+		Subject:                      "subject",
+		AffectedServicesText:         strPtr("services"),
+		AffectedComponentsText:       strPtr("components"),
+		RollbackDurationText:         strPtr("2 hours"),
+		CustomerGroupID:              strPtr(testCaseUUID),
+		EnvironmentIDs:               []string{testCaseUUID},
+		DeploymentProductIDs:         []string{testCaseUUID},
+		PlannedStartDate:             strPtr("2026-01-01 00:00:00"),
+		PlannedEndDate:               strPtr("2026-01-01 06:00:00"),
+		DurationInput:                &duration,
+		IsPlanningVisibleToCustomers: &planningVisible,
 	}
 
 	if _, err := svc.CreateChangeRequest(contextWithUserIDToken("token"), req); err != nil {
@@ -635,6 +646,9 @@ func TestSNChangeRequestService_CreateChangeRequest_SendsNewCreateFields(t *test
 	}
 	if gotBody["durationInput"] != float64(21600) {
 		t.Errorf("durationInput: got %v", gotBody["durationInput"])
+	}
+	if gotBody["isPlanningVisibleToCustomers"] != true {
+		t.Errorf("isPlanningVisibleToCustomers: got %v", gotBody["isPlanningVisibleToCustomers"])
 	}
 }
 
