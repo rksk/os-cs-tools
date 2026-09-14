@@ -2511,6 +2511,12 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
    */
   changeRequestType?: { id: number; label: string } | null;
   likelihood?: { id: number; label: string } | null;
+  /**
+   * "Implementation Plan visible to customers" in this portal's UI. Writable
+   * on both {@link BeCreateChangeRequestPayload} and
+   * {@link BePatchChangeRequestPayload} — unlike `changeRequestType`/
+   * `likelihood` above, this one has a write path all the way down.
+   */
   isPlanningVisibleToCustomers?: boolean;
   confirmCustomerUpdatedDate?: string | null;
   customerUpdatedOn?: string | null;
@@ -2612,6 +2618,8 @@ export interface BeCreateChangeRequestPayload {
   plannedEndDate?: string;
   comment?: string;
   workNote?: string;
+  /** "Implementation Plan visible to customers" in this portal's UI. */
+  isPlanningVisibleToCustomers?: boolean;
 }
 
 /** `POST /change-requests` response — the created identifiers. */
@@ -2844,6 +2852,8 @@ export interface BePatchChangeRequestPayload {
   rollbackDurationText?: string;
   customerGroupId?: string;
   requestedById?: string;
+  /** "Implementation Plan visible to customers" in this portal's UI. */
+  isPlanningVisibleToCustomers?: boolean;
 }
 
 /** `PATCH /change-requests/{id}` response — the touched identifiers. */

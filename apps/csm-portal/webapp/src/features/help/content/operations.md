@@ -52,12 +52,14 @@ The detail page shows:
     impact description, rollback plan, test plan, service outage notes, the
     communication plan, the implementation plan, and the affected
     services/components text and rollback duration. Below that, an **SRE
-    details** card shows further read-only fields the backing system tracks:
+    details** card shows further fields the backing system tracks:
     priority, category, requested by, customer group, change request type,
-    likelihood, whether the plan is visible to customers, when the customer
-    last updated it, work start/end, a git reference (if any), and any
-    linked environments, deployment products, deployments, or labels. Most
-    of these have no edit control anywhere yet — they're shown for context.
+    likelihood, whether the Implementation Plan is visible to customers,
+    when the customer last updated it, work start/end, a git reference (if
+    any), and any linked environments, deployment products, deployments, or
+    labels. Most of these are read-only with no edit control anywhere yet —
+    they're shown for context. "Implementation Plan visible to customers"
+    is the exception: it's editable from Create/Edit (see below).
 
 From the detail page a CS engineer can:
 
@@ -70,7 +72,8 @@ From the detail page a CS engineer can:
   as an approver on it: the Approve/Reject buttons only appear on that
   engineer's own pending approval.
 - **Edit** the planned window, assignment group, assigned engineer, requested
-  by, customer group, rollback duration, and the implementation/rollback/test/
+  by, customer group, rollback duration, whether the Implementation Plan is
+  visible to customers, and the implementation/rollback/test/
   affected-services/affected-components plans, or **Clone** the change request
   into a new one pre-filled with this one's values (useful for promoting the same
   change through another environment). The customer-approved/reviewed flags

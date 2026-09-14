@@ -24,7 +24,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   FormHelperText,
+  Switch,
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -155,9 +157,10 @@ function useRichTextPlanField(storedHtml?: string | null): RichTextPlanField {
 /**
  * Edit the change-request fields the BE allows updating: the planned window,
  * the assignment group, the individual assignee, requester, customer group,
- * rollback duration, and the implementation/rollback/test/affected-services/
+ * rollback duration, the implementation/rollback/test/affected-services/
  * affected-components plans (the last five added 2026-08-20, see
- * `CHANGES-cr-field-parity.md`).
+ * `CHANGES-cr-field-parity.md`), and whether the Implementation Plan is
+ * visible to customers.
  * Only changed fields are sent, and the BE requires at least one, so Save is
  * disabled until something differs.
  *
@@ -208,6 +211,7 @@ export default function EditChangeRequestDialog({
   const initialCustomerGroupId = cr.customerGroup?.id ?? "";
   const initialRequestedById = cr.requestedBy?.id ?? "";
   const initialRollbackDurationText = cr.rollbackDurationText ?? "";
+  const initialIsPlanningVisibleToCustomers = cr.isPlanningVisibleToCustomers ?? false;
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
   const [plannedEnd, setPlannedEnd] = useState(initialPlannedEnd);
   const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
@@ -215,6 +219,9 @@ export default function EditChangeRequestDialog({
   const [customerGroupId, setCustomerGroupId] = useState(initialCustomerGroupId);
   const [requestedById, setRequestedById] = useState(initialRequestedById);
   const [rollbackDurationText, setRollbackDurationText] = useState(initialRollbackDurationText);
+  const [isPlanningVisibleToCustomers, setIsPlanningVisibleToCustomers] = useState(
+    initialIsPlanningVisibleToCustomers,
+  );
   const rollbackPlan = useRichTextPlanField(cr.rollbackPlan);
   const testPlan = useRichTextPlanField(cr.testPlan);
   const implementationPlan = useRichTextPlanField(cr.implementationPlan);
@@ -262,6 +269,9 @@ export default function EditChangeRequestDialog({
     if (requestedById !== initialRequestedById && requestedById) {
       next.requestedById = requestedById;
     }
+    if (isPlanningVisibleToCustomers !== initialIsPlanningVisibleToCustomers) {
+      next.isPlanningVisibleToCustomers = isPlanningVisibleToCustomers;
+    }
     return next;
   }, [
     plannedStart,
@@ -288,6 +298,8 @@ export default function EditChangeRequestDialog({
     initialCustomerGroupId,
     requestedById,
     initialRequestedById,
+    isPlanningVisibleToCustomers,
+    initialIsPlanningVisibleToCustomers,
   ]);
 
   const hasChanges = Object.keys(patch).length > 0;
@@ -448,6 +460,24 @@ export default function EditChangeRequestDialog({
             disabled={isSaving}
             placeholder="e.g. 30 mins"
             helperText="Free text — ServiceNow does not parse this into a structured duration."
+          />
+          <FormControlLabel
+            sx={{ ml: 0, justifyContent: "space-between", width: "100%" }}
+            labelPlacement="start"
+            control={
+              <Switch
+                size="small"
+                checked={isPlanningVisibleToCustomers}
+                onChange={(e) => setIsPlanningVisibleToCustomers(e.target.checked)}
+                disabled={isSaving}
+                inputProps={{ "aria-label": "Implementation Plan visible to customers" }}
+              />
+            }
+            label={
+              <Typography variant="body2" color="text.secondary">
+                Implementation Plan visible to customers
+              </Typography>
+            }
           />
           {renderPlanField(
             "cr-edit-implementation-plan",

@@ -25,9 +25,11 @@ import {
   Card,
   DatePickers,
   FormControl,
+  FormControlLabel,
   InputLabel,
   MenuItem,
   Select,
+  Switch,
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -235,6 +237,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
   const [riskImpactAnalysis, setRiskImpactAnalysis] = useState("");
   const [backoutPlan, setBackoutPlan] = useState("");
   const [testPlan, setTestPlan] = useState(cloneState?.testPlan ?? "");
+  const [isPlanningVisibleToCustomers, setIsPlanningVisibleToCustomers] = useState(false);
   const [groupId, setGroupId] = useState("");
   const [assignedEngineerId, setAssignedEngineerId] = useState(
     cloneState?.assignedEngineerId ?? "",
@@ -302,6 +305,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
     if (!isBlankHtml(riskImpactAnalysis)) payload.riskImpactAnalysis = riskImpactAnalysis;
     if (!isBlankHtml(backoutPlan)) payload.backoutPlan = backoutPlan;
     if (!isBlankHtml(testPlan)) payload.testPlan = testPlan;
+    payload.isPlanningVisibleToCustomers = isPlanningVisibleToCustomers;
     if (groupId.trim()) payload.groupId = groupId.trim();
     if (assignedEngineerId.trim()) payload.assignedEngineerId = assignedEngineerId.trim();
     if (requestedById.trim()) payload.requestedById = requestedById.trim();
@@ -506,6 +510,25 @@ export default function CreateChangeRequestPage(): JSX.Element {
           )}
           {renderEditorField("cr-backout-plan", "Backout plan", backoutPlan, setBackoutPlan)}
           {renderEditorField("cr-test-plan", "Test plan", testPlan, setTestPlan)}
+
+          <FormControlLabel
+            sx={{ ml: 0, justifyContent: "space-between", width: "100%" }}
+            labelPlacement="start"
+            control={
+              <Switch
+                size="small"
+                checked={isPlanningVisibleToCustomers}
+                onChange={(e) => setIsPlanningVisibleToCustomers(e.target.checked)}
+                disabled={isSubmitting}
+                inputProps={{ "aria-label": "Implementation Plan visible to customers" }}
+              />
+            }
+            label={
+              <Typography variant="body2" color="text.secondary">
+                Implementation Plan visible to customers
+              </Typography>
+            }
+          />
 
           <Typography variant="subtitle2" sx={{ mt: 1 }}>
             Schedule

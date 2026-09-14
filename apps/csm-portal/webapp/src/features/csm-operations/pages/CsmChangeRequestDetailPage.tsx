@@ -844,7 +844,7 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
               <MetaCell label="Likelihood">
                 <Typography variant="body2">{cr.likelihood?.label || "—"}</Typography>
               </MetaCell>
-              <MetaCell label="Planning visible to customers">
+              <MetaCell label="Implementation Plan visible to customers">
                 <YesNo value={cr.isPlanningVisibleToCustomers} />
               </MetaCell>
               <MetaCell label="Customer updated">
