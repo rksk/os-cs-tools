@@ -89,6 +89,19 @@ export default function CsmDashboardBuilderListPage(): JSX.Element {
     deleteDashboardDraft(id);
   };
 
+  // Clearing local edits on a DEPLOYED dashboard is more consequential than
+  // discarding an already-orphaned draft (there may be real in-progress
+  // unsaved changes), so — unlike `handleDiscardDraft`'s orphan-draft
+  // usage — this path confirms first. No in-app confirm-dialog primitive
+  // exists elsewhere in this codebase, so `window.confirm` is the
+  // documented minimal fallback here.
+  const handleClearLocalEdits = (id: string): void => {
+    if (!window.confirm("Clear local edits for this dashboard? This cannot be undone.")) {
+      return;
+    }
+    deleteDashboardDraft(id);
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
@@ -136,7 +149,19 @@ export default function CsmDashboardBuilderListPage(): JSX.Element {
           }}
         >
           {(dashboards ?? []).map((d) => (
-            <Card key={d.id} variant="outlined">
+            <Card key={d.id} variant="outlined" sx={{ position: "relative" }}>
+              {draftIds.has(d.id) && (
+                <Tooltip title="Clear local edits for this dashboard">
+                  <IconButton
+                    size="small"
+                    aria-label={`Clear local edits for ${d.displayName || d.id}`}
+                    onClick={() => handleClearLocalEdits(d.id)}
+                    sx={{ position: "absolute", top: 4, right: 4, zIndex: 1 }}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </Tooltip>
+              )}
               <CardActionArea
                 onClick={() => navigate(`/admin/dashboards/${d.id}`)}
                 sx={{
