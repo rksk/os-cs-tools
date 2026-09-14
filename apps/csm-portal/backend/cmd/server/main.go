@@ -146,7 +146,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled)
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled, loadDashboardDesignerEmails())
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -515,6 +515,40 @@ func loadDirectory() *directory.Directory {
 	}
 	slog.Info("resolved reference catalogues", "teams", dir.TeamCount(), "roles", dir.RoleCount())
 	return dir
+}
+
+// loadDashboardDesignerEmails resolves the synthetic "dashboard_designer" role
+// grant list from its configuration form:
+//
+//	DASHBOARD_DESIGNER_EMAILS  A comma-separated list of email addresses,
+//	                        whitespace around each entry trimmed. GET
+//	                        /users/me grants the caller an extra
+//	                        "dashboard_designer" role (on top of whatever the
+//	                        entity service reports) when their email
+//	                        matches, case-insensitively.
+//
+// Unlike directory.DefaultRoles, this deliberately has no committed default:
+// email addresses are organisation-specific data, not generic platform
+// vocabulary, so there is nothing safe to commit -- the same reasoning
+// CSM_TEAM_REGISTRY's own lack of a default follows. An unset or empty value
+// yields an empty set, so behavior is unchanged from before this flag
+// existed: nobody gets the extra role.
+//
+// A duplicate entry is silently deduplicated rather than treated as a
+// startup error, unlike ParseRoles' handling of a duplicate role name: a
+// human-maintained email list is far more likely to pick up an accidental
+// duplicate than a typo'd role name is, and failing the whole deploy over
+// that would be disproportionate.
+func loadDashboardDesignerEmails() map[string]struct{} {
+	emails := splitComma(os.Getenv("DASHBOARD_DESIGNER_EMAILS"))
+	if len(emails) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(emails))
+	for _, e := range emails {
+		set[strings.ToLower(e)] = struct{}{}
+	}
+	return set
 }
 
 // loadSftpgoConfig resolves the SFTPGo-backed attachment-storage feature
