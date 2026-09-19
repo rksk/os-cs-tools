@@ -38,6 +38,7 @@ type ctxKey string
 
 const userIDTokenKey ctxKey = "x-user-id-token"        // #nosec G101 -- context map key, not a credential
 const correlationIDKey ctxKey = "x-csm-correlation-id" // #nosec G101 -- context map key, not a credential
+const jwtAssertionKey ctxKey = "x-jwt-assertion"       // #nosec G101 -- context map key, not a credential
 
 // WithUserIDToken returns a copy of ctx carrying the x-user-id-token value to
 // be forwarded on every outgoing entity request.
@@ -47,6 +48,24 @@ func WithUserIDToken(ctx context.Context, token string) context.Context {
 
 func userIDTokenFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(userIDTokenKey).(string)
+	return v
+}
+
+// WithJWTAssertion returns a copy of ctx carrying the caller's raw
+// x-jwt-assertion value to be forwarded on every outgoing entity request.
+// Entity-service uses this only to authenticate its own outbound SFTPGo
+// token-mint call on the attachment/comment routes that relay bytes through
+// SFTPGo (see entity-service's internal/middleware/jwtassertion.go) — it is
+// never re-validated or otherwise trusted by entity-service as an
+// authentication signal itself, so forwarding it unconditionally (mirroring
+// WithUserIDToken above) is safe even on requests entity-service does not
+// need it for.
+func WithJWTAssertion(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, jwtAssertionKey, token)
+}
+
+func jwtAssertionFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(jwtAssertionKey).(string)
 	return v
 }
 
@@ -123,6 +142,9 @@ func (c *CustomerEntityClient) do(ctx context.Context, method, path string, body
 	if token := userIDTokenFromContext(ctx); token != "" {
 		req.Header.Set("x-user-id-token", token)
 	}
+	if assertion := jwtAssertionFromContext(ctx); assertion != "" {
+		req.Header.Set("x-jwt-assertion", assertion)
+	}
 	if id := correlationIDFromContext(ctx); id != "" {
 		req.Header.Set("X-CSM-Correlation-ID", id)
 	}
@@ -160,6 +182,9 @@ func (c *CustomerEntityClient) doBinary(ctx context.Context, path string) (body 
 	}
 	if token := userIDTokenFromContext(ctx); token != "" {
 		req.Header.Set("x-user-id-token", token)
+	}
+	if assertion := jwtAssertionFromContext(ctx); assertion != "" {
+		req.Header.Set("x-jwt-assertion", assertion)
 	}
 	if id := correlationIDFromContext(ctx); id != "" {
 		req.Header.Set("X-CSM-Correlation-ID", id)

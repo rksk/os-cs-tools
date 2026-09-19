@@ -118,6 +118,15 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				userIDToken = tokenStr
 			}
 			ctx = entity.WithUserIDToken(ctx, userIDToken)
+			// Forward the caller's raw x-jwt-assertion value on every
+			// outgoing entity request. Entity-service only consumes it on
+			// the attachment/comment routes that relay bytes through SFTPGo
+			// (to mint its own outbound SFTPGo access token on the caller's
+			// behalf) — see entity-service's JWTAssertion middleware — and
+			// ignores it everywhere else, so forwarding it unconditionally
+			// here mirrors WithUserIDToken above rather than requiring every
+			// call site to know which routes need it.
+			ctx = entity.WithJWTAssertion(ctx, tokenStr)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
