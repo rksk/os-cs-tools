@@ -2677,6 +2677,11 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if snResp.Case.WorstCaseFixEta != nil && *snResp.Case.WorstCaseFixEta != "" {
 		resp.Case.WorstCaseFixEta = snResp.Case.WorstCaseFixEta
 	}
+	// See postFixEtaWorkNote's doc comment for why this internal note is
+	// posted unconditionally, independent of req.AddPublicComment.
+	if req.BestCaseFixEta != nil || req.MostLikelyFixEta != nil || req.WorstCaseFixEta != nil {
+		s.postFixEtaWorkNote(ctx, req.ID, resp.Case.BestCaseFixEta, resp.Case.MostLikelyFixEta, resp.Case.WorstCaseFixEta)
+	}
 
 	if publishStatusChange && snResp.Case.State != nil {
 		s.publishStatusChanged(ctx, req.ID, snResp.Case.State.Label, caseBeforeUpdate)
@@ -2708,6 +2713,50 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	}
 
 	return resp, nil
+}
+
+// postFixEtaWorkNote posts an internal work_note comment recording a fix-ETA
+// update, so the change leaves a trace in the case's own comment/activity
+// history. Without this, a fix-ETA PATCH silently updates ServiceNow with
+// zero visible record unless the caller also opts into AddPublicComment --
+// and that path posts a customer-visible comment via ServiceNow's own
+// scoped-app script, an entirely separate mechanism this doesn't touch.
+// Posted unconditionally whenever any of the three fix-ETA fields was part
+// of this PATCH, regardless of AddPublicComment.
+//
+// best/mostLikely/worst must be the values ServiceNow actually committed
+// (the PATCH response's echoed-back fields), not the raw request, so the
+// note reflects what was actually stored rather than what was merely asked
+// for. Each is included only when set, since a caller may PATCH just one of
+// the three.
+//
+// Best-effort and synchronous on UpdateCase's own ctx, which already carries
+// the handler's request timeout -- a failure here must not fail the
+// UpdateCase call itself, since the fix-ETA fields already updated
+// successfully in ServiceNow by this point. Logged and swallowed, same as
+// this file's other post-success side effects.
+func (s *snCaseService) postFixEtaWorkNote(ctx context.Context, caseID string, best, mostLikely, worst *string) {
+	var parts []string
+	if best != nil && *best != "" {
+		parts = append(parts, "Best case: "+*best)
+	}
+	if mostLikely != nil && *mostLikely != "" {
+		parts = append(parts, "Most likely: "+*mostLikely)
+	}
+	if worst != nil && *worst != "" {
+		parts = append(parts, "Worst case: "+*worst)
+	}
+	if len(parts) == 0 {
+		return
+	}
+
+	if _, err := s.CreateCaseComment(ctx, domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeWorkNote,
+		Content: "Fix ETA updated — " + strings.Join(parts, ", "),
+	}); err != nil {
+		slog.ErrorContext(ctx, "sn update case: post fix ETA work note failed", "caseId", caseID, "error", err)
+	}
 }
 
 type snCreateAttachmentPayload struct {

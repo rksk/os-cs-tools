@@ -1475,6 +1475,72 @@ func TestSNCaseService_UpdateCase_EchoesInternalFixEtaFieldsBack(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_UpdateCase_PostsFixEtaWorkNote verifies a fix-ETA PATCH
+// always posts an internal work_note comment recording the committed
+// date(s) -- the audit trail this change adds -- regardless of
+// AddPublicComment, and that the note's content reflects the values SN
+// echoed back on the PATCH response rather than the raw request.
+func TestSNCaseService_UpdateCase_PostsFixEtaWorkNote(t *testing.T) {
+	var gotComment struct {
+		ReferenceID   string `json:"referenceId"`
+		ReferenceType string `json:"referenceType"`
+		Type          string `json:"type"`
+		Content       string `json:"content"`
+	}
+	commentPosted := false
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "ok",
+			"case": map[string]any{
+				"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00",
+				"bestCaseFixEta":   "2026-02-10",
+				"mostLikelyFixEta": "2026-02-15",
+			},
+		})
+	})
+	mux.HandleFunc("/comments", func(w http.ResponseWriter, r *http.Request) {
+		commentPosted = true
+		if err := json.NewDecoder(r.Body).Decode(&gotComment); err != nil {
+			t.Fatalf("decode comment request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "ok",
+			"comment": map[string]any{"id": testCaseSysid, "createdOn": "2026-01-01 00:00:00", "createdBy": "engineer"},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil, nil)
+
+	bestCase := "2026-02-10"
+	mostLikely := "2026-02-15"
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID:               testCaseUUID,
+		BestCaseFixEta:   &bestCase,
+		MostLikelyFixEta: &mostLikely,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !commentPosted {
+		t.Fatalf("expected a work note comment to be posted after a fix-ETA update")
+	}
+	if gotComment.ReferenceID != testCaseSysid || gotComment.ReferenceType != "case" {
+		t.Fatalf("comment referenced %s/%s, want %s/case", gotComment.ReferenceType, gotComment.ReferenceID, testCaseSysid)
+	}
+	if gotComment.Type != "work_notes" {
+		t.Fatalf("comment type = %q, want work_notes (internal)", gotComment.Type)
+	}
+	if !strings.Contains(gotComment.Content, "2026-02-10") || !strings.Contains(gotComment.Content, "2026-02-15") {
+		t.Fatalf("comment content = %q, want it to mention both committed fix-ETA dates", gotComment.Content)
+	}
+	if strings.Contains(gotComment.Content, "Worst case") {
+		t.Fatalf("comment content = %q, should not mention worst case fix ETA when it wasn't part of this PATCH", gotComment.Content)
+	}
+}
+
 // --- SearchTags ---
 
 func TestSNCaseService_SearchCases_EmptyTypesFilterSendsNoTypeRestriction(t *testing.T) {
