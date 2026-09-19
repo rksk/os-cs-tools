@@ -28,6 +28,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/salesentity"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/sftpgo"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
 
@@ -263,8 +264,22 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 		snUserService = service.NewServiceNowUserService(serviceNowIntegrationServiceClient)
 	}
 
+	// sftpgoClient is nil when SFTPGO_BASE_URL is unset -- caseService
+	// degrades its SFTPGo-backed attachment methods to a
+	// ServiceUnavailableError rather than blocking every other
+	// Postgres-backed route at startup (see caseService.sftpgo's own doc
+	// comment).
+	var sftpgoClient service.SFTPGoFileClient
+	if cfg.SFTPGoBaseURL != "" {
+		// Assigned via a plain, non-nil interface value only when configured
+		// -- assigning a nil *sftpgo.Client to an interface variable directly
+		// would produce a non-nil interface holding a nil pointer, which
+		// would defeat every "s.sftpgo == nil" guard in caseService.
+		sftpgoClient = sftpgo.NewClient(sftpgo.Config{BaseURL: cfg.SFTPGoBaseURL})
+	}
+
 	caseRepo := repository.NewCaseRepository(db)
-	pgCaseSvc := service.NewCaseService(caseRepo, userRepo, eventPublisher)
+	pgCaseSvc := service.NewCaseService(caseRepo, userRepo, eventPublisher, sftpgoClient)
 	var activeCaseSvc service.CaseService
 	if cfg.DataSource == config.DataSourceServiceNow {
 		activeCaseSvc = service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, pgCaseSvc, eventPublisher, slaClockService, snUserService, cfg.SupportEngineerRole, cfg.CustomerRoles)
@@ -728,7 +743,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 		middleware.Recovery(
 			middleware.Logger(
 				middleware.UserIDToken(
-					middleware.Timeout(30 * time.Second)(mux),
+					middleware.JWTAssertion(
+						middleware.Timeout(30 * time.Second)(mux),
+					),
 				),
 			),
 		),

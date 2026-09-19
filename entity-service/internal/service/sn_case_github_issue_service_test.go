@@ -58,6 +58,27 @@ func contextWithUserIDToken(token string) context.Context {
 	return captured
 }
 
+// contextWithUserIDTokenAndJWTAssertion is contextWithUserIDToken plus an
+// x-jwt-assertion header, going through both real middlewares so the private
+// context keys stay encapsulated in the middleware package — used by tests
+// that exercise the SFTPGo-backed attachment/inline-image paths, which
+// require both headers (x-user-id-token to authenticate the caller,
+// x-jwt-assertion to mint a SFTPGo token on their behalf).
+func contextWithUserIDTokenAndJWTAssertion(userIDToken, jwtAssertion string) context.Context {
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	if userIDToken != "" {
+		req.Header.Set("x-user-id-token", userIDToken)
+	}
+	if jwtAssertion != "" {
+		req.Header.Set("x-jwt-assertion", jwtAssertion)
+	}
+	var captured context.Context
+	middleware.UserIDToken(middleware.JWTAssertion(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Context()
+	}))).ServeHTTP(httptest.NewRecorder(), req)
+	return captured
+}
+
 func TestSNCaseGithubIssueService_CreateCaseGithubIssue_Validation(t *testing.T) {
 	validCaseID := "11111111-1111-1111-1111-111111111111"
 

@@ -18,27 +18,33 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/sftpgo"
 )
 
 const testCaseID = "00000000-0000-0000-0000-0000000000c1"
 const testAttachmentID = "00000000-0000-0000-0000-0000000000a1"
-const testStorageKey = "cases/00000000-0000-0000-0000-0000000000c1/00000000-0000-0000-0000-0000000000a1"
+const testStorageKey = "/attachments/cases/00000000-0000-0000-0000-0000000000c1/00000000-0000-0000-0000-0000000000a1/diagnostics.log"
+const testJWTAssertion = "fake-jwt-assertion"
+
+func testDataURI(payload string) string {
+	return "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(payload))
+}
 
 func validCreateAttachmentRequest() domain.CreateAttachmentRequest {
-	storageKey := testStorageKey
 	return domain.CreateAttachmentRequest{
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeCase,
 		Name:          "diagnostics.log",
 		Type:          "text/plain",
-		StorageKey:    &storageKey,
-		SizeBytes:     2048,
+		File:          testDataURI("hello world"),
 	}
 }
 
@@ -54,14 +60,78 @@ func actorUserRepo(t *testing.T) stubUserRepo {
 	}
 }
 
+// caseRepoWithProject returns a stubCaseRepo whose GetCaseByID reports a case
+// with no linked project (ProjectDetails nil), the common case in tests that
+// don't care about project-scoped storage-key namespacing.
+func caseRepoWithProject(base *stubCaseRepo) *stubCaseRepo {
+	if base.getCaseByID == nil {
+		base.getCaseByID = func(_ context.Context, id string) (domain.CaseView, error) {
+			return domain.CaseView{ID: id}, nil
+		}
+	}
+	return base
+}
+
+// fakeSFTPGoClient is a test double for SFTPGoFileClient, recording calls and
+// returning caller-configured results.
+type fakeSFTPGoClient struct {
+	mintToken  func(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error)
+	writeFile  func(ctx context.Context, accessToken, storageKey string, data []byte) error
+	readFile   func(ctx context.Context, accessToken, storageKey string) ([]byte, string, error)
+	removeFile func(ctx context.Context, accessToken, storageKey string) error
+
+	writtenKeys  []string
+	writtenBytes [][]byte
+	removedKeys  []string
+}
+
+func (f *fakeSFTPGoClient) MintToken(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error) {
+	if f.mintToken != nil {
+		return f.mintToken(ctx, email, jwtAssertion)
+	}
+	return &sftpgo.Token{AccessToken: "fake-access-token"}, nil
+}
+
+func (f *fakeSFTPGoClient) WriteFile(ctx context.Context, accessToken, storageKey string, data []byte) error {
+	f.writtenKeys = append(f.writtenKeys, storageKey)
+	f.writtenBytes = append(f.writtenBytes, data)
+	if f.writeFile != nil {
+		return f.writeFile(ctx, accessToken, storageKey, data)
+	}
+	return nil
+}
+
+func (f *fakeSFTPGoClient) ReadFile(ctx context.Context, accessToken, storageKey string) ([]byte, string, error) {
+	if f.readFile != nil {
+		return f.readFile(ctx, accessToken, storageKey)
+	}
+	return nil, "", &apierror.NotFoundError{Msg: "not found"}
+}
+
+func (f *fakeSFTPGoClient) RemoveFile(ctx context.Context, accessToken, storageKey string) error {
+	f.removedKeys = append(f.removedKeys, storageKey)
+	if f.removeFile != nil {
+		return f.removeFile(ctx, accessToken, storageKey)
+	}
+	return nil
+}
+
+// attachmentCtx builds a context carrying both x-user-id-token and
+// x-jwt-assertion, the pair every SFTPGo-backed attachment path requires.
+func attachmentCtx(t *testing.T) context.Context {
+	t.Helper()
+	return contextWithUserIDTokenAndJWTAssertion(fakeJWTWithEmail(t, "jane.doe@example.com"), testJWTAssertion)
+}
+
 // TestCaseService_CreateCaseAttachment_Succeeds proves a well-formed request
-// (storageKey + sizeBytes supplied, matching this data source's contract)
-// reaches the repository and the response carries storageKey through.
+// (a base64 data URI, matching the same contract snCaseService.CreateCaseAttachment
+// already uses) is decoded, relayed to SFTPGo, and only then persisted as a
+// 'complete' metadata row.
 func TestCaseService_CreateCaseAttachment_Succeeds(t *testing.T) {
 	var capturedReq domain.CreateAttachmentRequest
 	createdOn := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 
-	repo := &stubCaseRepo{
+	repo := caseRepoWithProject(&stubCaseRepo{
 		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
 			capturedReq = req
 			return domain.Attachment{
@@ -74,12 +144,14 @@ func TestCaseService_CreateCaseAttachment_Succeeds(t *testing.T) {
 				CreatedBy:     domain.NewUserReference(req.CreatedBy, "", ""),
 				CreatedOn:     createdOn,
 				StorageKey:    req.StorageKey,
+				Status:        req.Status,
 			}, nil
 		},
-	}
+	})
+	sftpgoClient := &fakeSFTPGoClient{}
 
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	svc := NewCaseService(repo, actorUserRepo(t), nil, sftpgoClient)
+	ctx := attachmentCtx(t)
 
 	resp, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
 	if err != nil {
@@ -88,33 +160,38 @@ func TestCaseService_CreateCaseAttachment_Succeeds(t *testing.T) {
 	if capturedReq.CreatedBy != "user-jane" {
 		t.Fatalf("expected repo to receive resolved actor id, got %q", capturedReq.CreatedBy)
 	}
+	if capturedReq.Status != domain.AttachmentStatusComplete {
+		t.Fatalf("expected repo to receive status 'complete', got %q", capturedReq.Status)
+	}
 	if resp.Attachment.ID != testAttachmentID {
 		t.Fatalf("expected attachment id %q, got %q", testAttachmentID, resp.Attachment.ID)
 	}
-	if resp.Attachment.StorageKey == nil || *resp.Attachment.StorageKey != testStorageKey {
-		t.Fatalf("expected storageKey %q on response, got %v", testStorageKey, resp.Attachment.StorageKey)
+	if resp.Attachment.StorageKey == nil || *resp.Attachment.StorageKey == "" {
+		t.Fatalf("expected a computed storageKey on the response, got %v", resp.Attachment.StorageKey)
 	}
 	if resp.Attachment.CreatedBy != "jane.doe@example.com" {
 		t.Fatalf("expected createdBy to be the actor's email, got %q", resp.Attachment.CreatedBy)
 	}
+	if len(sftpgoClient.writtenKeys) != 1 {
+		t.Fatalf("expected exactly one SFTPGo write, got %d", len(sftpgoClient.writtenKeys))
+	}
+	if string(sftpgoClient.writtenBytes[0]) != "hello world" {
+		t.Fatalf("expected decoded bytes %q written to SFTPGo, got %q", "hello world", sftpgoClient.writtenBytes[0])
+	}
+	if sftpgoClient.writtenKeys[0] != *resp.Attachment.StorageKey {
+		t.Fatalf("expected SFTPGo write key to match the persisted storageKey: wrote %q, persisted %q", sftpgoClient.writtenKeys[0], *resp.Attachment.StorageKey)
+	}
 }
 
-// TestCaseService_CreateCaseAttachment_RequiresStorageKey proves this data
-// source rejects a create request with no storageKey rather than falling
-// back to a base64 payload -- there is no such fallback here, unlike
-// ServiceNow.
-func TestCaseService_CreateCaseAttachment_RequiresStorageKey(t *testing.T) {
-	repo := &stubCaseRepo{
-		createCaseAttachment: func(context.Context, domain.CreateAttachmentRequest) (domain.Attachment, error) {
-			t.Fatal("repository should not be reached when storageKey is missing")
-			return domain.Attachment{}, nil
-		},
-	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+// TestCaseService_CreateCaseAttachment_RequiresFile proves this data source
+// now requires a base64 file payload, matching the ServiceNow contract --
+// there is no more storageKey-supplied-by-caller alternative.
+func TestCaseService_CreateCaseAttachment_RequiresFile(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, &fakeSFTPGoClient{})
+	ctx := attachmentCtx(t)
 
 	req := validCreateAttachmentRequest()
-	req.StorageKey = nil
+	req.File = ""
 
 	_, err := svc.CreateCaseAttachment(ctx, req)
 	var ve *apierror.ValidationError
@@ -123,20 +200,42 @@ func TestCaseService_CreateCaseAttachment_RequiresStorageKey(t *testing.T) {
 	}
 }
 
-// TestCaseService_CreateCaseAttachment_RequiresSizeBytes proves sizeBytes
-// must be a positive value: this service cannot compute it (it never sees
-// the file bytes for this data source).
-func TestCaseService_CreateCaseAttachment_RequiresSizeBytes(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+// TestCaseService_CreateCaseAttachment_RejectsOversizedFile proves the
+// decoded payload is capped at maxAttachmentBytes (10MB), the same limit
+// snCaseService.CreateCaseAttachment enforces.
+func TestCaseService_CreateCaseAttachment_RejectsOversizedFile(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, &fakeSFTPGoClient{})
+	ctx := attachmentCtx(t)
 
+	oversized := strings.Repeat("a", maxAttachmentBytes+1)
 	req := validCreateAttachmentRequest()
-	req.SizeBytes = 0
+	req.File = testDataURI(oversized)
 
 	_, err := svc.CreateCaseAttachment(ctx, req)
 	var ve *apierror.ValidationError
 	if !asValidationError(err, &ve) {
 		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_CreateCaseAttachment_RejectsMalformedDataURI proves a File
+// value that isn't a "data:...;base64,..." URI is rejected before any SFTPGo
+// call is attempted.
+func TestCaseService_CreateCaseAttachment_RejectsMalformedDataURI(t *testing.T) {
+	sftpgoClient := &fakeSFTPGoClient{}
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, sftpgoClient)
+	ctx := attachmentCtx(t)
+
+	req := validCreateAttachmentRequest()
+	req.File = "not-a-data-uri"
+
+	_, err := svc.CreateCaseAttachment(ctx, req)
+	var ve *apierror.ValidationError
+	if !asValidationError(err, &ve) {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+	if len(sftpgoClient.writtenKeys) != 0 {
+		t.Fatalf("expected no SFTPGo write for a malformed data URI, got %d", len(sftpgoClient.writtenKeys))
 	}
 }
 
@@ -144,8 +243,8 @@ func TestCaseService_CreateCaseAttachment_RequiresSizeBytes(t *testing.T) {
 // this data source only models case attachments -- conversation, deployment,
 // change_request, and incident have no Postgres schema backing here.
 func TestCaseService_CreateCaseAttachment_RejectsNonCaseReferenceType(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, &fakeSFTPGoClient{})
+	ctx := attachmentCtx(t)
 
 	req := validCreateAttachmentRequest()
 	req.ReferenceType = domain.ReferenceTypeDeployment
@@ -161,7 +260,7 @@ func TestCaseService_CreateCaseAttachment_RejectsNonCaseReferenceType(t *testing
 // the same "must be a known, authenticated user" gate CreateCaseComment
 // already enforces also protects attachment creation.
 func TestCaseService_CreateCaseAttachment_RejectsUnauthenticatedCaller(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil)
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, &fakeSFTPGoClient{})
 	ctx := contextWithUserIDToken("") // no x-user-id-token header
 
 	_, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
@@ -171,92 +270,66 @@ func TestCaseService_CreateCaseAttachment_RejectsUnauthenticatedCaller(t *testin
 	}
 }
 
-// TestCaseService_CreateCaseAttachment_DefaultsToComplete proves every
-// existing caller that doesn't specify a status (the ServiceNow path is
-// unaffected since it never sets Status at all, but any pre-existing
-// Postgres-path caller behaves the same way) still gets a 'complete' row --
-// this field must be fully backward compatible.
-func TestCaseService_CreateCaseAttachment_DefaultsToComplete(t *testing.T) {
-	repo := &stubCaseRepo{
-		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
-			if req.Status != domain.AttachmentStatusComplete {
-				t.Fatalf("expected repo to receive status 'complete' by default, got %q", req.Status)
-			}
-			return domain.Attachment{
-				ID:         testAttachmentID,
-				Status:     req.Status,
-				StorageKey: req.StorageKey,
-				CreatedBy:  domain.NewUserReference(req.CreatedBy, "", ""),
-			}, nil
-		},
-	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+// TestCaseService_CreateCaseAttachment_RequiresJWTAssertion proves this fails
+// closed with an UnauthorizedError when x-jwt-assertion is absent, rather
+// than minting a SFTPGo token with an empty credential. This is the expected
+// behavior until the BFF is updated to forward x-jwt-assertion through to
+// entity-service (see this feature's task file).
+func TestCaseService_CreateCaseAttachment_RequiresJWTAssertion(t *testing.T) {
+	svc := NewCaseService(caseRepoWithProject(&stubCaseRepo{}), actorUserRepo(t), nil, &fakeSFTPGoClient{})
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com")) // no x-jwt-assertion
 
-	req := validCreateAttachmentRequest() // Status left unset
-	resp, err := svc.CreateCaseAttachment(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateCaseAttachment returned error: %v", err)
-	}
-	if resp.Attachment.Status != domain.AttachmentStatusComplete {
-		t.Fatalf("expected response status 'complete', got %q", resp.Attachment.Status)
+	_, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
+	var ue *apierror.UnauthorizedError
+	if !errorsAsUnauthorized(err, &ue) {
+		t.Fatalf("expected *apierror.UnauthorizedError, got %T: %v", err, err)
 	}
 }
 
-// TestCaseService_CreateCaseAttachment_Pending proves an explicit
-// status="pending" request reaches the repository unchanged and the response
-// reports the pending status, so a caller can register a row before the
-// browser has actually uploaded anything to SFTPGo.
-func TestCaseService_CreateCaseAttachment_Pending(t *testing.T) {
-	var capturedStatus domain.AttachmentStatus
-	repo := &stubCaseRepo{
-		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
-			capturedStatus = req.Status
-			return domain.Attachment{
-				ID:         testAttachmentID,
-				Status:     req.Status,
-				StorageKey: req.StorageKey,
-				CreatedBy:  domain.NewUserReference(req.CreatedBy, "", ""),
-			}, nil
-		},
-	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+// TestCaseService_CreateCaseAttachment_SFTPGoNotConfigured proves a
+// deployment without SFTPGO_BASE_URL set fails closed with
+// ServiceUnavailableError rather than panicking on a nil client.
+func TestCaseService_CreateCaseAttachment_SFTPGoNotConfigured(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, nil)
+	ctx := attachmentCtx(t)
 
-	req := validCreateAttachmentRequest()
-	req.Status = domain.AttachmentStatusPending
-	resp, err := svc.CreateCaseAttachment(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateCaseAttachment returned error: %v", err)
-	}
-	if capturedStatus != domain.AttachmentStatusPending {
-		t.Fatalf("expected repo to receive status 'pending', got %q", capturedStatus)
-	}
-	if resp.Attachment.Status != domain.AttachmentStatusPending {
-		t.Fatalf("expected response status 'pending', got %q", resp.Attachment.Status)
+	_, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
+	var sue *apierror.ServiceUnavailableError
+	if !errorsAsServiceUnavailable(err, &sue) {
+		t.Fatalf("expected *apierror.ServiceUnavailableError, got %T: %v", err, err)
 	}
 }
 
-// TestCaseService_CreateCaseAttachment_RejectsInvalidStatus proves an
-// unrecognized status value is rejected rather than silently passed through
-// to the database (where the CHECK constraint would catch it anyway, but the
-// service should fail fast with a clear message).
-func TestCaseService_CreateCaseAttachment_RejectsInvalidStatus(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
-	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+// TestCaseService_CreateCaseAttachment_RollsBackSFTPGoWriteOnRepoFailure
+// proves that if the metadata-row insert fails after bytes are already in
+// SFTPGo, the orphaned file is cleaned up rather than left behind.
+func TestCaseService_CreateCaseAttachment_RollsBackSFTPGoWriteOnRepoFailure(t *testing.T) {
+	repo := caseRepoWithProject(&stubCaseRepo{
+		createCaseAttachment: func(context.Context, domain.CreateAttachmentRequest) (domain.Attachment, error) {
+			return domain.Attachment{}, &apierror.ValidationError{Msg: "one or more referenced IDs do not exist"}
+		},
+	})
+	sftpgoClient := &fakeSFTPGoClient{}
+	svc := NewCaseService(repo, actorUserRepo(t), nil, sftpgoClient)
+	ctx := attachmentCtx(t)
 
-	req := validCreateAttachmentRequest()
-	req.Status = "uploading"
-
-	_, err := svc.CreateCaseAttachment(ctx, req)
-	var ve *apierror.ValidationError
-	if !asValidationError(err, &ve) {
-		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	_, err := svc.CreateCaseAttachment(ctx, validCreateAttachmentRequest())
+	if err == nil {
+		t.Fatal("expected an error from the repository failure")
+	}
+	if len(sftpgoClient.writtenKeys) != 1 {
+		t.Fatalf("expected one SFTPGo write attempt, got %d", len(sftpgoClient.writtenKeys))
+	}
+	if len(sftpgoClient.removedKeys) != 1 || sftpgoClient.removedKeys[0] != sftpgoClient.writtenKeys[0] {
+		t.Fatalf("expected rollback to remove the just-written key %q, removed %v", sftpgoClient.writtenKeys[0], sftpgoClient.removedKeys)
 	}
 }
 
 // TestCaseService_ConfirmCaseAttachment_TransitionsToComplete proves a
-// pending row owned by the calling actor is transitioned to complete.
+// pending row owned by the calling actor is transitioned to complete. This
+// path is unchanged by the SFTPGo relay rewrite -- ConfirmCaseAttachment
+// itself never touches SFTPGo directly, it only flips the metadata row's
+// status.
 func TestCaseService_ConfirmCaseAttachment_TransitionsToComplete(t *testing.T) {
 	key := testStorageKey
 	var confirmedID string
@@ -279,7 +352,7 @@ func TestCaseService_ConfirmCaseAttachment_TransitionsToComplete(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	resp, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
@@ -313,7 +386,7 @@ func TestCaseService_ConfirmCaseAttachment_RejectsAlreadyComplete(t *testing.T) 
 			return domain.Attachment{}, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
@@ -341,7 +414,7 @@ func TestCaseService_ConfirmCaseAttachment_RejectsDifferentActor(t *testing.T) {
 			return domain.Attachment{}, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
@@ -359,7 +432,7 @@ func TestCaseService_ConfirmCaseAttachment_NotFound(t *testing.T) {
 			return domain.Attachment{}, &apierror.NotFoundError{Msg: "attachment not found"}
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
@@ -379,7 +452,7 @@ func TestCaseService_ConfirmCaseAttachment_RejectsUnauthenticatedCaller(t *testi
 			return domain.Attachment{}, nil
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	svc := NewCaseService(repo, stubUserRepo{}, nil, nil)
 	ctx := contextWithUserIDToken("")
 
 	_, err := svc.ConfirmCaseAttachment(ctx, testAttachmentID)
@@ -412,7 +485,7 @@ func TestCaseService_SearchCaseAttachments_ReturnsStorageKey(t *testing.T) {
 		},
 	}
 
-	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	svc := NewCaseService(repo, stubUserRepo{}, nil, nil)
 	resp, err := svc.SearchCaseAttachments(context.Background(), domain.SearchAttachmentsRequest{
 		ReferenceID:   testCaseID,
 		ReferenceType: domain.ReferenceTypeCase,
@@ -431,7 +504,7 @@ func TestCaseService_SearchCaseAttachments_ReturnsStorageKey(t *testing.T) {
 // TestCaseService_GetAttachmentByID_ReturnsStorageKeyNotContent proves the
 // Postgres-backed GetAttachmentByID never fabricates base64 content: Content
 // is always empty and StorageKey is populated, so a caller resolves bytes
-// externally instead.
+// via GetCaseAttachmentContent instead.
 func TestCaseService_GetAttachmentByID_ReturnsStorageKeyNotContent(t *testing.T) {
 	key := testStorageKey
 	repo := &stubCaseRepo{
@@ -453,7 +526,7 @@ func TestCaseService_GetAttachmentByID_ReturnsStorageKeyNotContent(t *testing.T)
 		},
 	}
 
-	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	svc := NewCaseService(repo, stubUserRepo{}, nil, nil)
 	details, err := svc.GetAttachmentByID(context.Background(), testAttachmentID)
 	if err != nil {
 		t.Fatalf("GetAttachmentByID returned error: %v", err)
@@ -483,7 +556,7 @@ func TestCaseService_GetAttachmentByID_NotFound(t *testing.T) {
 			return domain.Attachment{}, &apierror.NotFoundError{Msg: "attachment not found"}
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	svc := NewCaseService(repo, stubUserRepo{}, nil, nil)
 
 	_, err := svc.GetAttachmentByID(context.Background(), testAttachmentID)
 	var nfe *apierror.NotFoundError
@@ -492,12 +565,46 @@ func TestCaseService_GetAttachmentByID_NotFound(t *testing.T) {
 	}
 }
 
-// TestCaseService_GetCaseAttachmentContent_ReturnsTypedError proves this data
-// source never attempts to serve bytes for an attachment it doesn't hold --
-// it returns an accurate, typed error instead of fabricating a response or
-// reaching out to SFTPGo itself.
-func TestCaseService_GetCaseAttachmentContent_ReturnsTypedError(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil)
+// TestCaseService_GetCaseAttachmentContent_RelaysFromSFTPGo proves this data
+// source now relays bytes from SFTPGo server-side, symmetric with
+// CreateCaseAttachment and matching snCaseService.GetCaseAttachmentContent's
+// shape.
+func TestCaseService_GetCaseAttachmentContent_RelaysFromSFTPGo(t *testing.T) {
+	key := testStorageKey
+	repo := &stubCaseRepo{
+		getCaseAttachmentByID: func(_ context.Context, id string) (domain.Attachment, error) {
+			return domain.Attachment{ID: id, Type: "text/plain", StorageKey: &key}, nil
+		},
+	}
+	var readKey string
+	sftpgoClient := &fakeSFTPGoClient{
+		readFile: func(_ context.Context, _, storageKey string) ([]byte, string, error) {
+			readKey = storageKey
+			return []byte("hello world"), "text/plain", nil
+		},
+	}
+	svc := NewCaseService(repo, actorUserRepo(t), nil, sftpgoClient)
+	ctx := attachmentCtx(t)
+
+	content, contentType, err := svc.GetCaseAttachmentContent(ctx, testAttachmentID)
+	if err != nil {
+		t.Fatalf("GetCaseAttachmentContent returned error: %v", err)
+	}
+	if string(content) != "hello world" {
+		t.Fatalf("expected content %q, got %q", "hello world", content)
+	}
+	if contentType != "text/plain" {
+		t.Fatalf("expected contentType %q, got %q", "text/plain", contentType)
+	}
+	if readKey != testStorageKey {
+		t.Fatalf("expected SFTPGo read at %q, got %q", testStorageKey, readKey)
+	}
+}
+
+// TestCaseService_GetCaseAttachmentContent_SFTPGoNotConfigured proves a
+// deployment without SFTPGO_BASE_URL set fails closed rather than panicking.
+func TestCaseService_GetCaseAttachmentContent_SFTPGoNotConfigured(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, nil)
 
 	content, contentType, err := svc.GetCaseAttachmentContent(context.Background(), testAttachmentID)
 	if content != nil {
@@ -522,7 +629,7 @@ func TestCaseService_DeleteCaseAttachment_RemovesRow(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	resp, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -546,7 +653,7 @@ func TestCaseService_DeleteCaseAttachment_RejectsUnauthenticatedCaller(t *testin
 			return nil
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{}, nil)
+	svc := NewCaseService(repo, stubUserRepo{}, nil, nil)
 	ctx := contextWithUserIDToken("")
 
 	_, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -564,7 +671,7 @@ func TestCaseService_DeleteCaseAttachment_NotFound(t *testing.T) {
 			return &apierror.NotFoundError{Msg: "attachment not found"}
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	_, err := svc.DeleteCaseAttachment(ctx, domain.DeleteAttachmentRequest{AttachmentID: testAttachmentID})
@@ -586,7 +693,7 @@ func TestCaseService_UpdateAttachment_RenamesFile(t *testing.T) {
 			return updatedOn, nil
 		},
 	}
-	svc := NewCaseService(repo, actorUserRepo(t), nil)
+	svc := NewCaseService(repo, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
@@ -614,7 +721,7 @@ func TestCaseService_UpdateAttachment_RenamesFile(t *testing.T) {
 // ServiceNow path's validateAttachmentUpdate rule: description is not a
 // valid field to update for reference type "case".
 func TestCaseService_UpdateAttachment_RejectsDescriptionForCase(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
@@ -636,7 +743,7 @@ func TestCaseService_UpdateAttachment_RejectsDescriptionForCase(t *testing.T) {
 // data source rejects the "deployment" reference type ServiceNow allows for
 // updates: deployment attachments have no Postgres schema backing here.
 func TestCaseService_UpdateAttachment_RejectsDeploymentReferenceType(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil)
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	name := "renamed.log"
