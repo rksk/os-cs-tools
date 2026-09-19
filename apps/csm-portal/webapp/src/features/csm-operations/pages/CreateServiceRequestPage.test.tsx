@@ -45,7 +45,7 @@ vi.mock("@features/csm-cases/api/usePostCsmCase", () => ({
   usePostCsmCase: () => ({ mutateAsync: postCaseMutateAsyncMock }),
 }));
 vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
-  usePostCsmCaseAttachment: () => ({ mutateAsync: vi.fn(), uploadProgress: null }),
+  usePostCsmCaseAttachment: () => ({ mutateAsync: vi.fn() }),
   // AttachmentsField (rendered once a catalog item is selected, per the
   // read-access gating tests below driving selection that far) reads this
   // constant directly, not through the hook.

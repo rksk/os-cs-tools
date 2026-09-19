@@ -18,25 +18,11 @@ import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useBackendApi } from "@api/backend/client";
 import { ApiQueryKeys } from "@constants/apiConstants";
-import type { BeAttachmentShareResponse } from "@api/backend/types";
-import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import {
   extractIixAttachmentIds,
   replaceInlineImageSrcs,
   sysidToUuid,
 } from "@features/csm-cases/utils/inlineImages";
-
-/**
- * How long a resolved share URL is treated as fresh before React Query would
- * refetch it. SFTPGo shares expire 5 minutes after creation (see the
- * backend's `shareTTL`); this is kept comfortably under that so a stale
- * cached URL is never handed to an `<img>` past its expiry, while still
- * avoiding a share-creation call on every re-render/remount within the
- * window. A fixed shorter `staleTime` is a deliberate, simple first pass —
- * not a full "detect the 403 and mint a fresh share" retry loop, which is
- * unnecessary complexity for an inline preview image.
- */
-const INLINE_IMAGE_SHARE_STALE_TIME_MS = 3 * 60_000;
 
 const SAFE_IMAGE_SUBTYPES = /^(png|jpeg|jpg|gif|webp|svg\+xml|bmp|avif)$/i;
 
@@ -63,17 +49,10 @@ function blobToDataUrl(blob: Blob): Promise<string | null> {
 
 /**
  * Resolves inline-image attachments referenced within comment/description
- * HTML so `<img>` tags can render them.
- *
- * Two mutually exclusive paths, gated on the signed-in user's
- * `sftpgoAttachmentStorageEnabled` flag (`GET /users/me`):
- *  - Off (default, unchanged): fetches each attachment via the authenticated
- *    `GET /attachments/{id}/content` endpoint and resolves it into a `data:`
- *    URL, so the browser never makes an unauthenticated request. Mirrors the
- *    customer portal's `useResolvedInlineImageHtml`.
- *  - On: creates a short-lived public share (`POST /attachments/{id}/share`)
- *    for each referenced attachment and uses its `shareUrl` directly as the
- *    `<img>` src.
+ * HTML so `<img>` tags can render them: fetches each attachment via the
+ * authenticated `GET /attachments/{id}/content` endpoint and resolves it into
+ * a `data:` URL, so the browser never makes an unauthenticated request.
+ * Mirrors the customer portal's `useResolvedInlineImageHtml`.
  *
  * @param html - Sanitized HTML that may contain `.iix` `<img>` src references.
  */
@@ -82,37 +61,16 @@ export function useResolvedInlineImageHtml(html: string): {
   isLoading: boolean;
 } {
   const api = useBackendApi();
-  const { user } = useCurrentUser();
-  const sftpgoEnabled = !!user?.sftpgoAttachmentStorageEnabled;
   const attachmentIds = useMemo(() => extractIixAttachmentIds(html), [html]);
 
   const queries = useQueries({
     queries: attachmentIds.map((id) => ({
-      queryKey: [
-        ApiQueryKeys.CSM_CASE_ATTACHMENTS,
-        "inline-preview",
-        id,
-        sftpgoEnabled,
-      ],
+      queryKey: [ApiQueryKeys.CSM_CASE_ATTACHMENTS, "inline-preview", id],
       queryFn: async (): Promise<string | null> => {
         // The extracted id is a bare 32-char sysid; the endpoint requires the
         // canonical UUID shape (hyphens re-inserted), same as every other
         // attachment id sent to this backend.
         const attachmentId = encodeURIComponent(sysidToUuid(id));
-
-        if (sftpgoEnabled) {
-          // A share is a real SFTPGo object with its own lifecycle — only
-          // create one when this specific inline image is actually being
-          // resolved for render, never eagerly for a whole comment thread.
-          const { shareUrl } = await api.post<
-            Record<string, never>,
-            BeAttachmentShareResponse
-          >(`/attachments/${attachmentId}/share`, {});
-          // The share URL is a public, unauthenticated download link, so it
-          // can be set directly as the <img> src rather than fetched and
-          // re-encoded as a data URL.
-          return shareUrl;
-        }
 
         const blob = await api.getBlob(`/attachments/${attachmentId}/content`);
         const mimeType = toSafeMimeType(blob.type);
@@ -120,10 +78,8 @@ export function useResolvedInlineImageHtml(html: string): {
         return blobToDataUrl(blob);
       },
       enabled: !!id,
-      // The default (non-SFTPGo) path resolves immutable attachment content,
-      // so it's cached indefinitely. The SFTPGo share path resolves to a
-      // URL that itself expires — see INLINE_IMAGE_SHARE_STALE_TIME_MS.
-      staleTime: sftpgoEnabled ? INLINE_IMAGE_SHARE_STALE_TIME_MS : Infinity,
+      // Resolves immutable attachment content, so it's cached indefinitely.
+      staleTime: Infinity,
       retry: 1,
     })),
   });
