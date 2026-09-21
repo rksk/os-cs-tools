@@ -88,13 +88,6 @@ type entityCaseClient interface {
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
 	GetCaseAttachmentContent(ctx context.Context, attachmentID string) ([]byte, string, error)
 	DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
-	// GetCaseAttachment resolves a single attachment's metadata — used by the
-	// SFTPGo-backed share-creation path; see AttachmentStorageHandler.
-	GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
-	// ConfirmCaseAttachment transitions a 'pending' attachment row (created by
-	// CreateCaseAttachment with status "pending") to 'complete' — used by the
-	// SFTPGo-backed upload-confirm path; see AttachmentStorageHandler.
-	ConfirmCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	GetAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
@@ -115,12 +108,6 @@ type entityCaseClient interface {
 // entity service for data access.
 type CaseHandler struct {
 	entity entityCaseClient
-	// inlineImages enables server-side inline-image extraction on
-	// CreateCaseComment when non-nil — see WithInlineImageProcessor. nil on
-	// every existing call site (including every test), which keeps
-	// CreateCaseComment's behavior completely unchanged from before this
-	// feature existed.
-	inlineImages *InlineImageProcessor
 	// engineering, when non-nil, files GitHub issues from a case instead of
 	// the entity service — see WithEngineeringClient.
 	engineering engineeringGitIssueClient
@@ -129,20 +116,6 @@ type CaseHandler struct {
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
 func NewCaseHandler(entity entityCaseClient) *CaseHandler {
 	return &CaseHandler{entity: entity}
-}
-
-// WithInlineImageProcessor enables server-side inline-image extraction on
-// CreateCaseComment: a base64 data: URI embedded in a comment's rich-text
-// HTML is extracted, uploaded as a real SFTPGo-backed attachment, and the
-// HTML is rewritten to a ".iix" reference — mirroring ServiceNow's own
-// RichTextUtils.processInlineImages for SN-backed comments. Only wired up in
-// cmd/server/main.go when SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; SN-backed
-// comment creation is untouched either way, since SN's own scripted API
-// already performs the equivalent extraction itself. Returns h for chaining
-// at the construction site.
-func (h *CaseHandler) WithInlineImageProcessor(p *InlineImageProcessor) *CaseHandler {
-	h.inlineImages = p
-	return h
 }
 
 // resolveCurrentUserID returns the caller's platform user id — the id
@@ -498,21 +471,12 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Extract any base64 inline image embedded in the comment's rich-text
-	// HTML into a real SFTPGo-backed attachment before forwarding to the
-	// entity service — mirrors ServiceNow's own RichTextUtils processing for
-	// SN-backed comments (that path is untouched: it already runs inside the
-	// SN scripted API, not here). Only active when
-	// SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; see WithInlineImageProcessor.
-	if h.inlineImages != nil {
-		newBody, ierr := h.processCommentInlineImages(r, user, caseID, body)
-		if ierr != nil {
-			ierr.write(w)
-			return
-		}
-		body = newBody
-	}
-
+	// Any base64 inline image embedded in the comment's rich-text HTML is now
+	// extracted and rewritten to a real attachment reference by entity-service
+	// itself (see its CreateCaseComment), not this handler — this backend
+	// just needs to forward the caller's raw x-jwt-assertion so entity-service
+	// can authenticate its own outbound call to whichever storage backend
+	// this data source uses.
 	result, err := h.entity.CreateCaseComment(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCaseComment failed", "userID", user.UserID, "caseID", caseID, "err", err)
