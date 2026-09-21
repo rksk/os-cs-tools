@@ -19,16 +19,32 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/sftpgo"
 )
+
+// SFTPGoFileClient is the subset of sftpgo.Client operations caseService
+// needs: mint a per-caller token, and write/read/delete file bytes directly
+// (no Share, no TUS) — see internal/sftpgo's own package doc comment for why
+// this is smaller than the client that used to live in the BFF. Narrowed to
+// an interface so tests can substitute a stub.
+type SFTPGoFileClient interface {
+	MintToken(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error)
+	WriteFile(ctx context.Context, accessToken, storageKey string, data []byte) error
+	ReadFile(ctx context.Context, accessToken, storageKey string) ([]byte, string, error)
+	RemoveFile(ctx context.Context, accessToken, storageKey string) error
+}
 
 type caseService struct {
 	repo     repository.CaseRepository
@@ -40,13 +56,22 @@ type caseService struct {
 	// case.billable_status_changed detection.
 	publisher EventPublisherService
 	access    AccessService
+	// sftpgo is nil when SFTPGO_BASE_URL is not configured — every
+	// SFTPGo-backed attachment method (CreateCaseAttachment,
+	// GetCaseAttachmentContent, and CreateCaseComment's inline-image
+	// extraction) fails closed with a ServiceUnavailableError in that case,
+	// rather than panicking or silently no-op'ing.
+	sftpgo SFTPGoFileClient
 }
 
 // NewCaseService constructs a CaseService backed by the given repositories.
 // publisher may be nil (see caseService.publisher's own doc comment). access
-// scopes GetCaseByID/SearchCases's reads (see AccessService).
-func NewCaseService(repo repository.CaseRepository, userRepo repository.UserRepository, publisher EventPublisherService, access AccessService) CaseService {
-	return &caseService{repo: repo, userRepo: userRepo, publisher: publisher, access: access}
+// scopes GetCaseByID/SearchCases's reads (see AccessService). sftpgoClient
+// may also be nil (see caseService.sftpgo's own doc comment) — every
+// environment without SFTPGO_BASE_URL configured keeps working for every
+// route except the SFTPGo-backed attachment/inline-image ones.
+func NewCaseService(repo repository.CaseRepository, userRepo repository.UserRepository, publisher EventPublisherService, access AccessService, sftpgoClient SFTPGoFileClient) CaseService {
+	return &caseService{repo: repo, userRepo: userRepo, publisher: publisher, access: access, sftpgo: sftpgoClient}
 }
 
 var validCaseSortField = map[domain.CaseSortField]bool{
@@ -339,6 +364,22 @@ func (s *caseService) CreateCaseComment(ctx context.Context, req domain.CreateCa
 	if err != nil {
 		return domain.CreateCaseCommentResponse{}, err
 	}
+
+	// Extract any embedded base64 <img> data: URIs, uploading each to SFTPGo
+	// as a real attachment and rewriting the tag to a ".iix" reference --
+	// moved here from the BFF's InlineImageProcessor (see this method's own
+	// package for processInlineCommentImages), same as
+	// RichTextUtils.processRichTextContent already does inline for
+	// ServiceNow-backed comments. A cheap prefilter (Contains "base64,")
+	// means a comment with no inline image pays no extra cost.
+	if strings.Contains(req.Content, "base64,") {
+		newContent, err := s.processInlineCommentImages(ctx, req.CaseID, req.Content)
+		if err != nil {
+			return domain.CreateCaseCommentResponse{}, err
+		}
+		req.Content = newContent
+	}
+
 	// comment.created_by (migration 000037) is a free-text VARCHAR, not a
 	// UUID FK -- see CaseRepository.CreateCaseComment's own doc comment.
 	req.CreatedBy = user.Email
@@ -759,12 +800,26 @@ func (s *caseService) resolveActor(ctx context.Context) (domain.User, error) {
 }
 
 // CreateCaseAttachment implements CaseService for the CSM-native (Postgres)
-// data source. Unlike ServiceNow, this data source never receives file bytes
-// directly: the caller must have already uploaded the file to SFTPGo and
-// supplies its storage_key plus the size/name/type metadata. Only
-// ReferenceTypeCase is supported -- the other ReferenceType values
-// (conversation, change_request, deployment, incident) have no Postgres
-// schema backing on this data source.
+// data source.
+//
+// As of this rewrite this data source receives file bytes directly, exactly
+// like the ServiceNow path (see snCaseService.CreateCaseAttachment): req.File
+// is a base64 data URI, decoded and size-capped with the identical
+// maxAttachmentBytes logic, then relayed synchronously to SFTPGo via
+// s.sftpgo.WriteFile before the metadata row is ever created. There is no
+// more two-phase pending/confirm dance for a fresh upload — a row is only
+// ever created once its bytes are already durably in SFTPGo, so it is always
+// created "complete". Callers no longer supply storageKey; it is computed
+// server-side from the case/attachment identity (see buildStorageKey) and
+// returned on the response for reference, not requested as input.
+//
+// The AttachmentStatus column (migration 000013) and
+// ConfirmCaseAttachment/domain.AttachmentStatusPending remain in the schema
+// and API surface for now — they are not removed by this change (removing a
+// column is a separate, explicit migration decision) but pending rows are no
+// longer produced by this method. Only ReferenceTypeCase is supported -- the
+// other ReferenceType values (conversation, change_request, deployment,
+// incident) have no Postgres schema backing on this data source.
 func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
 	if err := validateUUIDs("referenceId", []string{req.ReferenceID}); err != nil {
 		return domain.CreateAttachmentResponse{}, err
@@ -778,33 +833,59 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 	if req.Type == "" {
 		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "type is required"}
 	}
-	if req.StorageKey == nil || *req.StorageKey == "" {
-		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "storageKey is required: this data source has no base64 payload alternative, the file must already be uploaded to SFTPGo"}
+
+	decoded, err := decodeAttachmentDataURI(req.File)
+	if err != nil {
+		return domain.CreateAttachmentResponse{}, err
 	}
-	if req.SizeBytes <= 0 {
-		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "sizeBytes must be greater than zero"}
-	}
-	// Empty defaults to complete: every caller before this change (and every
-	// existing Postgres-path caller that doesn't know about the pending
-	// state) gets exactly today's behavior. Only a caller that explicitly
-	// wants the two-step upload flow passes "pending".
-	switch req.Status {
-	case "":
-		req.Status = domain.AttachmentStatusComplete
-	case domain.AttachmentStatusPending, domain.AttachmentStatusComplete:
-		// valid
-	default:
-		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("invalid status %q: must be 'pending' or 'complete'", req.Status)}
+
+	if s.sftpgo == nil {
+		return domain.CreateAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "attachment storage is not configured on this deployment (SFTPGO_BASE_URL unset)"}
 	}
 
 	user, err := s.resolveActor(ctx)
 	if err != nil {
 		return domain.CreateAttachmentResponse{}, err
 	}
+
+	accessToken, err := s.mintSFTPGoToken(ctx, user.Email)
+	if err != nil {
+		return domain.CreateAttachmentResponse{}, err
+	}
+
+	// Unrestricted: this is an internal lookup to resolve the case's project
+	// for storage-key namespacing, not a caller-facing read -- the caller's
+	// authorization to attach to this case is enforced elsewhere.
+	caseView, err := s.repo.GetCaseByID(ctx, req.ReferenceID, repository.SearchScope{Unrestricted: true})
+	if err != nil {
+		return domain.CreateAttachmentResponse{}, err
+	}
+	var projectID string
+	if caseView.ProjectDetails != nil {
+		projectID = caseView.ProjectDetails.ID
+	}
+
+	storageKey := buildStorageKey(projectID, req.ReferenceID, newStorageDirID(), req.Name)
+
+	if err := s.sftpgo.WriteFile(ctx, accessToken, storageKey, decoded); err != nil {
+		slog.ErrorContext(ctx, "create case attachment: sftpgo WriteFile failed", "caseId", req.ReferenceID, "err", err)
+		return domain.CreateAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "failed to store attachment"}
+	}
+
+	req.StorageKey = &storageKey
+	req.SizeBytes = len(decoded)
+	req.Status = domain.AttachmentStatusComplete
 	req.CreatedBy = user.ID
 
 	a, err := s.repo.CreateCaseAttachment(ctx, req)
 	if err != nil {
+		// Best-effort cleanup: the bytes are already in SFTPGo but the
+		// metadata row failed (e.g. a bad referenceId slipping past
+		// GetCaseByID under a race, or a DB error) -- do not leave an
+		// orphaned file behind for a row that was never created.
+		if rmErr := s.sftpgo.RemoveFile(context.WithoutCancel(ctx), accessToken, storageKey); rmErr != nil {
+			slog.ErrorContext(ctx, "create case attachment: rollback RemoveFile failed", "storageKey", storageKey, "err", rmErr)
+		}
 		return domain.CreateAttachmentResponse{}, err
 	}
 
@@ -817,11 +898,138 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 			CreatedBy:  user.Email,
 			StorageKey: a.StorageKey,
 			Status:     a.Status,
-			// No DownloadURL: this service holds no bytes for a Postgres-sourced
-			// attachment, only its storage_key. Resolving storage_key to an
-			// actual download location is the downstream CSM backend's job.
 		},
 	}, nil
+}
+
+// mintSFTPGoToken resolves the x-jwt-assertion header off ctx (see
+// middleware.JWTAssertion) and mints a SFTPGo access token for email. Fails
+// closed with UnauthorizedError when the header is absent -- this is
+// expected to happen until the BFF is updated to forward x-jwt-assertion to
+// entity-service on the relevant routes (see this feature's task file); a
+// direct caller of entity-service (e.g. this change's own verification)
+// must set the header itself.
+func (s *caseService) mintSFTPGoToken(ctx context.Context, email string) (string, error) {
+	jwtAssertion := middleware.JWTAssertionFromContext(ctx)
+	if jwtAssertion == "" {
+		return "", &apierror.UnauthorizedError{Msg: "x-jwt-assertion header is required to access attachment storage"}
+	}
+	token, err := s.sftpgo.MintToken(ctx, email, jwtAssertion)
+	if err != nil {
+		slog.ErrorContext(ctx, "sftpgo MintToken failed", "email", email, "err", err)
+		return "", &apierror.ServiceUnavailableError{Msg: "failed to authenticate against attachment storage"}
+	}
+	return token.AccessToken, nil
+}
+
+// decodeAttachmentDataURI validates and decodes req.File, mirroring
+// snCaseService.CreateCaseAttachment's identical base64-data-URI parsing and
+// maxAttachmentBytes size cap exactly -- see that function's own inline
+// comments for the reasoning (early guard on encoded length before
+// allocating, decoded-length re-check, URL-safe base64 fallback).
+func decodeAttachmentDataURI(file string) ([]byte, error) {
+	if file == "" {
+		return nil, &apierror.ValidationError{Msg: "file is required"}
+	}
+	const dataURIPrefix = "data:"
+	const base64Marker = ";base64,"
+	if !strings.HasPrefix(file, dataURIPrefix) {
+		return nil, &apierror.ValidationError{Msg: "file must be a base64 data URI (e.g. data:image/png;base64,...)"}
+	}
+	markerIdx := strings.Index(file, base64Marker)
+	if markerIdx == -1 {
+		return nil, &apierror.ValidationError{Msg: "file must be a base64 data URI (e.g. data:image/png;base64,...)"}
+	}
+	rawBase64 := file[markerIdx+len(base64Marker):]
+
+	if len(rawBase64)*3/4 > maxAttachmentBytes {
+		return nil, &apierror.ValidationError{Msg: "file exceeds maximum allowed size of 10 MB"}
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(rawBase64)
+	if err != nil {
+		decoded, err = base64.URLEncoding.DecodeString(rawBase64)
+		if err != nil {
+			return nil, &apierror.ValidationError{Msg: "file contains invalid base64 data"}
+		}
+	}
+	if len(decoded) > maxAttachmentBytes {
+		return nil, &apierror.ValidationError{Msg: "file exceeds maximum allowed size of 10 MB"}
+	}
+	return decoded, nil
+}
+
+// newStorageDirID generates a fresh random UUID-shaped id used only to give
+// one attachment's (or one inline image's) storage path its own directory —
+// distinct from, and unrelated to, the database-assigned attachment id.
+// Ported from apps/csm-portal/backend/internal/handler/attachment_storage.go's
+// newAttachmentID, which used this same generator for the same purpose.
+func newStorageDirID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("case_service: failed to read random bytes: " + err.Error())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// maxSanitizedFilenameLen caps the sanitized filename portion of a storage
+// key's leaf segment -- ported from
+// apps/csm-portal/backend/internal/handler/attachment_storage.go verbatim
+// (see that file's own doc comment for the full reasoning).
+const maxSanitizedFilenameLen = 200
+
+// buildStorageKey and sanitizeFilenameForStorageKey are ported verbatim from
+// apps/csm-portal/backend/internal/handler/attachment_storage.go: the
+// directory-per-attachment-UUID storage path convention is still a
+// reasonable convention for the SFTPGo path layout even though the
+// Share-scoping logic that used to be built around it (in the BFF) is gone.
+func buildStorageKey(projectID, caseID, dirID, filename string) string {
+	sanitized := sanitizeFilenameForStorageKey(filename)
+	if sanitized == "" {
+		sanitized = dirID
+	}
+	if projectID == "" {
+		return fmt.Sprintf("/attachments/cases/%s/%s/%s", caseID, dirID, sanitized)
+	}
+	return fmt.Sprintf("/attachments/project-%s/cases/%s/%s/%s", projectID, caseID, dirID, sanitized)
+}
+
+// sanitizeFilenameForStorageKey makes an untrusted, user-supplied filename
+// safe to use as one path segment of an SFTPGo storage key -- see
+// buildStorageKey's doc comment; the algorithm itself (strip path
+// separators/".."/control chars/leading dots, cap length without splitting a
+// UTF-8 rune) is unchanged from its BFF original.
+func sanitizeFilenameForStorageKey(filename string) string {
+	var b []rune
+	for _, r := range filename {
+		if r == '/' || r == '\\' || r < 0x20 || r == 0x7f {
+			continue
+		}
+		b = append(b, r)
+	}
+	cleaned := string(b)
+
+	for {
+		replaced := strings.ReplaceAll(cleaned, "..", "")
+		if replaced == cleaned {
+			break
+		}
+		cleaned = replaced
+	}
+
+	cleaned = strings.TrimLeft(cleaned, ".")
+
+	if len(cleaned) > maxSanitizedFilenameLen {
+		truncated := cleaned[:maxSanitizedFilenameLen]
+		for len(truncated) > 0 && !utf8.ValidString(truncated) {
+			truncated = truncated[:len(truncated)-1]
+		}
+		cleaned = truncated
+	}
+
+	return cleaned
 }
 
 // ConfirmCaseAttachment implements CaseService for the CSM-native (Postgres)
@@ -945,13 +1153,44 @@ func (s *caseService) SearchCaseActivities(ctx context.Context, req domain.Searc
 }
 
 // GetCaseAttachmentContent implements CaseService for the CSM-native
-// (Postgres) data source. This service never holds the file bytes for a
-// Postgres-sourced attachment -- they live in SFTPGo, addressed by the
-// attachment's storage_key (see GetAttachmentByID / SearchCaseAttachments).
-// Callers must resolve content externally via that storage_key rather than
-// through this endpoint.
-func (s *caseService) GetCaseAttachmentContent(_ context.Context, _ string) ([]byte, string, error) {
-	return nil, "", &apierror.ServiceUnavailableError{Msg: "this data source does not serve attachment bytes directly; resolve content via the attachment's storageKey"}
+// (Postgres) data source. As of this rewrite, this relays bytes from SFTPGo
+// server-side, symmetric with CreateCaseAttachment and matching
+// snCaseService.GetCaseAttachmentContent's shape exactly: mint a token, fetch
+// the file at the attachment's storage_key, and return it.
+func (s *caseService) GetCaseAttachmentContent(ctx context.Context, id string) ([]byte, string, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return nil, "", err
+	}
+	if s.sftpgo == nil {
+		return nil, "", &apierror.ServiceUnavailableError{Msg: "attachment storage is not configured on this deployment (SFTPGO_BASE_URL unset)"}
+	}
+
+	user, err := s.resolveActor(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+
+	a, err := s.repo.GetCaseAttachmentByID(ctx, id)
+	if err != nil {
+		return nil, "", err
+	}
+	if a.StorageKey == nil || *a.StorageKey == "" {
+		return nil, "", &apierror.NotFoundError{Msg: "attachment has no stored content"}
+	}
+
+	accessToken, err := s.mintSFTPGoToken(ctx, user.Email)
+	if err != nil {
+		return nil, "", err
+	}
+
+	data, contentType, err := s.sftpgo.ReadFile(ctx, accessToken, *a.StorageKey)
+	if err != nil {
+		return nil, "", err
+	}
+	if contentType == "" {
+		contentType = a.Type
+	}
+	return data, contentType, nil
 }
 
 // DeleteCaseAttachment implements CaseService for the CSM-native (Postgres)

@@ -49,12 +49,17 @@ type stubCaseRepo struct {
 	updateAttachmentName  func(ctx context.Context, id, name, updatedBy string) (time.Time, error)
 	confirmCaseAttachment func(ctx context.Context, id string) (domain.Attachment, error)
 	searchCaseComments    func(ctx context.Context, req domain.SearchCaseCommentsRequest) ([]domain.CaseComment, int, error)
+	getCaseByID           func(ctx context.Context, id string) (domain.CaseView, error)
+	createCaseComment     func(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CaseComment, error)
 }
 
 func (s *stubCaseRepo) CreateCase(context.Context, domain.CreateCaseRequest) (domain.Case, error) {
 	panic("not implemented")
 }
-func (s *stubCaseRepo) GetCaseByID(context.Context, string, repository.SearchScope) (domain.CaseView, error) {
+func (s *stubCaseRepo) GetCaseByID(ctx context.Context, id string, _ repository.SearchScope) (domain.CaseView, error) {
+	if s.getCaseByID != nil {
+		return s.getCaseByID(ctx, id)
+	}
 	panic("not implemented")
 }
 func (s *stubCaseRepo) SearchCases(ctx context.Context, req domain.SearchCasesRequest, scope repository.SearchScope) ([]domain.SearchCaseView, int, error) {
@@ -63,7 +68,10 @@ func (s *stubCaseRepo) SearchCases(ctx context.Context, req domain.SearchCasesRe
 	}
 	panic("SearchCases called unexpectedly: the unsupported-field check should have short-circuited before reaching the repository")
 }
-func (s *stubCaseRepo) CreateCaseComment(context.Context, domain.CreateCaseCommentRequest) (domain.CaseComment, error) {
+func (s *stubCaseRepo) CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CaseComment, error) {
+	if s.createCaseComment != nil {
+		return s.createCaseComment(ctx, req)
+	}
 	panic("not implemented")
 }
 func (s *stubCaseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCaseCommentsRequest) ([]domain.CaseComment, int, error) {
@@ -188,7 +196,7 @@ func (s stubUserRepo) GetUserGroups(ctx context.Context, id string) ([]domain.Us
 // query support yet), rather than silently accepting the request and
 // returning a broader-than-requested result set.
 func TestCaseService_SearchCases_RejectsUnsupportedPostgresFields(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	cases := []struct {
@@ -261,7 +269,7 @@ func TestCaseService_SearchCases_SupportedFieldsStillReachRepository(t *testing.
 					return nil, 0, nil
 				},
 			}
-			svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+			svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 			ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 			req := domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
@@ -285,7 +293,7 @@ func TestCaseService_SearchCases_SupportedFieldsStillReachRepository(t *testing.
 // The stub repository panics if reached, so a passing test proves the
 // short-circuit, not merely that the repository ignored the option.
 func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	cases := []struct {
@@ -362,7 +370,7 @@ func TestCaseService_SearchCaseComments(t *testing.T) {
 				return nil, 0, nil
 			},
 		}
-		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 
 		resp, err := svc.SearchCaseComments(context.Background(), domain.SearchCaseCommentsRequest{CaseID: caseID})
 		if err != nil {
@@ -390,7 +398,7 @@ func TestCaseService_SearchCaseComments(t *testing.T) {
 				return []domain.CaseComment{want}, 1, nil
 			},
 		}
-		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 
 		resp, err := svc.SearchCaseComments(context.Background(), domain.SearchCaseCommentsRequest{CaseID: caseID})
 		if err != nil {
@@ -420,7 +428,7 @@ func TestCaseService_SearchCaseComments(t *testing.T) {
 				return []domain.CaseComment{newest, middle, oldest}, 5, nil
 			},
 		}
-		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 
 		resp, err := svc.SearchCaseComments(context.Background(), domain.SearchCaseCommentsRequest{
 			CaseID:     caseID,
@@ -451,7 +459,7 @@ func TestCaseService_SearchCaseComments(t *testing.T) {
 				return nil, 0, nil
 			},
 		}
-		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+		svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 
 		_, err := svc.SearchCaseComments(context.Background(), domain.SearchCaseCommentsRequest{CaseID: "not-a-uuid"})
 		var ve *apierror.ValidationError
@@ -470,7 +478,7 @@ func TestCaseService_SearchCaseComments(t *testing.T) {
 // CreateCase's own "only type \"case\" is supported" guard), so none of these
 // fields have anywhere to go on this data source.
 func TestCaseService_UpdateCase_RejectsTypeTransferFields(t *testing.T) {
-	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 	ctx := context.Background()
 	strPtr := func(s string) *string { return &s }
 	engagement := domain.EngagementTypeMigration
@@ -524,7 +532,7 @@ func TestCaseService_SearchCases_AnyOfReachesRepository(t *testing.T) {
 			return nil, 0, nil
 		},
 	}
-	svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
+	svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	req := domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{

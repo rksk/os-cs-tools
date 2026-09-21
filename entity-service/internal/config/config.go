@@ -208,6 +208,13 @@ type Config struct {
 	SalesEntityClientID     string
 	SalesEntityClientSecret string
 	SalesEntityScopes       string
+	// SFTPGoBaseURL is SFTPGo's REST API base, e.g. "https://sftpgo.internal:8080".
+	// Optional: when unset, the CSM-native (Postgres) data source's
+	// attachment-byte relay (CreateCaseAttachment/GetCaseAttachmentContent/
+	// inline comment images) fails closed with a ServiceUnavailableError
+	// instead of blocking every other Postgres-backed route at startup —
+	// same "degrade, don't crash-loop" posture as SalesEntityBaseURL.
+	SFTPGoBaseURL string
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -263,6 +270,7 @@ func Load() *Config {
 		SalesEntityClientID:                      os.Getenv("SALES_ENTITY_CLIENT_ID"),
 		SalesEntityClientSecret:                  os.Getenv("SALES_ENTITY_CLIENT_SECRET"),
 		SalesEntityScopes:                        os.Getenv("SALES_ENTITY_SCOPES"),
+		SFTPGoBaseURL:                             os.Getenv("SFTPGO_BASE_URL"),
 	}
 	cfg.AuthInternalClientIDs = ParseInternalClientIDs(cfg.AuthInternalClientIDsRaw)
 	return cfg

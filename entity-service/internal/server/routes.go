@@ -32,12 +32,14 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/salesentity"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/sftpgo"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
 
 // NewRouter builds the dependency graph (repository → service → handler),
 // registers all routes, and wraps the mux with the middleware chain:
-// CorrelationID → Recovery → Logger → UserIDToken → Timeout. Also returns
+// CorrelationID → Recovery → Logger → UserIDToken → auth.Middleware →
+// JWTAssertion → Timeout. Also returns
 // the constructed EventPublisherService (nil if EVENT_HUB_BROKER is unset or
 // EVENT_PUBLISHING_ENABLED isn't "true") so the caller (server.New, then
 // cmd/api/main.go) can close it gracefully on shutdown.
@@ -337,8 +339,22 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 		snUserService = service.NewServiceNowUserService(serviceNowIntegrationServiceClient)
 	}
 
+	// sftpgoClient is nil when SFTPGO_BASE_URL is unset -- caseService
+	// degrades its SFTPGo-backed attachment methods to a
+	// ServiceUnavailableError rather than blocking every other
+	// Postgres-backed route at startup (see caseService.sftpgo's own doc
+	// comment).
+	var sftpgoClient service.SFTPGoFileClient
+	if cfg.SFTPGoBaseURL != "" {
+		// Assigned via a plain, non-nil interface value only when configured
+		// -- assigning a nil *sftpgo.Client to an interface variable directly
+		// would produce a non-nil interface holding a nil pointer, which
+		// would defeat every "s.sftpgo == nil" guard in caseService.
+		sftpgoClient = sftpgo.NewClient(sftpgo.Config{BaseURL: cfg.SFTPGoBaseURL})
+	}
+
 	caseRepo := repository.NewCaseRepository(db)
-	pgCaseSvc := service.NewCaseService(caseRepo, userRepo, eventPublisher, accessSvc)
+	pgCaseSvc := service.NewCaseService(caseRepo, userRepo, eventPublisher, accessSvc, sftpgoClient)
 	var activeCaseSvc service.CaseService
 	if cfg.DataSource == config.DataSourceServiceNow {
 		activeCaseSvc = service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, pgCaseSvc, eventPublisher, slaClockService, snUserService, cfg.SupportEngineerRole, cfg.CustomerRoles)
@@ -856,7 +872,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 			middleware.Logger(
 				middleware.UserIDToken(
 					auth.Middleware(tokenValidator)(
-						middleware.Timeout(30 * time.Second)(mux),
+						middleware.JWTAssertion(
+							middleware.Timeout(30 * time.Second)(mux),
+						),
 					),
 				),
 			),
