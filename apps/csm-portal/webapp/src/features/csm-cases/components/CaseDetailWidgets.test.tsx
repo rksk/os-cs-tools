@@ -725,8 +725,8 @@ describe("AttachmentsWidget — uploading state", () => {
       />,
     );
 
-    // Rendering the list alone must never trigger a download resolution
-    // (e.g. a lazily-created SFTPGo share) — only an explicit click does.
+    // Rendering the list alone must never trigger a download resolution —
+    // only an explicit click does.
     expect(onDownload).not.toHaveBeenCalled();
 
     fireEvent.click(
