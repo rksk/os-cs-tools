@@ -45,12 +45,12 @@ describe("useGetUsersMe", () => {
     fetchMock.mockReset();
   });
 
-  it("surfaces sftpgoAttachmentStorageEnabled: true from the response body", async () => {
+  it("surfaces the response body's fields", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
           email: "jane.doe@example.com",
-          sftpgoAttachmentStorageEnabled: true,
+          id: "00000000-0000-0000-0000-000000000000",
         }),
         { status: 200 },
       ),
@@ -59,36 +59,23 @@ describe("useGetUsersMe", () => {
     const { result } = renderHook(() => useGetUsersMe(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data?.sftpgoAttachmentStorageEnabled).toBe(true);
-  });
-
-  it("surfaces sftpgoAttachmentStorageEnabled: false from the response body", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          email: "jane.doe@example.com",
-          sftpgoAttachmentStorageEnabled: false,
-        }),
-        { status: 200 },
-      ),
+    expect(result.current.data?.email).toBe("jane.doe@example.com");
+    expect(result.current.data?.id).toBe(
+      "00000000-0000-0000-0000-000000000000",
     );
-
-    const { result } = renderHook(() => useGetUsersMe(), { wrapper });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data?.sftpgoAttachmentStorageEnabled).toBe(false);
   });
 
-  it("treats an absent field (older backend) as undefined, not a thrown error", async () => {
+  it("throws an ApiError on a non-ok response", async () => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ email: "jane.doe@example.com" }), {
-        status: 200,
+      new Response(JSON.stringify({ message: "Unauthorized" }), {
+        status: 401,
+        statusText: "Unauthorized",
       }),
     );
 
     const { result } = renderHook(() => useGetUsersMe(), { wrapper });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.isError).toBe(true));
 
-    expect(result.current.data?.sftpgoAttachmentStorageEnabled).toBeUndefined();
+    expect(result.current.error).toBeInstanceOf(Error);
   });
 });

@@ -19,22 +19,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { postMock, getBlobMock, sftpgoFlag } = vi.hoisted(() => ({
+const { postMock, getBlobMock } = vi.hoisted(() => ({
   postMock: vi.fn(),
   getBlobMock: vi.fn(),
-  sftpgoFlag: { enabled: false },
 }));
 
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: postMock, getBlob: getBlobMock }),
-}));
-
-vi.mock("@context/current-user/CurrentUserContext", () => ({
-  useCurrentUser: () => ({
-    user: { sftpgoAttachmentStorageEnabled: sftpgoFlag.enabled },
-    isLoading: false,
-    isError: false,
-  }),
 }));
 
 import { useResolvedInlineImageHtml } from "@features/csm-cases/api/useResolvedInlineImageHtml";
@@ -55,10 +46,9 @@ describe("useResolvedInlineImageHtml", () => {
   beforeEach(() => {
     postMock.mockReset();
     getBlobMock.mockReset();
-    sftpgoFlag.enabled = false;
   });
 
-  it("flag off: resolves via GET /attachments/{id}/content into a data: URL", async () => {
+  it("resolves via GET /attachments/{id}/content into a data: URL", async () => {
     getBlobMock.mockResolvedValue(new Blob(["fake"], { type: "image/png" }));
 
     const { result } = renderHook(() => useResolvedInlineImageHtml(HTML), {
@@ -72,29 +62,6 @@ describe("useResolvedInlineImageHtml", () => {
     const [calledPath] = getBlobMock.mock.calls[0];
     expect(calledPath).toContain("/content");
     expect(result.current.resolvedHtml).toContain("data:image/png;base64,");
-  });
-
-  it("flag on: resolves via POST /attachments/{id}/share and uses shareUrl directly, without fetching content", async () => {
-    sftpgoFlag.enabled = true;
-    postMock.mockResolvedValue({
-      shareUrl: "https://sftpgo.example.com/web/client/pubshares/abc?compress=false",
-    });
-
-    const { result } = renderHook(() => useResolvedInlineImageHtml(HTML), {
-      wrapper,
-    });
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    expect(getBlobMock).not.toHaveBeenCalled();
-    expect(postMock).toHaveBeenCalledTimes(1);
-    const [calledPath, calledBody] = postMock.mock.calls[0];
-    expect(calledPath).toMatch(/\/attachments\/.+\/share$/);
-    expect(calledBody).toEqual({});
-    expect(result.current.resolvedHtml).toContain(
-      "https://sftpgo.example.com/web/client/pubshares/abc?compress=false",
-    );
-    expect(result.current.resolvedHtml).not.toContain("data:");
   });
 
   it("does not resolve anything when the HTML has no .iix references", () => {

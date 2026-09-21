@@ -55,10 +55,7 @@ import RelativeTime from "@components/RelativeTime";
 import UserRefLink from "@components/UserRefLink";
 import { formatBytes } from "@utils/formatBytes";
 import { formatAbsoluteForUser } from "@utils/dateTime";
-import {
-  getAttachmentPreviewKind,
-  type AttachmentPreviewSource,
-} from "@features/csm-cases/utils/attachmentPreview";
+import { getAttachmentPreviewKind } from "@features/csm-cases/utils/attachmentPreview";
 import {
   compareFeedEntries,
   type FeedEntry,
@@ -100,10 +97,8 @@ interface CaseActivitiesFeedProps {
    * there is exactly one dialog open at a time.
    */
   preview?: {
-    /** Resolve a previewable URL for an attachment's inline preview. */
-    onGetPreviewContent: (
-      attachment: CaseAttachment,
-    ) => Promise<AttachmentPreviewSource>;
+    /** Resolve an attachment's raw bytes for its inline preview. */
+    onGetPreviewContent: (attachment: CaseAttachment) => Promise<Blob>;
     /** Attachment currently shown in the preview dialog. */
     previewTarget: CaseAttachment | null;
     onPreviewTargetChange: (attachment: CaseAttachment | null) => void;

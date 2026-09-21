@@ -260,7 +260,6 @@ usePostCsmCaseAttachmentMock.mockReturnValue({
   isError: false,
   error: null,
   variables: undefined,
-  uploadProgress: null,
 });
 vi.mock("@features/csm-cases/api/useCsmCaseFeedback", () => ({
   useGetCsmCaseFeedback: () => ({
@@ -283,7 +282,7 @@ vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   usePostCsmCaseAttachment: () => usePostCsmCaseAttachmentMock(),
   useDownloadCsmCaseAttachment: () => vi.fn(),
   useDeleteCsmCaseAttachment: () => ({ mutate: vi.fn(), isPending: false }),
-  useGetCsmCaseAttachmentPreviewSource: () => vi.fn(),
+  useGetCsmCaseAttachmentContent: () => vi.fn(),
 }));
 vi.mock("@features/csm-cases/api/useCsmCaseCallRequests", () => ({
   useGetCsmCaseCallRequests: () => ({
@@ -543,19 +542,17 @@ vi.mock("@features/csm-cases/components/CaseMetaBand", () => ({
 }));
 // AttachmentsWidget renders as a probe (not a stub returning null) so the
 // cross-case upload-scoping regression below can assert on the actual
-// `uploading`/`uploadProgress` props this page passes down.
+// `uploading`/`uploadError` props this page passes down.
 vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
   AttachmentsWidget: ({
     uploading,
-    uploadProgress,
     uploadError,
   }: {
     uploading?: boolean;
-    uploadProgress?: number | null;
     uploadError?: string | null;
   }) => (
     <div data-testid="attachments-widget-probe">
-      {`uploading=${String(!!uploading)} uploadProgress=${String(uploadProgress ?? "null")} uploadError=${String(uploadError ?? "null")}`}
+      {`uploading=${String(!!uploading)} uploadError=${String(uploadError ?? "null")}`}
     </div>
   ),
   CustomerContextWidget: () => null,
@@ -1135,7 +1132,6 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
       isError: false,
       error: null,
       variables: undefined,
-      uploadProgress: null,
     });
   });
 
@@ -1151,7 +1147,6 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
       isError: false,
       error: null,
       variables: { caseId: "case-1", file: new File([], "x.txt") },
-      uploadProgress: 42,
     });
 
     renderPage();
@@ -1160,7 +1155,7 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
     // here, so the widget should show it.
     fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=true uploadProgress=42 uploadError=null",
+      "uploading=true uploadError=null",
     );
 
     // Navigate to case-2 through a real router transition (same route, only
@@ -1176,7 +1171,7 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
 
     // Case-1's still-pending upload must not leak into case-2's widget.
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=false uploadProgress=null uploadError=null",
+      "uploading=false uploadError=null",
     );
   });
 
@@ -1192,7 +1187,6 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
       isError: true,
       error: new Error("Could not upload the attachment."),
       variables: { caseId: "case-1", file: new File([], "x.txt") },
-      uploadProgress: null,
     });
 
     renderPage();
@@ -1201,7 +1195,7 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
     // here, so the widget should show the error.
     fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=false uploadProgress=null uploadError=Could not upload the attachment.",
+      "uploading=false uploadError=Could not upload the attachment.",
     );
 
     // Navigate to case-2 through a real router transition (same route, only
@@ -1215,7 +1209,7 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
 
     // Case-1's stale upload error must not leak into case-2's widget.
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=false uploadProgress=null uploadError=null",
+      "uploading=false uploadError=null",
     );
   });
 });

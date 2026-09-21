@@ -76,7 +76,7 @@ import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
-  useGetCsmCaseAttachmentPreviewSource,
+  useGetCsmCaseAttachmentContent,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
 import type {
@@ -252,7 +252,7 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   } = useGetCsmCaseAttachments(id, "incident");
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
-  const getAttachmentPreviewContent = useGetCsmCaseAttachmentPreviewSource();
+  const getAttachmentPreviewContent = useGetCsmCaseAttachmentContent();
   const [composerOpen, setComposerOpen] = useState(false);
   // Reports composerOpen up to the in-app case-tabs layer, purely so closing
   // this incident's tab from the tab strip can confirm first — see

@@ -14,21 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 // `vi.mock` factories are hoisted above top-level `const`s, so anything a
 // factory below closes over must itself be created via `vi.hoisted`.
-const { postMock, getBlobMock, uploadFileViaTusMock, sftpgoFlag } = vi.hoisted(
-  () => ({
-    postMock: vi.fn(),
-    getBlobMock: vi.fn(),
-    uploadFileViaTusMock: vi.fn(),
-    sftpgoFlag: { enabled: false },
-  }),
-);
+const { postMock, getBlobMock } = vi.hoisted(() => ({
+  postMock: vi.fn(),
+  getBlobMock: vi.fn(),
+}));
 
 // The real client reads runtime config at module load, which isn't present
 // under vitest (same approach as useSearchTags.test.tsx).
@@ -36,24 +32,12 @@ vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: postMock, getBlob: getBlobMock }),
 }));
 
-vi.mock("@context/current-user/CurrentUserContext", () => ({
-  useCurrentUser: () => ({
-    user: { sftpgoAttachmentStorageEnabled: sftpgoFlag.enabled },
-    isLoading: false,
-    isError: false,
-  }),
-}));
-
-vi.mock("@features/csm-cases/api/attachmentStorageTus", () => ({
-  uploadFileViaTus: uploadFileViaTusMock,
-}));
-
 vi.mock("@utils/saveBlob", () => ({ saveBlob: vi.fn() }));
 
 import {
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
-  useGetCsmCaseAttachmentPreviewSource,
+  useGetCsmCaseAttachmentContent,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import { saveBlob } from "@utils/saveBlob";
 import type { CaseAttachment } from "@features/csm-cases/types/csmCases";
@@ -73,11 +57,9 @@ describe("usePostCsmCaseAttachment", () => {
   beforeEach(() => {
     postMock.mockReset();
     getBlobMock.mockReset();
-    uploadFileViaTusMock.mockReset();
-    sftpgoFlag.enabled = false;
   });
 
-  it("flag off: sends a single POST /attachments with a base64 file payload, unchanged", async () => {
+  it("sends a single POST /attachments with a base64 file payload", async () => {
     postMock.mockResolvedValue({});
     const { result } = renderHook(() => usePostCsmCaseAttachment(), {
       wrapper,
@@ -91,132 +73,16 @@ describe("usePostCsmCaseAttachment", () => {
       }),
     );
 
-    expect(uploadFileViaTusMock).not.toHaveBeenCalled();
     expect(postMock).toHaveBeenCalledTimes(1);
     const [path, payload] = postMock.mock.calls[0];
     expect(path).toBe("/attachments");
-    expect(payload.storageKey).toBeUndefined();
-    expect(payload.sizeBytes).toBeUndefined();
     expect(typeof payload.file).toBe("string");
     expect(payload.file.startsWith("data:")).toBe(true);
-    expect(result.current.uploadProgress).toBeNull();
-  });
-
-  it("flag on: mints an upload token, uploads via TUS, then confirms with no body", async () => {
-    sftpgoFlag.enabled = true;
-    postMock.mockImplementation((path: string) => {
-      if (path.endsWith("/attachments/upload-token")) {
-        return Promise.resolve({
-          id: "att-1",
-          shareId: "share-1",
-          sftpgoBaseUrl: "https://sftpgo.example.com",
-          storageKey: "/attachments/cases/case-1/att-1",
-        });
-      }
-      return Promise.resolve({});
-    });
-    uploadFileViaTusMock.mockResolvedValue(undefined);
-
-    const { result } = renderHook(() => usePostCsmCaseAttachment(), {
-      wrapper,
-    });
-
-    await act(() =>
-      result.current.mutateAsync({
-        caseId: "case-1",
-        file: FILE,
-        uploadedBy: "Jane Doe",
-      }),
-    );
-
-    // Order: mint token, then TUS upload, then confirm.
-    expect(postMock).toHaveBeenCalledTimes(2);
-    const [tokenPath, tokenPayload] = postMock.mock.calls[0];
-    expect(tokenPath).toBe("/cases/case-1/attachments/upload-token");
-    expect(tokenPayload).toEqual({
-      filename: FILE.name,
-      mimeType: FILE.type,
-      sizeBytes: FILE.size,
-      description: null,
-      referenceType: "case",
-    });
-
-    expect(uploadFileViaTusMock).toHaveBeenCalledTimes(1);
-    expect(uploadFileViaTusMock.mock.calls[0][0]).toMatchObject({
-      sftpgoBaseUrl: "https://sftpgo.example.com",
-      shareId: "share-1",
-      storageKey: "/attachments/cases/case-1/att-1",
-      file: FILE,
-    });
-
-    const [confirmPath, confirmPayload] = postMock.mock.calls[1];
-    expect(confirmPath).toBe("/cases/case-1/attachments/att-1/confirm");
-    expect(confirmPayload).toEqual({});
-
-    // The TUS call must have happened before the confirm call.
-    const tusCallOrder = uploadFileViaTusMock.mock.invocationCallOrder[0];
-    const confirmCallOrder = postMock.mock.invocationCallOrder[1];
-    expect(tusCallOrder).toBeLessThan(confirmCallOrder);
-
-    expect(result.current.uploadProgress).toBeNull();
-  });
-
-  it("flag on: exposes upload progress from the TUS callback while in flight", async () => {
-    sftpgoFlag.enabled = true;
-    postMock.mockImplementation((path: string) => {
-      if (path.endsWith("/attachments/upload-token")) {
-        return Promise.resolve({
-          id: "att-1",
-          shareId: "share-1",
-          sftpgoBaseUrl: "https://sftpgo.example.com",
-          storageKey: "/attachments/cases/case-1/att-1",
-        });
-      }
-      return Promise.resolve({});
-    });
-
-    // A deferred promise the test resolves explicitly, so the upload is
-    // guaranteed to still be "in flight" while the progress assertion below
-    // runs — a `setTimeout(0)` here would race the real TUS call's resolution
-    // against `waitFor`'s own polling and could resolve before the test gets
-    // a chance to observe the in-flight percentage.
-    let resolveUpload: (() => void) | undefined;
-    let capturedOnProgress: ((percent: number) => void) | undefined;
-    uploadFileViaTusMock.mockImplementation(({ onProgress }) => {
-      capturedOnProgress = onProgress;
-      return new Promise<void>((resolve) => {
-        resolveUpload = resolve;
-      });
-    });
-
-    const { result } = renderHook(() => usePostCsmCaseAttachment(), {
-      wrapper,
-    });
-
-    let promise!: Promise<unknown>;
-    act(() => {
-      promise = result.current.mutateAsync({
-        caseId: "case-1",
-        file: FILE,
-        uploadedBy: "Jane Doe",
-      });
-    });
-
-    await waitFor(() => expect(capturedOnProgress).toBeDefined());
-    act(() => capturedOnProgress!(42));
-    await waitFor(() => expect(result.current.uploadProgress).toBe(42));
-
-    await act(async () => {
-      resolveUpload!();
-      await promise;
-    });
-    await waitFor(() => expect(result.current.uploadProgress).toBeNull());
   });
 
   it.each(["change_request", "incident"] as const)(
-    "flag on, referenceType %s: skips the mint endpoint and uses the legacy base64 path",
+    "referenceType %s: still uses the single base64 path",
     async (referenceType) => {
-      sftpgoFlag.enabled = true;
       postMock.mockResolvedValue({});
 
       const { result } = renderHook(() => usePostCsmCaseAttachment(), {
@@ -232,16 +98,37 @@ describe("usePostCsmCaseAttachment", () => {
         }),
       );
 
-      expect(uploadFileViaTusMock).not.toHaveBeenCalled();
       expect(postMock).toHaveBeenCalledTimes(1);
       const [path, payload] = postMock.mock.calls[0];
       expect(path).toBe("/attachments");
       expect(payload.referenceType).toBe(referenceType);
       expect(typeof payload.file).toBe("string");
       expect(payload.file.startsWith("data:")).toBe(true);
-      expect(result.current.uploadProgress).toBeNull();
     },
   );
+
+  it("rejects a file over the max size before ever calling the API", async () => {
+    const oversized = new File(
+      [new Uint8Array(10 * 1024 * 1024 + 1)],
+      "big.bin",
+      { type: "application/octet-stream" },
+    );
+    const { result } = renderHook(() => usePostCsmCaseAttachment(), {
+      wrapper,
+    });
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({
+          caseId: "case-1",
+          file: oversized,
+          uploadedBy: "Jane Doe",
+        }),
+      ),
+    ).rejects.toThrow(/too large/);
+
+    expect(postMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("useDownloadCsmCaseAttachment", () => {
@@ -257,11 +144,10 @@ describe("useDownloadCsmCaseAttachment", () => {
   beforeEach(() => {
     postMock.mockReset();
     getBlobMock.mockReset();
-    sftpgoFlag.enabled = false;
     vi.mocked(saveBlob).mockReset();
   });
 
-  it("flag off: fetches the content blob and saves it, unchanged", async () => {
+  it("fetches the content blob and saves it", async () => {
     getBlobMock.mockResolvedValue(new Blob(["hello"], { type: "text/plain" }));
     const { result } = renderHook(() => useDownloadCsmCaseAttachment(), {
       wrapper,
@@ -273,33 +159,9 @@ describe("useDownloadCsmCaseAttachment", () => {
     expect(getBlobMock).toHaveBeenCalledWith("/attachments/att-1/content");
     expect(saveBlob).toHaveBeenCalledTimes(1);
   });
-
-  it("flag on: creates exactly one share for the clicked attachment and never fetches the content blob", async () => {
-    sftpgoFlag.enabled = true;
-    postMock.mockResolvedValue({
-      shareUrl: "https://sftpgo.example.com/web/client/pubshares/abc",
-    });
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {});
-
-    const { result } = renderHook(() => useDownloadCsmCaseAttachment(), {
-      wrapper,
-    });
-
-    await result.current(ATTACHMENT);
-
-    expect(postMock).toHaveBeenCalledTimes(1);
-    expect(postMock).toHaveBeenCalledWith("/attachments/att-1/share", {});
-    expect(getBlobMock).not.toHaveBeenCalled();
-    expect(saveBlob).not.toHaveBeenCalled();
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-
-    clickSpy.mockRestore();
-  });
 });
 
-describe("useGetCsmCaseAttachmentPreviewSource", () => {
+describe("useGetCsmCaseAttachmentContent", () => {
   const ATTACHMENT: CaseAttachment = {
     id: "att-1",
     filename: "report.pdf",
@@ -312,49 +174,21 @@ describe("useGetCsmCaseAttachmentPreviewSource", () => {
   beforeEach(() => {
     postMock.mockReset();
     getBlobMock.mockReset();
-    sftpgoFlag.enabled = false;
   });
 
-  it("flag off: fetches the content blob and wraps it in a revocable object URL", async () => {
+  it("fetches the content blob via the authenticated content endpoint", async () => {
     getBlobMock.mockResolvedValue(
       new Blob(["fake"], { type: "application/pdf" }),
     );
-    const createObjectUrlSpy = vi
-      .spyOn(URL, "createObjectURL")
-      .mockReturnValue("blob:mock-url");
 
-    const { result } = renderHook(() => useGetCsmCaseAttachmentPreviewSource(), {
+    const { result } = renderHook(() => useGetCsmCaseAttachmentContent(), {
       wrapper,
     });
 
-    const source = await result.current(ATTACHMENT);
+    const blob = await result.current(ATTACHMENT);
 
     expect(postMock).not.toHaveBeenCalled();
     expect(getBlobMock).toHaveBeenCalledWith("/attachments/att-1/content");
-    expect(createObjectUrlSpy).toHaveBeenCalledTimes(1);
-    expect(source).toEqual({ url: "blob:mock-url", revoke: true });
-
-    createObjectUrlSpy.mockRestore();
-  });
-
-  it("flag on: resolves a read-scoped share URL as-is, without fetching the content blob", async () => {
-    sftpgoFlag.enabled = true;
-    postMock.mockResolvedValue({
-      shareUrl: "https://sftpgo.example.com/web/client/pubshares/abc",
-    });
-
-    const { result } = renderHook(() => useGetCsmCaseAttachmentPreviewSource(), {
-      wrapper,
-    });
-
-    const source = await result.current(ATTACHMENT);
-
-    expect(postMock).toHaveBeenCalledTimes(1);
-    expect(postMock).toHaveBeenCalledWith("/attachments/att-1/share", {});
-    expect(getBlobMock).not.toHaveBeenCalled();
-    expect(source).toEqual({
-      url: "https://sftpgo.example.com/web/client/pubshares/abc",
-      revoke: false,
-    });
+    expect(blob.type).toBe("application/pdf");
   });
 });
