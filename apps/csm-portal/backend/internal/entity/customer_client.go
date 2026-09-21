@@ -53,13 +53,13 @@ func userIDTokenFromContext(ctx context.Context) string {
 
 // WithJWTAssertion returns a copy of ctx carrying the caller's raw
 // x-jwt-assertion value to be forwarded on every outgoing entity request.
-// Entity-service uses this only to authenticate its own outbound SFTPGo
-// token-mint call on the attachment/comment routes that relay bytes through
-// SFTPGo (see entity-service's internal/middleware/jwtassertion.go) — it is
-// never re-validated or otherwise trusted by entity-service as an
-// authentication signal itself, so forwarding it unconditionally (mirroring
-// WithUserIDToken above) is safe even on requests entity-service does not
-// need it for.
+// Entity-service uses this only to authenticate its own outbound token-mint
+// call, against whichever backing storage service a given data source uses,
+// on the attachment/comment routes that relay bytes (see entity-service's
+// internal/middleware/jwtassertion.go) — it is never re-validated or
+// otherwise trusted by entity-service as an authentication signal itself, so
+// forwarding it unconditionally (mirroring WithUserIDToken above) is safe
+// even on requests entity-service does not need it for.
 func WithJWTAssertion(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, jwtAssertionKey, token)
 }

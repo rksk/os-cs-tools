@@ -19,7 +19,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,7 +32,7 @@ import (
 
 func TestGetMe(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := httptest.NewRequest(http.MethodGet, "/users/me", nil)
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -49,7 +48,7 @@ func TestGetMe(t *testing.T) {
 				return nil, errors.New("scim unavailable")
 			},
 		}
-		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -74,7 +73,7 @@ func TestGetMe(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+				h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 				w := httptest.NewRecorder()
 				h.GetMe(w, r)
@@ -91,7 +90,7 @@ func TestGetMe(t *testing.T) {
 				return nil, nil // user not found in SCIM
 			},
 		}
-		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -113,7 +112,7 @@ func TestGetMe(t *testing.T) {
 			},
 		}
 		_ = entityCalls
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -147,7 +146,7 @@ func TestGetMe(t *testing.T) {
 					`"groups":[{"id":"g-2","name":"ABT Two"}]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -176,7 +175,7 @@ func TestGetMe(t *testing.T) {
 					`"groups":[{"id":"g-9","name":"Some Other Group"}]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -199,7 +198,7 @@ func TestGetMe(t *testing.T) {
 				}, nil
 			},
 		}
-		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -223,30 +222,6 @@ func TestGetMe(t *testing.T) {
 	})
 }
 
-// TestGetMeSftpgoAttachmentStorageEnabled verifies GET /users/me reports the
-// backend's SFTPGO_ATTACHMENT_STORAGE_ENABLED runtime flag value exactly,
-// both on and off, so the frontend can tell whether
-// AttachmentStorageHandler's routes are reachable without probing them.
-func TestGetMeSftpgoAttachmentStorageEnabled(t *testing.T) {
-	for _, enabled := range []bool{true, false} {
-		t.Run(fmt.Sprintf("flag=%v", enabled), func(t *testing.T) {
-			h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), enabled, nil)
-			r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
-			w := httptest.NewRecorder()
-			h.GetMe(w, r)
-
-			assertStatus(t, w, http.StatusOK)
-			type getMeResp struct {
-				SftpgoAttachmentStorageEnabled bool `json:"sftpgoAttachmentStorageEnabled"`
-			}
-			resp := decodeJSON[getMeResp](t, w)
-			if resp.SftpgoAttachmentStorageEnabled != enabled {
-				t.Errorf("sftpgoAttachmentStorageEnabled = %v, want %v", resp.SftpgoAttachmentStorageEnabled, enabled)
-			}
-		})
-	}
-}
-
 // TestGetMeDashboardDesignerEmails verifies the DASHBOARD_DESIGNER_EMAILS allow-list
 // grants a synthetic "dashboard_designer" role on GET /users/me to a matching
 // caller, additively and case-insensitively, and leaves every other caller
@@ -260,7 +235,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"agent@example.com","lastName":"Doe"}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, allowlist)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), allowlist)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -281,7 +256,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"agent@example.com","lastName":"Doe","roles":["agent","admin"]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, allowlist)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), allowlist)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -309,7 +284,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"agent@example.com","lastName":"Doe","roles":["dashboard_designer"]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, allowlist)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), allowlist)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -330,7 +305,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"agent@example.com","lastName":"Doe","roles":["agent"]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false,
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t),
 			map[string]struct{}{"someone.else@example.com": {}})
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
@@ -361,7 +336,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"Agent@Example.com","lastName":"Doe"}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, allowlist)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), allowlist)
 		r := httptest.NewRequest(http.MethodGet, "/users/me", nil)
 		r = r.WithContext(middleware.WithUserInfo(r.Context(), mixedCaseUser))
 		w := httptest.NewRecorder()
@@ -383,7 +358,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 				return []byte(`{"id":"u-1","email":"agent@example.com","lastName":"Doe","roles":["agent"]}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
 		w := httptest.NewRecorder()
 		h.GetMe(w, r)
@@ -403,7 +378,7 @@ func TestGetMeDashboardDesignerEmails(t *testing.T) {
 
 func TestPatchMe(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(`{"phoneNumber":"+1"}`))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -413,7 +388,7 @@ func TestPatchMe(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -422,7 +397,7 @@ func TestPatchMe(t *testing.T) {
 	})
 
 	t.Run("rejects empty body", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader("")))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -431,7 +406,7 @@ func TestPatchMe(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -440,7 +415,7 @@ func TestPatchMe(t *testing.T) {
 	})
 
 	t.Run("rejects JSON with no updateable fields", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -458,7 +433,7 @@ func TestPatchMe(t *testing.T) {
 				return &updated, nil
 			},
 		}
-		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(`{"phoneNumber":"+94777654321"}`)))
 		w := httptest.NewRecorder()
 		h.PatchMe(w, r)
@@ -489,7 +464,7 @@ func TestPatchMe(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), false, nil)
+				h := NewUsersHandler(scimClient, &mockEntityUserClient{}, testDirectory(t), nil)
 				r := withUser(httptest.NewRequest(http.MethodPatch, "/users/me", strings.NewReader(`{"phoneNumber":"+1"}`)))
 				w := httptest.NewRecorder()
 				h.PatchMe(w, r)
@@ -505,7 +480,7 @@ func TestPatchMe(t *testing.T) {
 
 func TestSearchUsers(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		h.SearchUsers(w, r)
@@ -515,7 +490,7 @@ func TestSearchUsers(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.SearchUsers(w, r)
@@ -524,7 +499,7 @@ func TestSearchUsers(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.SearchUsers(w, r)
@@ -541,7 +516,7 @@ func TestSearchUsers(t *testing.T) {
 				return []byte(`{"users":[{"id":"u-1"}],"total":1}`), nil
 			},
 		}
-		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(reqPayload)))
 		w := httptest.NewRecorder()
 		h.SearchUsers(w, r)
@@ -566,7 +541,7 @@ func TestSearchUsers(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+				h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), nil)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(`{}`)))
 				w := httptest.NewRecorder()
 				h.SearchUsers(w, r)

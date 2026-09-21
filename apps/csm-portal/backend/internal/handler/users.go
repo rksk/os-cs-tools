@@ -56,11 +56,6 @@ type UsersHandler struct {
 	// registry, so it can only answer membership questions when this layer
 	// hands it the group names to ask about.
 	dir *directory.Directory
-	// sftpgoAttachmentStorageEnabled mirrors SFTPGO_ATTACHMENT_STORAGE_ENABLED
-	// (see cmd/server/main.go), surfaced on GET /users/me so the frontend can
-	// tell whether AttachmentStorageHandler's routes are reachable without
-	// probing them.
-	sftpgoAttachmentStorageEnabled bool
 	// dashboardDesignerEmails is the startup-resolved DASHBOARD_DESIGNER_EMAILS
 	// allow-list (see loadDashboardDesignerEmails in cmd/server/main.go), keyed
 	// by lower-cased email. GET /users/me grants a caller whose email is in
@@ -73,19 +68,15 @@ type UsersHandler struct {
 }
 
 // NewUsersHandler creates a UsersHandler backed by the given SCIM and entity
-// clients and the startup-resolved directory. sftpgoAttachmentStorageEnabled
-// mirrors the same runtime flag value main.go uses to decide whether to
-// register AttachmentStorageHandler's routes (SFTPGO_ATTACHMENT_STORAGE_ENABLED),
-// so GET /users/me can tell the frontend whether those routes are reachable.
-// dashboardDesignerEmails is the startup-resolved DASHBOARD_DESIGNER_EMAILS
-// allow-list; see the field doc comment on UsersHandler.
-func NewUsersHandler(scim scimClient, entity entityUserClient, dir *directory.Directory, sftpgoAttachmentStorageEnabled bool, dashboardDesignerEmails map[string]struct{}) *UsersHandler {
+// clients and the startup-resolved directory. dashboardDesignerEmails is the
+// startup-resolved DASHBOARD_DESIGNER_EMAILS allow-list; see the field doc
+// comment on UsersHandler.
+func NewUsersHandler(scim scimClient, entity entityUserClient, dir *directory.Directory, dashboardDesignerEmails map[string]struct{}) *UsersHandler {
 	return &UsersHandler{
-		scim:                           scim,
-		entity:                         entity,
-		dir:                            dir,
-		sftpgoAttachmentStorageEnabled: sftpgoAttachmentStorageEnabled,
-		dashboardDesignerEmails:        dashboardDesignerEmails,
+		scim:                    scim,
+		entity:                  entity,
+		dir:                     dir,
+		dashboardDesignerEmails: dashboardDesignerEmails,
 	}
 }
 
@@ -99,12 +90,6 @@ type userMeResponse struct {
 	Roles       []string          `json:"roles,omitempty"`
 	PhoneNumber *string           `json:"phoneNumber,omitempty"`
 	Team        *userTeamResponse `json:"team,omitempty"`
-	// SftpgoAttachmentStorageEnabled mirrors the backend's
-	// SFTPGO_ATTACHMENT_STORAGE_ENABLED runtime flag. Always present (never
-	// omitted) so the frontend can distinguish "flag is off" from "field not
-	// yet known to this backend version" only by absence on an old backend —
-	// a new field an existing caller ignores, so this is backward compatible.
-	SftpgoAttachmentStorageEnabled bool `json:"sftpgoAttachmentStorageEnabled"`
 }
 
 // userTeamResponse is the caller's resolved ABT (Account-Based Team). Nil when
@@ -180,8 +165,7 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := userMeResponse{
-		Email:                          user.Email,
-		SftpgoAttachmentStorageEnabled: h.sftpgoAttachmentStorageEnabled,
+		Email: user.Email,
 	}
 
 	entityRaw, err := h.entity.GetUserMe(r.Context())

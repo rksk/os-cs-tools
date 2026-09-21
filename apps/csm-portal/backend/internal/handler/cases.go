@@ -88,13 +88,6 @@ type entityCaseClient interface {
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
 	GetCaseAttachmentContent(ctx context.Context, attachmentID string) ([]byte, string, error)
 	DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
-	// GetCaseAttachment resolves a single attachment's metadata — used by the
-	// SFTPGo-backed share-creation path; see AttachmentStorageHandler.
-	GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
-	// ConfirmCaseAttachment transitions a 'pending' attachment row (created by
-	// CreateCaseAttachment with status "pending") to 'complete' — used by the
-	// SFTPGo-backed upload-confirm path; see AttachmentStorageHandler.
-	ConfirmCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	GetAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
@@ -476,10 +469,11 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Any base64 inline image embedded in the comment's rich-text HTML is now
-	// extracted and rewritten to a real SFTPGo-backed attachment reference by
-	// entity-service itself (see its CreateCaseComment), not this handler —
-	// this backend just needs to forward the caller's raw x-jwt-assertion so
-	// entity-service can authenticate its own outbound SFTPGo call.
+	// extracted and rewritten to a real attachment reference by entity-service
+	// itself (see its CreateCaseComment), not this handler — this backend
+	// just needs to forward the caller's raw x-jwt-assertion so entity-service
+	// can authenticate its own outbound call to whichever storage backend
+	// this data source uses.
 	result, err := h.entity.CreateCaseComment(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCaseComment failed", "userID", user.UserID, "caseID", caseID, "err", err)

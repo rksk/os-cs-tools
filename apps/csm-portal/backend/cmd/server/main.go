@@ -108,20 +108,6 @@ func main() {
 	})
 	notificationHandler := handler.NewNotificationHandler(googleChatClient, os.Getenv("CSM_PORTAL_WEB_BASE_URL"))
 
-	// SFTPGO_ATTACHMENT_STORAGE_ENABLED historically gated a now-removed
-	// browser-direct-to-SFTPGo upload/share design in this backend (a
-	// dedicated client, upload-token/share/confirm routes, and inline-image
-	// extraction all lived here). That design is gone: entity-service now
-	// owns SFTPGo directly and relays attachment bytes synchronously through
-	// the same plain, pass-through /attachments and /cases/{id}/comments
-	// routes every other data source already uses — this backend adds
-	// nothing beyond forwarding x-jwt-assertion (see middleware.Auth). The
-	// flag itself is kept, read-only, purely to feed GET /users/me's
-	// sftpgoAttachmentStorageEnabled field: a later phase decides whether the
-	// frontend still needs to branch on it, so its meaning is deliberately
-	// left alone here rather than guessed at.
-	sftpgoAttachmentStorageEnabled := loadSftpgoAttachmentStorageEnabled()
-
 	updatesCfg := updates.Config{
 		BaseURL:      mustEnv("UPDATES_BASE_URL"),
 		TokenURL:     oauth2TokenURL,
@@ -140,7 +126,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled, loadDashboardDesignerEmails())
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, loadDashboardDesignerEmails())
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -534,32 +520,6 @@ func loadDashboardDesignerEmails() map[string]struct{} {
 		set[strings.ToLower(e)] = struct{}{}
 	}
 	return set
-}
-
-// loadSftpgoAttachmentStorageEnabled resolves SFTPGO_ATTACHMENT_STORAGE_ENABLED
-// (any strconv.ParseBool-true value: 1, t, T, TRUE, true, True; off by
-// default on unset, empty, or any other value — an unparseable non-empty
-// value is a warning, not fatal, mirroring DASHBOARDS_HOT_RELOAD's parsing).
-//
-// This flag no longer gates any code path in this backend — the
-// browser-direct-to-SFTPGo upload/share design it used to enable was removed
-// once entity-service took over owning SFTPGo directly (see this function's
-// only caller). It is kept solely to preserve GET /users/me's
-// sftpgoAttachmentStorageEnabled response field verbatim; whether the
-// frontend still needs that field is a later phase's decision, not this
-// one's.
-func loadSftpgoAttachmentStorageEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("SFTPGO_ATTACHMENT_STORAGE_ENABLED"))
-	if raw == "" {
-		return false
-	}
-	enabled, err := strconv.ParseBool(raw)
-	if err != nil {
-		slog.Warn("SFTPGO_ATTACHMENT_STORAGE_ENABLED is not a boolean; treating it as false",
-			"value", raw, "expected", "1, t, T, TRUE, true, True, 0, f, F, FALSE, false, False")
-		return false
-	}
-	return enabled
 }
 
 func mustEnv(key string) string {
