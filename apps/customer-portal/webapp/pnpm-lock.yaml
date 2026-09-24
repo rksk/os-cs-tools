@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@asgardeo/react':
-        specifier: 0.25.6
-        version: 0.25.6(@types/react@19.2.5)(react@19.2.0)
+        specifier: 0.25.14
+        version: 0.25.14(@types/react@19.2.5)(react@19.2.0)
       '@asgardeo/react-router':
         specifier: 2.0.0
-        version: 2.0.0(@asgardeo/react@0.25.6(@types/react@19.2.5)(react@19.2.0))(react-router@7.18.4(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)
+        version: 2.0.0(@asgardeo/react@0.25.14(@types/react@19.2.5)(react@19.2.0))(react-router@7.18.4(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)
       '@lexical/code':
         specifier: 0.40.0
         version: 0.40.0
@@ -180,14 +180,14 @@ packages:
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
 
-  '@asgardeo/browser@0.7.10':
-    resolution: {integrity: sha512-5KSO6xqFCl4YMNvIwQik+fxWrsoofQgvhKLipEkzYHk3o8tpOcFldi26lszARwFBhvRW+qUF6UfY323CsrEBmw==}
+  '@asgardeo/browser@0.7.17':
+    resolution: {integrity: sha512-yOzTqg1kLIoNRQXtkDQN58ECtIuUGMzN0lTzEOGUbRZ0treK1Cw4WowYK05PPC67PLxS1a30ZsQnrJTGlS2vow==}
 
-  '@asgardeo/i18n@0.4.5':
-    resolution: {integrity: sha512-p1DVVI7lNu7KeDqhRNgAuSrHvVgCbbVXc04koyiiwjDx+sJaXychuC9pwVJ2PDUnIyEp3Xgdb3KqMq+Sx4e7xA==}
+  '@asgardeo/i18n@0.4.10':
+    resolution: {integrity: sha512-SH+ZK8pncFA23WxGc4RWMimqQbkRWalsVsGI86OLpKHlWp4rayPvTlQ39tJPHzAhQNMknMvGmILJqTE1RXq5yw==}
 
-  '@asgardeo/javascript@0.23.0':
-    resolution: {integrity: sha512-r2DgG6lTEJV978cXIyGhTMhfQrtVXf1cNl3PS3GqxnTbf7z3lOkPvVRFRACZ2qtCVQo5co9XEiBV0L9vbd1Azg==}
+  '@asgardeo/javascript@0.23.6':
+    resolution: {integrity: sha512-y1x6n8iXEHoWOWnDkMMJZyUdIqc1G+QFgQG8Cqnny+Zbli3+gz2f3iKsTYXhZtoG8s2uQ/waIOOPgGhjWDxCRQ==}
 
   '@asgardeo/react-router@2.0.0':
     resolution: {integrity: sha512-RvHol3VgjV466y7RhpmPosER89Yz1prREvjWjhu95X9e4l761+3n8bRSQR5lpP1tasAVKtVH6RzWvWoPST7+Zg==}
@@ -196,8 +196,8 @@ packages:
       react: '>=16.8.0'
       react-router: '>=6.30.1'
 
-  '@asgardeo/react@0.25.6':
-    resolution: {integrity: sha512-tjnqwRQXfAVOmUmC1Q5TJt4wPcUtiHG/ksR3VtSWgsOKR8E7Spbn/jGtXR8Mn4Kz0jfSGObdneW8Q11TVYY2qQ==}
+  '@asgardeo/react@0.25.14':
+    resolution: {integrity: sha512-cEcZXLx60kK7vY6F5hLuLg/EkMfXxMchCZzvH7chUw3davdtyeGt8H3MGxehY77sadvxLyl2ou/n8ZMs6MkSTA==}
     peerDependencies:
       '@types/react': '>=16.8.0'
       react: '>=16.8.0'
@@ -3247,9 +3247,9 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@asgardeo/browser@0.7.10':
+  '@asgardeo/browser@0.7.17':
     dependencies:
-      '@asgardeo/javascript': 0.23.0
+      '@asgardeo/javascript': 0.23.6
       base64url: 3.0.1
       buffer: 6.0.3
       core-js: 3.42.0
@@ -3261,27 +3261,27 @@ snapshots:
       stream-browserify: 3.0.0
       tslib: 2.8.1
 
-  '@asgardeo/i18n@0.4.5':
+  '@asgardeo/i18n@0.4.10':
     dependencies:
       tslib: 2.8.1
 
-  '@asgardeo/javascript@0.23.0':
+  '@asgardeo/javascript@0.23.6':
     dependencies:
-      '@asgardeo/i18n': 0.4.5
+      '@asgardeo/i18n': 0.4.10
       jose: 5.10.0
       tslib: 2.8.1
 
-  '@asgardeo/react-router@2.0.0(@asgardeo/react@0.25.6(@types/react@19.2.5)(react@19.2.0))(react-router@7.18.4(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)':
+  '@asgardeo/react-router@2.0.0(@asgardeo/react@0.25.14(@types/react@19.2.5)(react@19.2.0))(react-router@7.18.4(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)':
     dependencies:
-      '@asgardeo/react': 0.25.6(@types/react@19.2.5)(react@19.2.0)
+      '@asgardeo/react': 0.25.14(@types/react@19.2.5)(react@19.2.0)
       react: 19.2.0
       react-router: 7.18.4(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       tslib: 2.8.1
 
-  '@asgardeo/react@0.25.6(@types/react@19.2.5)(react@19.2.0)':
+  '@asgardeo/react@0.25.14(@types/react@19.2.5)(react@19.2.0)':
     dependencies:
-      '@asgardeo/browser': 0.7.10
-      '@asgardeo/i18n': 0.4.5
+      '@asgardeo/browser': 0.7.17
+      '@asgardeo/i18n': 0.4.10
       '@emotion/css': 11.13.5
       '@floating-ui/react': 0.27.12(react-dom@19.2.4(react@19.2.0))(react@19.2.0)
       '@types/react': 19.2.5
