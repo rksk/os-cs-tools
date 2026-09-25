@@ -531,6 +531,16 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// case for why. nil in every other mode: attachments follow activeCaseSvc
 	// exactly as before this override existed.
 	var caseAttachmentOverrideSvc service.CaseService
+	// caseWriteback is the shared *SNWritebackDispatcher for
+	// DATA_SOURCE=postgres-servicenow-dual-write's async ServiceNow mirror
+	// writes -- constructed once below (case's own case) and reused as-is
+	// for incident's identical mirror dispatch further down (see
+	// activeIncidentSvc's own DataSourcePostgresServiceNowDualWrite case): a
+	// dispatcher is just a fixed background worker pool plus one
+	// sn_writeback_failures repository, nothing case-specific about it, so
+	// a second instance would only mean a second, redundant worker pool.
+	// nil in every other mode.
+	var caseWriteback *service.SNWritebackDispatcher
 	switch cfg.DataSource {
 	case config.DataSourceServiceNow:
 		pgCaseFallbackSvc := service.NewCaseService(caseRepo, userRepo, eventPublisher, accessSvc)
@@ -583,7 +593,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// and it is caseAttachmentOverrideSvc below, for case attachments
 		// specifically.
 		snCaseMirrorSvc := service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, nil, nil, snUserService, cfg.CustomerRoles)
-		caseWriteback := service.NewSNWritebackDispatcher(repository.NewSNWritebackFailureRepository(db))
+		caseWriteback = service.NewSNWritebackDispatcher(repository.NewSNWritebackFailureRepository(db))
 		activeCaseSvc = service.NewCaseServiceWithSNWriteback(caseRepo, userRepo, eventPublisher, accessSvc, caseWriteback, snCaseMirrorSvc)
 		// Case ATTACHMENTS are ServiceNow-only in this mode, permanently —
 		// unlike case metadata (CREATE/UPDATE above), not a pilot scope
@@ -756,8 +766,15 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// createIncidentSNFirst itself, after that Postgres insert
 		// succeeds -- see NewIncidentServiceWithSNMirror's own doc comment
 		// and publishIncidentCreatedEvent's.
+		//
+		// caseWriteback (constructed above for case's own UPDATE/comment
+		// mirror) is reused as-is for incident UPDATE's async ServiceNow
+		// mirror -- a *SNWritebackDispatcher is just a fixed background
+		// worker pool plus one sn_writeback_failures repository, nothing
+		// case-specific about it, so a second instance would only mean a
+		// second, redundant worker pool.
 		snIncidentMirrorSvc := service.NewServiceNowIncidentService(serviceNowIntegrationServiceClient, nil)
-		activeIncidentSvc = service.NewIncidentServiceWithSNMirror(incidentRepo, snIncidentMirrorSvc, eventPublisher)
+		activeIncidentSvc = service.NewIncidentServiceWithSNMirror(incidentRepo, userRepo, snIncidentMirrorSvc, eventPublisher, caseWriteback)
 	default:
 		activeIncidentSvc = service.NewIncidentService(incidentRepo)
 	}

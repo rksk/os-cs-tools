@@ -86,6 +86,29 @@ type IncidentRepository interface {
 	// SearchIncidentActivities returns a paginated activity feed for an
 	// incident (comments + field changes), newest first.
 	SearchIncidentActivities(ctx context.Context, req domain.SearchIncidentActivitiesRequest) ([]domain.CaseActivity, int, error)
+	// CreateIncidentComment inserts a new comment row for the given incident
+	// -- WorkNotes/AdditionalComments side effect of UpdateIncident's
+	// DATA_SOURCE=postgres-servicenow-dual-write path (see
+	// incidentService.UpdateIncident's own doc comment). Mirrors
+	// CaseRepository.CreateCaseComment's INSERT-with-existence-check shape,
+	// but scoped to the "incident" subtype table specifically rather than
+	// the generic "work_item" table -- unlike CreateCaseComment (whose own
+	// doc comment explains why it deliberately checks against work_item,
+	// not "case": one comment endpoint backs five different case-like
+	// types), this method backs incidents alone, so scoping the existence
+	// check to "incident" is strictly more specific with no coverage loss,
+	// matching SearchIncidentActivities' own existence check against the
+	// "incident" table rather than "work_item". commentType must be
+	// CommentTypeWorkNote or CommentTypeComment -- every other
+	// domain.CommentType value (including CommentTypeActivity, which is
+	// never writer-authored) is rejected with a ValidationError before any
+	// query runs. Returns a ValidationError, not a raw FK error, when
+	// incidentID does not identify an existing incident. createdBy is the
+	// resolved actor's email -- comment.created_by is a free-text VARCHAR,
+	// not a UUID FK, matching CreateCaseComment's own convention (see that
+	// method's doc comment), so the caller (incidentService.UpdateIncident)
+	// resolves the actor and passes the email straight through.
+	CreateIncidentComment(ctx context.Context, incidentID string, commentType domain.CommentType, content, createdBy string) (domain.CaseComment, error)
 	// CreateIncidentFromServiceNow inserts a new incident row (both work_item
 	// and "incident"), for DATA_SOURCE=postgres-servicenow-dual-write's SN-first
 	// incident creation (see incidentService.createIncidentSNFirst's own doc
@@ -645,6 +668,53 @@ func incidentContactTypeToEnum(c domain.IncidentContactType) string {
 		return "SITE_24_7"
 	}
 	return string(c)
+}
+
+// createIncidentCommentQuery mirrors createCaseCommentQuery's (case_repo.go,
+// inline in CreateCaseComment) INSERT ... SELECT shape: the SELECT's WHERE
+// confirms the referenced row exists in the same round trip, RETURNING zero
+// rows (not a hard-to-attribute FK error) when it doesn't. Joins against
+// "incident" specifically, not the generic "work_item" table -- see
+// CreateIncidentComment's own doc comment (in the IncidentRepository
+// interface, above) for why that's safe and correct here even though
+// CreateCaseComment itself deliberately checks the broader work_item table
+// instead.
+const createIncidentCommentQuery = `
+	INSERT INTO comment (id, created_on, created_by, type, work_item_id, content)
+	SELECT gen_random_uuid(), NOW(), $1, $2::comment_type_enum, i.id, $4
+	FROM incident i
+	WHERE i.id = $3
+	RETURNING id, work_item_id, type, content, created_by, created_on`
+
+// CreateIncidentComment implements IncidentRepository.
+func (r *incidentRepo) CreateIncidentComment(ctx context.Context, incidentID string, commentType domain.CommentType, content, createdBy string) (domain.CaseComment, error) {
+	// CommentTypeActivity is never writer-authored (same restriction
+	// CreateCaseComment enforces) -- and this method's only real caller
+	// (UpdateIncident's WorkNotes/AdditionalComments branches) never passes
+	// anything else, but the guard stays here rather than relying solely on
+	// the service layer, matching CreateCaseComment's own defense-in-depth.
+	if commentType == domain.CommentTypeActivity {
+		return domain.CaseComment{}, &apierror.ValidationError{Msg: `type "activity" is not writable through this endpoint`}
+	}
+	typeEnum, ok := caseCommentTypeEnum[commentType]
+	if !ok {
+		return domain.CaseComment{}, &apierror.ValidationError{Msg: "type contains invalid value: " + string(commentType)}
+	}
+
+	var c domain.CaseComment
+	var typeRaw, createdByEmail string
+	err := r.db.QueryRow(ctx, createIncidentCommentQuery,
+		createdBy, typeEnum, incidentID, content,
+	).Scan(&c.ID, &c.CaseID, &typeRaw, &c.Content, &createdByEmail, &c.CreatedOn)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.CaseComment{}, &apierror.ValidationError{Msg: "incident not found: " + incidentID}
+	}
+	if err != nil {
+		return domain.CaseComment{}, fmt.Errorf("create incident comment: %w", err)
+	}
+	c.Type = caseCommentEnumType[typeRaw]
+	c.CreatedBy = domain.NewUserReference("", createdByEmail, "")
+	return c, nil
 }
 
 // createIncidentFromServiceNowQuery inserts both halves of an incident row
