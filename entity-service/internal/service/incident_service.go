@@ -247,14 +247,36 @@ func NewIncidentServiceWithSNMirror(repo repository.IncidentRepository, userRepo
 	return &incidentService{repo: repo, userRepo: userRepo, snMirror: mirror, eventPublisher: eventPublisher, snWriteback: dispatcher}
 }
 
-// resolveActor resolves the calling user from the request's JWT -- same
-// logic as caseService.resolveActor (case_service.go), duplicated here
-// rather than factored out since incidentService and caseService share no
-// common base type to hang it on.
+// incidentSystemActorEmail is UpdateIncident's comment.created_by fallback
+// when no end-user identity is forwarded -- see resolveActor's doc comment
+// for why this differs from caseService.resolveActor (which this was
+// otherwise copied from) in refusing to fall back at all.
+const incidentSystemActorEmail = "system-m2m@wso2.com"
+
+// resolveActor resolves the calling actor's email for
+// comment.created_by -- from the request's forwarded end-user JWT
+// (x-user-id-token) when present, exactly like caseService.resolveActor
+// (case_service.go), duplicated here rather than factored out since
+// incidentService and caseService share no common base type to hang it on.
+//
+// Deliberately DIFFERENT from caseService.resolveActor in one respect: this
+// falls back to incidentSystemActorEmail instead of a 401 when no token is
+// forwarded, rather than requiring one unconditionally. comment.created_by
+// (migration 000037) is a free-text VARCHAR with no FK to a real user row
+// (see CreateIncidentComment's own doc comment) -- there is no schema reason
+// to require a resolvable platform user here. This matters concretely: the
+// M2M pipeline this whole UpdateIncident extension exists to unblock
+// (sre-alert-ingestion-service -> csm-integration-service, both M2M-only,
+// forwarding no end-user token by design) would otherwise trade the
+// original unconditional 503 for an unconditional 401 -- fixing nothing.
+// Case's comment endpoints are reached by real logged-in portal users, so a
+// hard requirement is correct there; this one is also reached by
+// server-to-server automation with no end user in the loop at all, so it
+// is not.
 func (s *incidentService) resolveActor(ctx context.Context) (domain.User, error) {
 	token := middleware.UserIDTokenFromContext(ctx)
 	if token == "" {
-		return domain.User{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
+		return domain.User{Email: incidentSystemActorEmail}, nil
 	}
 	email, err := emailFromJWT(token)
 	if err != nil {

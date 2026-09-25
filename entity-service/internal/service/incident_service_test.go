@@ -475,6 +475,55 @@ func TestIncidentService_UpdateIncident_WorkNotesOnly(t *testing.T) {
 	}
 }
 
+// TestIncidentService_UpdateIncident_NoForwardedTokenFallsBackToSystemActor
+// pins the scenario this whole UpdateIncident extension exists for: an M2M
+// caller with no end-user identity to forward at all (sre-alert-ingestion-service
+// via csm-integration-service, both M2M-only by design -- see resolveActor's
+// own doc comment). Unlike caseService.resolveActor, this must NOT 401 when
+// context.Background() carries no x-user-id-token -- it must succeed, using
+// incidentSystemActorEmail as comment.created_by.
+func TestIncidentService_UpdateIncident_NoForwardedTokenFallsBackToSystemActor(t *testing.T) {
+	var gotCreatedBy string
+	repo := &stubIncidentRepo{
+		createIncidentComment: func(_ context.Context, _ string, _ domain.CommentType, _ string, createdBy string) (domain.CaseComment, error) {
+			gotCreatedBy = createdBy
+			return domain.CaseComment{ID: "comment-1"}, nil
+		},
+		getIncidentByID: func(_ context.Context, id string) (domain.IncidentView, error) {
+			return newTestIncidentView(id), nil
+		},
+	}
+	mirrorCalled := make(chan domain.UpdateIncidentRequest, 1)
+	mirror := &stubMirrorIncidentService{
+		updateIncident: func(_ context.Context, req domain.UpdateIncidentRequest) (domain.UpdateIncidentResponse, error) {
+			mirrorCalled <- req
+			return domain.UpdateIncidentResponse{}, nil
+		},
+	}
+	dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
+	// GetUserByEmail must never be called on this path -- fail the test if it is.
+	userRepo := stubUpdateIncidentUserRepo{email: ""}
+	svc := NewIncidentServiceWithSNMirror(repo, userRepo, mirror, nil, dispatcher)
+
+	workNotes := "auto-attached repeat alert"
+	resp, err := svc.UpdateIncident(context.Background(), domain.UpdateIncidentRequest{ID: testDeploymentUUID, WorkNotes: &workNotes})
+	if err != nil {
+		t.Fatalf("unexpected error with no forwarded token: %v", err)
+	}
+	if resp.Incident.ID == nil || *resp.Incident.ID != testDeploymentUUID {
+		t.Errorf("response incident ID = %v, want %q", resp.Incident.ID, testDeploymentUUID)
+	}
+	if gotCreatedBy != incidentSystemActorEmail {
+		t.Errorf("createdBy = %q, want the system actor fallback %q", gotCreatedBy, incidentSystemActorEmail)
+	}
+
+	select {
+	case <-mirrorCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror.UpdateIncident was never called")
+	}
+}
+
 // TestIncidentService_UpdateIncident_AdditionalCommentsOnly is
 // WorkNotesOnly's mirror image: exactly one COMMENT row, mirror dispatch
 // carries only AdditionalComments.
