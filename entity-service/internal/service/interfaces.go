@@ -622,13 +622,18 @@ type DeployedProductService interface {
 	// ValidationError is returned for invalid input. Supported by the
 	// ServiceNow data source only.
 	SearchProjectsByProductVersion(ctx context.Context, req domain.SearchProjectsByProductVersionRequest) (domain.SearchProjectsByProductVersionResponse, error)
-	// CreateDeployedProduct creates a new deployed product in ServiceNow.
-	// Supported by the ServiceNow data source only.
+	// CreateDeployedProduct creates a new deployed product. Supported by the
+	// ServiceNow data source, and by DATA_SOURCE=postgres-servicenow-dual-write
+	// (SN-first, synchronous -- see deployedProductService.createDeployedProductSNFirst).
+	// Not supported by plain DATA_SOURCE=postgres.
 	CreateDeployedProduct(ctx context.Context, req domain.CreateDeployedProductRequest) (domain.CreateDeployedProductResponse, error)
 	// UpdateDeployedProduct updates a deployed product's cores, tps, description, update-level
 	// history, or deactivates it. Either detail fields (which now include Updates, a whole-array
 	// replace of the update-level history) or Active=false must be provided, but not both.
-	// Supported by the ServiceNow data source only.
+	// Supported by the ServiceNow data source, and by
+	// DATA_SOURCE=postgres-servicenow-dual-write (Postgres-first, ServiceNow
+	// mirrored asynchronously afterward). Not supported by plain
+	// DATA_SOURCE=postgres.
 	UpdateDeployedProduct(ctx context.Context, req domain.UpdateDeployedProductRequest) (domain.UpdateDeployedProductResponse, error)
 	// SearchDeployedProductMetrics returns core-count metrics for the deployed product
 	// identified by id, charted over req's date range. A ValidationError is returned for

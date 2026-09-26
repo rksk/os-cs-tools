@@ -545,9 +545,19 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 
 	deployedProductRepo := repository.NewDeployedProductRepository(db)
 	var activeDeployedProductSvc service.DeployedProductService
-	if cfg.DataSource == config.DataSourceServiceNow {
+	switch cfg.DataSource {
+	case config.DataSourceServiceNow:
 		activeDeployedProductSvc = service.NewServiceNowDeployedProductService(serviceNowIntegrationServiceClient, activeDeploymentSvc, activeProjectSvc)
-	} else {
+	case config.DataSourcePostgresServiceNowDualWrite:
+		// CreateDeployedProduct is ServiceNow-first and synchronous;
+		// UpdateDeployedProduct is Postgres-first with an asynchronous
+		// ServiceNow mirror -- see
+		// deployedProductService.createDeployedProductSNFirst/UpdateDeployedProduct's
+		// own doc comments for the full reasoning (the same CREATE-vs-UPDATE
+		// asymmetry as deploymentService/caseService).
+		snDeployedProductMirrorSvc := service.NewServiceNowDeployedProductService(serviceNowIntegrationServiceClient, activeDeploymentSvc, activeProjectSvc)
+		activeDeployedProductSvc = service.NewDeployedProductServiceWithSNWriteback(deployedProductRepo, snWritebackDispatcher, snDeployedProductMirrorSvc)
+	default:
 		activeDeployedProductSvc = service.NewDeployedProductService(deployedProductRepo)
 	}
 	deployedProductHandler := handler.NewDeployedProductHandler(activeDeployedProductSvc)

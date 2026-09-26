@@ -4596,7 +4596,7 @@ paths:
 
   /deployed-products:
     post:
-      summary: Create a new deployed product (ServiceNow data source only).
+      summary: Create a new deployed product.
       operationId: createDeployedProduct
       requestBody:
         required: true
@@ -4632,7 +4632,7 @@ paths:
 
   /deployed-products/{id}:
     patch:
-      summary: Update a deployed product's cores, tps, description, or deactivate it (ServiceNow data source only).
+      summary: Update a deployed product's cores, tps, description, or deactivate it.
       operationId: patchDeployedProduct
       parameters:
         - name: id
