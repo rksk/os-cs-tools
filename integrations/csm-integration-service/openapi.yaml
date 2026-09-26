@@ -454,6 +454,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -584,6 +596,15 @@ paths:
                 $ref: '#/components/schemas/CaseTagCreateResponse'
         "400":
           description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: >
+            Unauthorized — on DATA_SOURCE=servicenow, entity-service forwards
+            this call to ServiceNow with an empty user token (this service has
+            no end-user identity to forward), and ServiceNow returns 401.
           content:
             application/json:
               schema:
@@ -1716,26 +1737,19 @@ components:
             service supplies it itself from its own configured M2M identity
             (UMT_INTEGRATION_ACTOR_EMAIL).
 
-    CaseTagCreateResult:
+    CaseTagCreateResponse:
       type: object
+      description: >
+        Mirrors entity-service's flat domain.Tag response verbatim — no
+        message/tag wrapper, no createdOn/createdBy.
       properties:
         id:
           type: string
         label:
           type: string
-        createdOn:
+        color:
           type: string
-          format: date-time
-        createdBy:
-          type: string
-
-    CaseTagCreateResponse:
-      type: object
-      properties:
-        message:
-          type: string
-        tag:
-          $ref: '#/components/schemas/CaseTagCreateResult'
+          nullable: true
 
     CaseFieldFilter:
       type: object
