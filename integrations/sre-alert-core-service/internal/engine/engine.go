@@ -69,15 +69,18 @@ type Engine struct {
 	// stateCheckInterval throttles syncIncidentState's CSM round trips, so a flapping alert on a
 	// confirmed incident costs at most one CSM search per interval rather than one per duplicate.
 	stateCheckInterval time.Duration
+	// dedupWindow bounds how long an incident keeps absorbing duplicates before the next alert on
+	// the same fingerprint starts a fresh generation; see model.Incident.IsOpen.
+	dedupWindow time.Duration
 	// locks is per-fingerprint so distinct incidents never serialize; racing callers re-read the row under lock.
 	locks *fpLocks
 }
 
-// New wires the engine's collaborators, alert defaults, CSM attempt cap, and state-check throttle together.
-func New(logger *slog.Logger, alerts alertReader, incidents incidentStore, n notifier, defaults model.Defaults, maxCSMAttempts int, stateCheckInterval time.Duration) *Engine {
+// New wires the engine's collaborators, alert defaults, CSM attempt cap, state-check throttle, and dedup window together.
+func New(logger *slog.Logger, alerts alertReader, incidents incidentStore, n notifier, defaults model.Defaults, maxCSMAttempts int, stateCheckInterval time.Duration, dedupWindow time.Duration) *Engine {
 	return &Engine{
 		logger: logger, alerts: alerts, incidents: incidents, notifier: n, defaults: defaults,
-		maxCSMAttempts: maxCSMAttempts, stateCheckInterval: stateCheckInterval, locks: newFPLocks(),
+		maxCSMAttempts: maxCSMAttempts, stateCheckInterval: stateCheckInterval, dedupWindow: dedupWindow, locks: newFPLocks(),
 	}
 }
 
@@ -176,9 +179,15 @@ func (e *Engine) Handle(ctx context.Context, alertID string, alert model.Alert) 
 		}
 
 		// Duplicate against an open incident is annotated; against a closed one it falls through to Upsert.
-		if existing.IsOpen() {
+		if existing.IsOpen(time.Now(), e.dedupWindow) {
 			return e.annotate(ctx, existing, alertID, "Duplicate", alert)
 		}
+
+		// existing is closed/permanently-failed/past its dedup window: Upsert is about to reset it
+		// into a new generation, discarding PendingNotes in the process. Flush whatever's still owed
+		// to the outgoing generation's CSM incident first, or a note queued just before expiry would
+		// be silently lost instead of ever reaching CSM.
+		e.flushBeforeGenerationReset(ctx, existing)
 	}
 
 	inc, isNew, err := e.incidents.Upsert(ctx, alertID, alert, severityNum)
@@ -404,6 +413,29 @@ func (e *Engine) flushPendingNotes(ctx context.Context, inc model.Incident) mode
 	}
 	inc.PendingNotes = remaining
 	return inc
+}
+
+// flushBeforeGenerationReset pushes any work notes still owed to existing's CSM incident before the
+// caller lets Upsert reset it into a new generation (which discards PendingNotes). Best-effort: it
+// takes the same per-fingerprint lock as annotate/deliverAndPersist so it can't race a concurrent
+// RetrySweep flush, re-reads under that lock since existing may already be stale, and does nothing if
+// there's nothing owed or a concurrent caller already handled it.
+func (e *Engine) flushBeforeGenerationReset(ctx context.Context, existing model.Incident) {
+	if !existing.CSMConfirmed || len(existing.PendingNotes) == 0 {
+		return // nothing owed to CSM (unconfirmed incidents have no CSM incident to push a note to).
+	}
+	fp := existing.Fingerprint
+	unlock := e.locks.lock(fp)
+	defer unlock()
+
+	current, found, err := e.incidents.FindByFingerprint(ctx, fp)
+	if err != nil || !found {
+		return // best-effort; Upsert's own re-read proceeds regardless.
+	}
+	if current.IncidentID != existing.IncidentID || !current.CSMConfirmed || len(current.PendingNotes) == 0 {
+		return // already flushed, or generation already changed under us; nothing left to do here.
+	}
+	e.flushPendingNotes(ctx, current)
 }
 
 // RetrySweep retries delivery for every pending incident, stopping early if leadership is lost.

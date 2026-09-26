@@ -81,8 +81,16 @@ type Incident struct {
 // forever, with no further CSM attempt and no further Chat message. Upsert's existing closed-incident
 // handling already resets delivery state and starts a fresh generation, which is exactly what a
 // permanently-failed incident needs on its next occurrence.
-func (i Incident) IsOpen() bool {
+//
+// dedupWindow additionally bounds how long an incident keeps absorbing duplicates: it's a fixed
+// window measured from FirstSeen (not a sliding idle timeout), so once now is dedupWindow past
+// FirstSeen the incident reports closed even if CSM still has it open, and the next alert on the
+// same fingerprint starts a fresh generation via the same closed-incident path.
+func (i Incident) IsOpen(now time.Time, dedupWindow time.Duration) bool {
 	if i.CSMPermanentlyFailed {
+		return false
+	}
+	if now.Sub(i.FirstSeen) >= dedupWindow {
 		return false
 	}
 	if !i.CSMConfirmed {

@@ -35,11 +35,22 @@ type Config struct {
 	Notify    NotifyConfig    `toml:"notify"`
 	Server    ServerConfig    `toml:"server"`
 	Lease     LeaseConfig     `toml:"lease"`
+	Engine    EngineConfig    `toml:"engine"`
+}
+
+// EngineConfig tunes the dedup engine's fixed duplicate-folding window.
+type EngineConfig struct {
+	// DedupWindow bounds how long an incident keeps absorbing duplicates, measured from when it was
+	// first created; once elapsed, the next alert on the same fingerprint starts a fresh incident
+	// even if CSM still reports the old one open.
+	DedupWindow Duration `toml:"dedup_window"`
 }
 
 // PollConfig tunes the alert poller's cadence, concurrency, and per-cycle alert id limits.
 type PollConfig struct {
-	// Interval is the backstop cadence; a websocket ping from alert-ingestion normally wakes the poller sooner.
+	// Interval is the backstop cadence for a missed Wake() ping; alert-ingestion's POST /alert
+	// call is what actually drives real-time pickup of new alerts, so this can stay wide
+	// without affecting responsiveness - it only bounds how long a dropped ping goes unnoticed.
 	Interval Duration `toml:"interval"`
 	// Concurrency is fingerprint-sharded worker count; same-fingerprint alerts stay serialized on one worker.
 	Concurrency int `toml:"concurrency"`
@@ -111,7 +122,7 @@ func (d Duration) Duration() time.Duration {
 func defaults() Config {
 	return Config{
 		Poll: PollConfig{
-			Interval:        Duration(10 * time.Second),
+			Interval:        Duration(60 * time.Second),
 			Concurrency:     128,
 			ReadConcurrency: 64,
 			MaxWindow:       2000,
@@ -138,6 +149,9 @@ func defaults() Config {
 		},
 		Server: ServerConfig{
 			ShutdownGrace: Duration(15 * time.Second),
+		},
+		Engine: EngineConfig{
+			DedupWindow: Duration(5 * time.Minute),
 		},
 	}
 }
@@ -208,6 +222,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("notify.state_check_interval must be positive")
 	case c.Server.ShutdownGrace <= 0:
 		return fmt.Errorf("server.shutdown_grace must be positive")
+	case c.Engine.DedupWindow <= 0:
+		return fmt.Errorf("engine.dedup_window must be positive")
 	}
 	return nil
 }
