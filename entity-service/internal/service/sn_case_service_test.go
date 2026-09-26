@@ -2923,7 +2923,7 @@ func TestSNCaseService_PatchCaseFieldsBundle_SendsAllSupportedFieldsWhenPresent(
 			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
 		}`))
 	})
-	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil, "", nil).(*snCaseService)
 
 	req := domain.UpdateCaseRequest{
 		ID:                 testDeploymentUUID,
@@ -2990,7 +2990,7 @@ func TestSNCaseService_PatchCaseFieldsBundle_OmitsFieldsNotInRequest(t *testing.
 			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
 		}`))
 	})
-	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil, "", nil).(*snCaseService)
 
 	req := domain.UpdateCaseRequest{ID: testDeploymentUUID, Subject: &subject}
 	if err := svc.patchCaseFieldsBundle(contextWithUserIDToken("token"), testDeploymentUUID, req); err != nil {
@@ -3019,7 +3019,7 @@ func TestSNCaseService_PatchCaseFieldsBundle_NoOpWhenNoSupportedFieldSet(t *test
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message": "ok", "case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00"}}`))
 	})
-	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil, "", nil).(*snCaseService)
 
 	// Description is set (mirrored elsewhere, or simply not part of this
 	// bundle) but every field this bundle actually forwards is nil.
