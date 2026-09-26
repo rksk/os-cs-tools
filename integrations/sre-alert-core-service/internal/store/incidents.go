@@ -149,6 +149,9 @@ func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert
 	// NotifyCSM. PendingNotes/StateCheckedAt reset too: they belonged to the old CSM incident this
 	// generation is leaving behind.
 	if !existing.IsOpen() {
+		// New generation: the old Description named the previous generation's alert id, so it must
+		// be rebuilt from this alert or NotifyCSM would push a stale creation note to the new CSM incident.
+		updated.Description = model.BuildCreationNote(alertID, a.MetricName, a.Source)
 		updated.Status = "new"
 		updated.IncidentID = ""
 		updated.IncidentNumber = pendingIncidentNumber(fp)
