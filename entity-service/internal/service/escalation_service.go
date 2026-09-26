@@ -18,23 +18,26 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
 type escalationService struct {
-	repo repository.EscalationRepository
+	repo     repository.EscalationRepository
+	userRepo repository.UserRepository
 }
 
 // NewEscalationService constructs an EscalationService backed by Postgres.
-// CreateEscalation always returns a ServiceUnavailableError -- see
-// EscalationRepository's own doc comment for why (no defined level-
-// transition or notification-recipient rule to derive from the schema
-// alone).
-func NewEscalationService(repo repository.EscalationRepository) EscalationService {
-	return &escalationService{repo: repo}
+// userRepo resolves the caller's x-user-id-token into an actor email for
+// CreateEscalation's created_by/updated_by attribution, the same
+// resolveActor pattern caseService uses.
+func NewEscalationService(repo repository.EscalationRepository, userRepo repository.UserRepository) EscalationService {
+	return &escalationService{repo: repo, userRepo: userRepo}
 }
 
 // SearchEscalations implements EscalationService.
@@ -79,9 +82,54 @@ func (s *escalationService) SearchEscalations(ctx context.Context, req domain.Se
 	}, nil
 }
 
-// CreateEscalation implements EscalationService.
+// CreateEscalation implements EscalationService. Mirrors
+// snEscalationService.CreateEscalation's own request validation (action
+// default/normalize, reason required when escalating) so the two data
+// sources reject the same malformed input the same way -- the actual
+// level-transition/notification-recipient rule lives in
+// EscalationRepository.CreateEscalation's own doc comment.
 func (s *escalationService) CreateEscalation(ctx context.Context, req domain.CreateEscalationRequest) (domain.CreateEscalationResponse, error) {
-	return domain.CreateEscalationResponse{}, &apierror.ServiceUnavailableError{
-		Msg: "creating an escalation is not available on this data source: no defined rule for the next escalation level or notification recipients exists in this schema",
+	if err := validateUUIDs("caseId", []string{req.CaseID}); err != nil {
+		return domain.CreateEscalationResponse{}, err
 	}
+
+	action := domain.EscalationActionEscalate
+	if req.Action != nil {
+		action = domain.EscalationAction(strings.ToUpper(string(*req.Action)))
+	}
+	if action != domain.EscalationActionEscalate && action != domain.EscalationActionDeescalate {
+		return domain.CreateEscalationResponse{}, &apierror.ValidationError{
+			Msg: fmt.Sprintf("invalid action %q. Allowed actions: %s, %s", action, domain.EscalationActionEscalate, domain.EscalationActionDeescalate),
+		}
+	}
+	if action == domain.EscalationActionEscalate && (req.Reason == nil || strings.TrimSpace(*req.Reason) == "") {
+		return domain.CreateEscalationResponse{}, &apierror.ValidationError{Msg: "reason is required when action is ESCALATE"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+	if token == "" {
+		return domain.CreateEscalationResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
+	}
+	email, err := emailFromJWT(token)
+	if err != nil {
+		return domain.CreateEscalationResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+	}
+	actor, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return domain.CreateEscalationResponse{}, err
+	}
+
+	escalation, err := s.repo.CreateEscalation(ctx, req.CaseID, action, req.Reason, actor.Email)
+	if err != nil {
+		return domain.CreateEscalationResponse{}, err
+	}
+
+	verb := "escalated"
+	if action == domain.EscalationActionDeescalate {
+		verb = "de-escalated"
+	}
+	return domain.CreateEscalationResponse{
+		Message:    fmt.Sprintf("case %s from %s to %s", verb, escalation.PreviousLevel.Label, escalation.CurrentLevel.Label),
+		Escalation: escalation,
+	}, nil
 }

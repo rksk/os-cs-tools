@@ -279,6 +279,34 @@ type Config struct {
 	// exists specifically to stop an M2M caller from spoofing an arbitrary
 	// actor. Compared case-insensitively in the handler.
 	M2MTrustedActorEmails []string
+
+	// Escalation* configure the fixed, deployment-specific notification
+	// recipients EscalationService.CreateEscalation (Postgres data source)
+	// layers on top of the per-case-derived ones (account technical owner,
+	// CRE team lead, product routing, CSM) -- see that method's own doc
+	// comment for the full EL1..EL5 cumulative rule these feed. Every one of
+	// these is OPTIONAL: an unset/empty value means "no recipient from this
+	// slot," never a startup failure or a request error -- not every
+	// deployment configures every tier on day one, same reasoning
+	// CustomerRoles/CSEngineerRole's own doc comments give for org-specific
+	// vocabulary that doesn't belong hardcoded in this repo. None of these
+	// are required by Validate for that reason.
+	EscalationEL1AmericasTLEmails []string
+	EscalationEL2AmericasTUEmails []string
+	// EscalationEL2ServiceProductEmail/EscalationEL2IdentityServerEmail/
+	// EscalationEL2DefaultProductEmail are the three product-routed EL2
+	// buckets: the case's deployed product's category/business_unit picks
+	// exactly one (SERVICE -> service; SOFTWARE with business_unit IAM ->
+	// identity server; everything else, including no business_unit -> the
+	// software default). A case with no deployed product/product info at
+	// all gets none of the three, silently.
+	EscalationEL2ServiceProductEmail string
+	EscalationEL2IdentityServerEmail string
+	EscalationEL2DefaultProductEmail string
+	EscalationEL3CREHeadEmail        string
+	EscalationEL4CCOEmail            string
+	EscalationEL4CROEmail            string
+	EscalationEL5CEOEmail            string
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -342,6 +370,15 @@ func Load() *Config {
 		SalesEntityScopes:                             os.Getenv("SALES_ENTITY_SCOPES"),
 		CSMMigrationMembershipRegistrationEnabled:     os.Getenv("CSM_MIGRATION_MEMBERSHIP_REGISTRATION_ENABLED") == "true",
 		M2MTrustedActorEmails:                         splitComma(os.Getenv("M2M_TRUSTED_ACTOR_EMAILS")),
+		EscalationEL1AmericasTLEmails:                 splitComma(os.Getenv("ESCALATION_EL1_AMERICAS_TL_EMAILS")),
+		EscalationEL2AmericasTUEmails:                 splitComma(os.Getenv("ESCALATION_EL2_AMERICAS_TU_EMAILS")),
+		EscalationEL2ServiceProductEmail:              os.Getenv("ESCALATION_EL2_SERVICE_PRODUCT_EMAIL"),
+		EscalationEL2IdentityServerEmail:              os.Getenv("ESCALATION_EL2_IDENTITY_SERVER_EMAIL"),
+		EscalationEL2DefaultProductEmail:              os.Getenv("ESCALATION_EL2_DEFAULT_PRODUCT_EMAIL"),
+		EscalationEL3CREHeadEmail:                     os.Getenv("ESCALATION_EL3_CRE_HEAD_EMAIL"),
+		EscalationEL4CCOEmail:                         os.Getenv("ESCALATION_EL4_CCO_EMAIL"),
+		EscalationEL4CROEmail:                         os.Getenv("ESCALATION_EL4_CRO_EMAIL"),
+		EscalationEL5CEOEmail:                         os.Getenv("ESCALATION_EL5_CEO_EMAIL"),
 	}
 	cfg.AuthInternalClientIDs = ParseInternalClientIDs(cfg.AuthInternalClientIDsRaw)
 	return cfg

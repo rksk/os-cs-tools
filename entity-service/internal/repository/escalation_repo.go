@@ -18,38 +18,129 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"golang.org/x/sync/errgroup"
 )
 
-// EscalationRepository defines the read operations for case_escalation and
-// case_escalation_notification_list (migration 000053). Only reads:
-// CreateEscalation has no defined level-transition rule (does ESCALATE
-// always mean "current level + 1", capped at EL5? is there a per-case-type
-// override?) or notification-recipient rule (watchers? the assigned
-// engineer? an account's own escalation contacts?) to derive from the
-// schema alone -- see EscalationService's own doc comment for why writes
-// stay ServiceNow-only.
+// EscalationRepository defines the persistence operations for case_escalation
+// and case_escalation_notification_list (migration 000053).
 type EscalationRepository interface {
 	// SearchEscalations returns a filtered, sorted, paginated slice of
 	// escalations together with the total count of matching rows before
 	// pagination.
 	SearchEscalations(ctx context.Context, caseIDs []string, currentLevels []int, sortField, sortOrder string, limit, offset int) ([]domain.Escalation, int, error)
+	// CreateEscalation escalates or de-escalates caseID and recomputes its
+	// notification-recipient list, all in one transaction.
+	//
+	// Level transition: ESCALATE always sets current_level to the case's
+	// current level + 1, capped at EL5 (escalating an already-EL5 case is a
+	// silent no-op on the level, not an error -- it still records a new
+	// case_escalation row). DEESCALATE always sets current_level to current
+	// level - 1, floored at EL0; DEESCALATE on an already-EL0 case has
+	// nothing to de-escalate and returns a ValidationError rather than a
+	// silent no-op or going negative. previous_level is always whatever the
+	// level was immediately before this call, for both directions.
+	// "case".is_escalated is set TRUE for any resulting level >= 1, FALSE at
+	// EL0 -- mirrored both directions.
+	//
+	// Notification recipients: resolved and written cumulatively for
+	// whatever the RESULTING level is (1..5), the same rule for both
+	// ESCALATE and DEESCALATE -- e.g. de-escalating EL3 -> EL2 writes the
+	// EL1+EL2 cumulative set, identical to an escalation landing at EL2.
+	// This is an approximation of ServiceNow's real EscalationUtils.
+	// createEscalation/EscalationNotificationUtils.resolveNotificationUsers
+	// (scoped app x_wso2_customer_0, read live against wso2sndev.
+	// service-now.com), built from what this schema actually has:
+	//
+	//   - EL1 (level >= 1): the case's account -> account.cre_team_id ->
+	//     "group".manager_id -- an APPROXIMATION of SN's real rule (team
+	//     members with u_team_member_role = 'HR Lead' on
+	//     u_integration_cs_team), which has no Postgres equivalent at all
+	//     ("group" has no per-member-role table, only one manager_id). This
+	//     is a deliberate, documented divergence, not a proven match.
+	//     Also: notifyCfg.EL1AmericasTLEmails, unconditionally (SN's own
+	//     script comment: "Append Americas TL users -- ALWAYS", no region
+	//     gate), and account.technical_owner_id (confirmed 1:1 match with
+	//     SN's u_technical_owner).
+	//     account.account_manager_id (SN's u_owner / "Account Owner") is a
+	//     CONFIRMED, GENUINE GAP and is never read here: nothing in this
+	//     repo's write path (SalesforceAccountUpsert) ever populates that
+	//     column, so treating it as a real signal would fabricate a
+	//     recipient from a column that's effectively always NULL in
+	//     practice. Fixing it means fixing the Salesforce upsert mapping
+	//     elsewhere -- out of scope here.
+	//   - EL2 (level >= 2): notifyCfg.EL2AmericasTUEmails, unconditionally,
+	//     plus exactly one product-routed recipient picked from the case's
+	//     deployed product's product.category/business_unit: SERVICE ->
+	//     EL2ServiceProductEmail; SOFTWARE with business_unit IAM ->
+	//     EL2IdentityServerEmail; everything else -> EL2DefaultProductEmail.
+	//     A case with no deployed product/product info at all gets none of
+	//     the three, silently (not an error) -- same "absence is a valid
+	//     state" convention as caseProductName's own empty-string fallback.
+	//   - EL3 (level >= 3): notifyCfg.EL3CREHeadEmail, plus
+	//     account.customer_success_manager_id (confirmed 1:1 match).
+	//   - EL4 (level >= 4): notifyCfg.EL4CCOEmail, notifyCfg.EL4CROEmail.
+	//   - EL5 (level >= 5): notifyCfg.EL5CEOEmail.
+	//
+	// Every notifyCfg.* email is OPTIONAL -- empty/unset means no recipient
+	// from that slot, never a request failure. A configured fixed email with
+	// no matching "user" row is skipped (not fatal): this never invents a
+	// synthetic user row to satisfy the FK. The final list is deduped by
+	// user id before being written to case_escalation_notification_list.
+	//
+	// Authorization ("only someone on the case's current notified-users list
+	// may de-escalate") is deliberately NOT enforced here -- same reasoning
+	// as CaseRepository.AcknowledgeCase's own doc comment: no Postgres-side
+	// permission model exists yet, so this data source only requires a
+	// known authenticated caller, same as every other Postgres case
+	// mutation. A known, documented gap, not a silent omission.
+	//
+	// Returns a NotFoundError if caseID doesn't reference an existing case
+	// (a work_item with no "case" extension row -- e.g. an engagement --
+	// counts as not found here, since current_escalation_level/is_escalated
+	// only ever live on "case").
+	CreateEscalation(ctx context.Context, caseID string, action domain.EscalationAction, reason *string, actorEmail string) (domain.CreatedEscalation, error)
+}
+
+// EscalationNotificationConfig holds the fixed, deployment-specific
+// escalation notification recipients CreateEscalation layers on top of the
+// per-case-derived ones -- see that method's own doc comment for the full
+// EL1..EL5 cumulative rule these feed. Every field is optional: empty means
+// "no recipient from this slot," never a request failure.
+type EscalationNotificationConfig struct {
+	EL1AmericasTLEmails    []string
+	EL2AmericasTUEmails    []string
+	EL2ServiceProductEmail string
+	EL2IdentityServerEmail string
+	EL2DefaultProductEmail string
+	EL3CREHeadEmail        string
+	EL4CCOEmail            string
+	EL4CROEmail            string
+	EL5CEOEmail            string
 }
 
 type escalationRepo struct {
-	db *pgxpool.Pool
+	db        *pgxpool.Pool
+	userRepo  UserRepository
+	notifyCfg EscalationNotificationConfig
 }
 
-// NewEscalationRepository constructs an EscalationRepository backed by the given connection pool.
-func NewEscalationRepository(db *pgxpool.Pool) EscalationRepository {
-	return &escalationRepo{db: db}
+// NewEscalationRepository constructs an EscalationRepository backed by the
+// given connection pool. userRepo resolves notifyCfg's fixed recipient
+// emails to "user" rows (GetUserByEmail), reusing the same lookup every
+// other email-to-user resolution in this codebase uses rather than a new
+// one written just for this.
+func NewEscalationRepository(db *pgxpool.Pool, userRepo UserRepository, notifyCfg EscalationNotificationConfig) EscalationRepository {
+	return &escalationRepo{db: db, userRepo: userRepo, notifyCfg: notifyCfg}
 }
 
 // escalationLevelToEnum/escalationLevelFromEnum convert between
@@ -243,4 +334,266 @@ func (r *escalationRepo) SearchEscalations(ctx context.Context, caseIDs []string
 	}
 
 	return escalations, total, nil
+}
+
+// maxEscalationLevel is case_escalation_level_enum's ceiling (EL5) --
+// ESCALATE never goes past it.
+const maxEscalationLevel = 5
+
+// escalationLevelInt parses a nullable current_level/previous_level column
+// ("EL0".."EL5", or NULL for a case never escalated) into a plain 0..5 int.
+// NULL is treated as EL0 -- "case".current_escalation_level/is_escalated
+// have no NOT NULL constraint or default (migration 000018), and a case
+// that's never been escalated is exactly the EL0 state.
+func escalationLevelInt(raw *string) int {
+	if raw == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(caseEscalationLevelFromEnum(*raw))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// nextEscalationLevel computes the resulting level for action given the
+// case's current level (previous int, already normalized via
+// escalationLevelInt) -- see EscalationRepository.CreateEscalation's own doc
+// comment for the full rule. ESCALATE past EL5 silently clamps (not an
+// error); DEESCALATE below EL0 returns a ValidationError instead of a
+// silent no-op or going negative, since there's genuinely nothing to
+// de-escalate.
+func nextEscalationLevel(action domain.EscalationAction, previous int) (int, error) {
+	if action == domain.EscalationActionDeescalate {
+		if previous == 0 {
+			return 0, &apierror.ValidationError{Msg: "case is already at the lowest escalation level (EL0); nothing to de-escalate"}
+		}
+		return previous - 1, nil
+	}
+	// ESCALATE, and any already-validated-upstream default.
+	next := previous + 1
+	if next > maxEscalationLevel {
+		next = maxEscalationLevel
+	}
+	return next, nil
+}
+
+// escalationCaseContext is everything CreateEscalation needs about the case
+// beyond its current/previous level, gathered in the same locked read so the
+// recipient computation below is consistent with the level transition it's
+// reacting to.
+type escalationCaseContext struct {
+	number, subject     string
+	wso2ID              *string
+	technicalOwnerID    *string
+	csmID               *string
+	creTeamManagerID    *string
+	productCategory     *string
+	productBusinessUnit *string
+}
+
+// resolveEscalationRecipients implements the cumulative EL1..EL5 rule
+// described on EscalationRepository.CreateEscalation's own doc comment,
+// returning a deduped set of "user".id values for whatever newLevel resulted
+// from this call. Fixed notifyCfg emails that don't resolve to a "user" row
+// are skipped, not fatal -- GetUserByEmail's own NotFoundError is treated as
+// "no recipient from this slot," identical to an unconfigured env var.
+func (r *escalationRepo) resolveEscalationRecipients(ctx context.Context, newLevel int, cc escalationCaseContext) ([]string, error) {
+	seen := map[string]bool{}
+	add := func(id *string) {
+		if id != nil && *id != "" {
+			seen[*id] = true
+		}
+	}
+	addEmail := func(email string) error {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			return nil
+		}
+		u, err := r.userRepo.GetUserByEmail(ctx, email)
+		if err != nil {
+			var notFound *apierror.NotFoundError
+			if errors.As(err, &notFound) {
+				return nil
+			}
+			return fmt.Errorf("resolve escalation recipient email: %w", err)
+		}
+		seen[u.ID] = true
+		return nil
+	}
+
+	if newLevel >= 1 {
+		add(cc.creTeamManagerID)
+		for _, email := range r.notifyCfg.EL1AmericasTLEmails {
+			if err := addEmail(email); err != nil {
+				return nil, err
+			}
+		}
+		add(cc.technicalOwnerID)
+		// account.account_manager_id (SN's u_owner) is deliberately never
+		// read -- see this repository's CreateEscalation doc comment for why.
+	}
+	if newLevel >= 2 {
+		for _, email := range r.notifyCfg.EL2AmericasTUEmails {
+			if err := addEmail(email); err != nil {
+				return nil, err
+			}
+		}
+		if cc.productCategory != nil {
+			switch {
+			case *cc.productCategory == "SERVICE":
+				if err := addEmail(r.notifyCfg.EL2ServiceProductEmail); err != nil {
+					return nil, err
+				}
+			case cc.productBusinessUnit != nil && *cc.productBusinessUnit == "IAM":
+				if err := addEmail(r.notifyCfg.EL2IdentityServerEmail); err != nil {
+					return nil, err
+				}
+			default:
+				if err := addEmail(r.notifyCfg.EL2DefaultProductEmail); err != nil {
+					return nil, err
+				}
+			}
+		}
+		// cc.productCategory == nil (no deployed product/product info at
+		// all): no product-routed recipient, silently -- not an error.
+	}
+	if newLevel >= 3 {
+		if err := addEmail(r.notifyCfg.EL3CREHeadEmail); err != nil {
+			return nil, err
+		}
+		add(cc.csmID)
+	}
+	if newLevel >= 4 {
+		if err := addEmail(r.notifyCfg.EL4CCOEmail); err != nil {
+			return nil, err
+		}
+		if err := addEmail(r.notifyCfg.EL4CROEmail); err != nil {
+			return nil, err
+		}
+	}
+	if newLevel >= 5 {
+		if err := addEmail(r.notifyCfg.EL5CEOEmail); err != nil {
+			return nil, err
+		}
+	}
+
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// CreateEscalation implements EscalationRepository.
+func (r *escalationRepo) CreateEscalation(ctx context.Context, caseID string, action domain.EscalationAction, reason *string, actorEmail string) (domain.CreatedEscalation, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		currentLevel *string
+		cc           escalationCaseContext
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT c.current_escalation_level::TEXT,
+		       wi.number, wi.subject, wi.wso2_id,
+		       a.technical_owner_id, a.customer_success_manager_id, g.manager_id,
+		       prod.category::TEXT, prod.business_unit::TEXT
+		FROM "case" c
+		JOIN work_item wi ON wi.id = c.id
+		LEFT JOIN account a ON a.id = wi.account_id
+		LEFT JOIN "group" g ON g.id = a.cre_team_id
+		LEFT JOIN deployed_product dp ON dp.id = wi.deployed_product_id
+		LEFT JOIN product prod ON prod.id = dp.product_id
+		WHERE c.id = $1
+		FOR UPDATE OF c`, caseID,
+	).Scan(
+		&currentLevel, &cc.number, &cc.subject, &cc.wso2ID,
+		&cc.technicalOwnerID, &cc.csmID, &cc.creTeamManagerID,
+		&cc.productCategory, &cc.productBusinessUnit,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.CreatedEscalation{}, &apierror.NotFoundError{Msg: "case not found"}
+	}
+	if err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: lock case: %w", err)
+	}
+
+	previousLevelInt := escalationLevelInt(currentLevel)
+	newLevelInt, err := nextEscalationLevel(action, previousLevelInt)
+	if err != nil {
+		return domain.CreatedEscalation{}, err
+	}
+	isEscalated := newLevelInt >= 1
+
+	recipientIDs, err := r.resolveEscalationRecipients(ctx, newLevelInt, cc)
+	if err != nil {
+		return domain.CreatedEscalation{}, err
+	}
+
+	var escalationID string
+	var createdOn time.Time
+	err = tx.QueryRow(ctx, `
+		INSERT INTO case_escalation (id, created_on, updated_on, created_by, updated_by, work_item_id, current_level, previous_level, reason)
+		VALUES (gen_random_uuid(), NOW(), NOW(), $1, $1, $2, $3::case_escalation_level_enum, $4::case_escalation_level_enum, $5)
+		RETURNING id, created_on`,
+		actorEmail, caseID, escalationLevelToEnum(newLevelInt), escalationLevelToEnum(previousLevelInt), reason,
+	).Scan(&escalationID, &createdOn)
+	if err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: insert case_escalation: %w", err)
+	}
+
+	if len(recipientIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO case_escalation_notification_list (id, case_escalation_id, user_id)
+			SELECT gen_random_uuid(), $1, u FROM unnest($2::uuid[]) AS u`,
+			escalationID, recipientIDs,
+		); err != nil {
+			return domain.CreatedEscalation{}, fmt.Errorf("create escalation: insert notification list: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE "case" SET current_escalation_level = $2::case_escalation_level_enum, is_escalated = $3 WHERE id = $1`,
+		caseID, escalationLevelToEnum(newLevelInt), isEscalated,
+	); err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: update case: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE work_item SET updated_on = NOW(), updated_by = $2 WHERE id = $1`,
+		caseID, actorEmail,
+	); err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: update work_item: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.CreatedEscalation{}, fmt.Errorf("create escalation: commit tx: %w", err)
+	}
+
+	// Read back after commit, on the pool rather than the (now-closed) tx --
+	// reuses getEscalationNotifiedUsers as-is rather than re-deriving the
+	// same join SearchEscalations already relies on.
+	notifiedByEscalation, err := r.getEscalationNotifiedUsers(ctx, []string{escalationID})
+	if err != nil {
+		return domain.CreatedEscalation{}, err
+	}
+	notified := notifiedByEscalation[escalationID]
+	if notified == nil {
+		notified = []domain.EscalationNotifiedUser{}
+	}
+
+	return domain.CreatedEscalation{
+		ID:                 escalationID,
+		Case:               domain.ReferenceTableItem{ID: caseID, Name: cc.subject, Number: &cc.number, InternalID: stringPtrOrNil(cc.wso2ID)},
+		CurrentLevel:       escalationChoiceItem(escalationLevelToEnum(newLevelInt)),
+		PreviousLevel:      escalationChoiceItem(escalationLevelToEnum(previousLevelInt)),
+		CreatedBy:          actorEmail,
+		CreatedOn:          createdOn.UTC().Format(time.RFC3339),
+		Reason:             reason,
+		NotificationSentTo: notified,
+	}, nil
 }

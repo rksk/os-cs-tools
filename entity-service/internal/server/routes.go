@@ -712,16 +712,28 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 
 	// case_escalation/case_escalation_notification_list (migration 000053)
-	// now back SearchEscalations on Postgres for real -- CreateEscalation
-	// still isn't supported there (see EscalationRepository's own doc
-	// comment for why), so this supersedes an earlier unconditional
+	// now back both SearchEscalations and CreateEscalation on Postgres for
+	// real -- see EscalationRepository.CreateEscalation's own doc comment
+	// for the level-transition/notification-recipient rule this
+	// approximates. This supersedes an earlier unconditional
 	// unavailableCaseEscalationService stand-in that predated the schema.
-	escalationRepo := repository.NewEscalationRepository(db)
+	escalationNotifyCfg := repository.EscalationNotificationConfig{
+		EL1AmericasTLEmails:    cfg.EscalationEL1AmericasTLEmails,
+		EL2AmericasTUEmails:    cfg.EscalationEL2AmericasTUEmails,
+		EL2ServiceProductEmail: cfg.EscalationEL2ServiceProductEmail,
+		EL2IdentityServerEmail: cfg.EscalationEL2IdentityServerEmail,
+		EL2DefaultProductEmail: cfg.EscalationEL2DefaultProductEmail,
+		EL3CREHeadEmail:        cfg.EscalationEL3CREHeadEmail,
+		EL4CCOEmail:            cfg.EscalationEL4CCOEmail,
+		EL4CROEmail:            cfg.EscalationEL4CROEmail,
+		EL5CEOEmail:            cfg.EscalationEL5CEOEmail,
+	}
+	escalationRepo := repository.NewEscalationRepository(db, userRepo, escalationNotifyCfg)
 	var activeEscalationSvc service.EscalationService
 	if cfg.DataSource == config.DataSourceServiceNow {
 		activeEscalationSvc = service.NewServiceNowEscalationService(serviceNowIntegrationServiceClient)
 	} else {
-		activeEscalationSvc = service.NewEscalationService(escalationRepo)
+		activeEscalationSvc = service.NewEscalationService(escalationRepo, userRepo)
 	}
 	escalationHandler := handler.NewEscalationHandler(activeEscalationSvc)
 	caseEscalationHandler := handler.NewCaseEscalationHandler(service.NewCaseEscalationService(activeEscalationSvc, activeCaseSvc))

@@ -6437,7 +6437,7 @@ type DeployedProductUsageCountsResponse struct {
 	ChartData       []DeployedProductUsageCountsChartEntry `json:"chartData"`
 }
 
-// --- escalations (ServiceNow data source only) ---
+// --- escalations ---
 
 // EscalationAction identifies whether an escalation request escalates or
 // de-escalates a case.
