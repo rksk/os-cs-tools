@@ -46,11 +46,14 @@ type IncidentRepo struct {
 	// and a shorter cap would let an id already tail-trimmed out of AlertIDs be treated as new again,
 	// duplicating its work note.
 	maxAlertIDs int
+	// dedupWindow bounds how long an incident keeps absorbing duplicates before IsOpen treats it as
+	// closed and Upsert starts a fresh generation; see model.Incident.IsOpen.
+	dedupWindow time.Duration
 }
 
 // NewIncidentRepo ties the AlertIDs idempotency cap to the poller's own max_window so the two can't drift apart.
-func NewIncidentRepo(session *gocql.Session, maxWindow int) (*IncidentRepo, error) {
-	return &IncidentRepo{session: gocqlx.NewSession(session), maxAlertIDs: maxWindow}, nil
+func NewIncidentRepo(session *gocql.Session, maxWindow int, dedupWindow time.Duration) (*IncidentRepo, error) {
+	return &IncidentRepo{session: gocqlx.NewSession(session), maxAlertIDs: maxWindow, dedupWindow: dedupWindow}, nil
 }
 
 // pendingIncidentNumber is a placeholder until CSM assigns the real one, derived from fingerprint so it's deterministic.
@@ -148,7 +151,7 @@ func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert
 	// the recurrence is silently swallowed. FirstSeen reset also gives DedupTag a fresh value for
 	// NotifyCSM. PendingNotes/StateCheckedAt reset too: they belonged to the old CSM incident this
 	// generation is leaving behind.
-	if !existing.IsOpen() {
+	if !existing.IsOpen(time.Now(), r.dedupWindow) {
 		// New generation: the old Description named the previous generation's alert id, so it must
 		// be rebuilt from this alert or NotifyCSM would push a stale creation note to the new CSM incident.
 		updated.Description = model.BuildCreationNote(alertID, a.MetricName, a.Source)

@@ -69,15 +69,18 @@ type Engine struct {
 	// stateCheckInterval throttles syncIncidentState's CSM round trips, so a flapping alert on a
 	// confirmed incident costs at most one CSM search per interval rather than one per duplicate.
 	stateCheckInterval time.Duration
+	// dedupWindow bounds how long an incident keeps absorbing duplicates before the next alert on
+	// the same fingerprint starts a fresh generation; see model.Incident.IsOpen.
+	dedupWindow time.Duration
 	// locks is per-fingerprint so distinct incidents never serialize; racing callers re-read the row under lock.
 	locks *fpLocks
 }
 
-// New wires the engine's collaborators, alert defaults, CSM attempt cap, and state-check throttle together.
-func New(logger *slog.Logger, alerts alertReader, incidents incidentStore, n notifier, defaults model.Defaults, maxCSMAttempts int, stateCheckInterval time.Duration) *Engine {
+// New wires the engine's collaborators, alert defaults, CSM attempt cap, state-check throttle, and dedup window together.
+func New(logger *slog.Logger, alerts alertReader, incidents incidentStore, n notifier, defaults model.Defaults, maxCSMAttempts int, stateCheckInterval time.Duration, dedupWindow time.Duration) *Engine {
 	return &Engine{
 		logger: logger, alerts: alerts, incidents: incidents, notifier: n, defaults: defaults,
-		maxCSMAttempts: maxCSMAttempts, stateCheckInterval: stateCheckInterval, locks: newFPLocks(),
+		maxCSMAttempts: maxCSMAttempts, stateCheckInterval: stateCheckInterval, dedupWindow: dedupWindow, locks: newFPLocks(),
 	}
 }
 
@@ -176,7 +179,7 @@ func (e *Engine) Handle(ctx context.Context, alertID string, alert model.Alert) 
 		}
 
 		// Duplicate against an open incident is annotated; against a closed one it falls through to Upsert.
-		if existing.IsOpen() {
+		if existing.IsOpen(time.Now(), e.dedupWindow) {
 			return e.annotate(ctx, existing, alertID, "Duplicate", alert)
 		}
 	}

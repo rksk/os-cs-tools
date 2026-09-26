@@ -35,6 +35,15 @@ type Config struct {
 	Notify    NotifyConfig    `toml:"notify"`
 	Server    ServerConfig    `toml:"server"`
 	Lease     LeaseConfig     `toml:"lease"`
+	Engine    EngineConfig    `toml:"engine"`
+}
+
+// EngineConfig tunes the dedup engine's fixed duplicate-folding window.
+type EngineConfig struct {
+	// DedupWindow bounds how long an incident keeps absorbing duplicates, measured from when it was
+	// first created; once elapsed, the next alert on the same fingerprint starts a fresh incident
+	// even if CSM still reports the old one open.
+	DedupWindow Duration `toml:"dedup_window"`
 }
 
 // PollConfig tunes the alert poller's cadence, concurrency, and per-cycle alert id limits.
@@ -139,6 +148,9 @@ func defaults() Config {
 		Server: ServerConfig{
 			ShutdownGrace: Duration(15 * time.Second),
 		},
+		Engine: EngineConfig{
+			DedupWindow: Duration(5 * time.Minute),
+		},
 	}
 }
 
@@ -208,6 +220,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("notify.state_check_interval must be positive")
 	case c.Server.ShutdownGrace <= 0:
 		return fmt.Errorf("server.shutdown_grace must be positive")
+	case c.Engine.DedupWindow <= 0:
+		return fmt.Errorf("engine.dedup_window must be positive")
 	}
 	return nil
 }
