@@ -417,15 +417,76 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/search:
+    post:
+      summary: Search cases.
+      description: >
+        A generic passthrough to entity-service's own POST /cases/search —
+        the request body is forwarded verbatim (build whatever filter/
+        pagination shape entity-service's own contract accepts, e.g. an
+        exact-match filter on "number" to look up a case by case number) and
+        the response is returned as-is. No special-casing for any particular
+        lookup shape.
+      operationId: searchCases
+      requestBody:
+        description: Case search payload, mirroring entity-service's own POST /cases/search contract.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseSearchPayload'
+      responses:
+        "200":
+          description: Cases matching the search query.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized (upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /cases/{id}/comments:
     post:
       summary: Add a comment to a case.
       description: >
-        Added for WSO2's internal UMT tool. The caller supplies only "type"
-        and "content"; this service supplies entity-service's actorEmail
-        field itself, from its own configured trusted M2M identity
-        (UMT_INTEGRATION_ACTOR_EMAIL), the same way it does for
-        POST /cases/{id}/tags (AddCaseLabel) — never from the caller, since
+        The caller supplies only "type" and "content"; this service supplies
+        entity-service's actorEmail field itself, from its own configured
+        trusted M2M identity (UMT_INTEGRATION_ACTOR_EMAIL), the same way it
+        does for POST /cases/{id}/tags — never from the caller, since
         an unchecked caller-supplied actorEmail would let any caller claim to
         be any user. On DATA_SOURCE=postgres, that configured value must
         match an entry in entity-service's M2M_TRUSTED_ACTOR_EMAILS allowlist
@@ -500,99 +561,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /cases/lookup:
-    get:
-      summary: Look up a case's platform UUID by its case number.
-      description: >
-        Added for WSO2's internal UMT (product-update-release-management)
-        tool. Proxies to the entity service's POST /cases/search with a
-        confirmed exact-match filter on the "number" field. Postgres-backed;
-        a pure M2M call succeeds here, no forwarded identity required. The
-        entity-service search response is forwarded as-is (its "cases" array
-        holds 0 or 1 matching case for an exact number match) rather than
-        reshaped into a single object — consistent with this service's raw
-        passthrough philosophy. The returned case id is this platform's own
-        UUID, never ServiceNow's internal sys_id, which the entity service's
-        case model never exposes.
-      operationId: lookupCase
-      parameters:
-        - name: number
-          in: query
-          required: true
-          schema:
-            type: string
-          description: The case number to look up, e.g. CS0012345.
-      responses:
-        "200":
-          description: >
-            The entity-service case search response, forwarded verbatim. Its
-            "cases" array holds 0 or 1 entries for an exact number match.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CaseSearchResponse'
-        "400":
-          description: BadRequest (missing or blank "number" query parameter)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "401":
-          description: Unauthorized (upstream reported an authorization failure)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "403":
-          description: Forbidden (upstream reported an authorization failure)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "404":
-          description: NotFound
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "422":
-          description: UnprocessableEntity
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   /cases/{id}/tags:
     post:
-      summary: Add a label (tag) to a case.
+      summary: Add a tag/label to a case.
       description: >
-        Added for WSO2's internal UMT tool. The caller supplies only
-        "label"; this service supplies entity-service's actorEmail field
-        itself, from its own configured trusted M2M identity
-        (UMT_INTEGRATION_ACTOR_EMAIL) — never from the caller, since an
-        unchecked caller-supplied actorEmail would let any caller claim to be
-        any user. That configured value must match an entry in
-        entity-service's M2M_TRUSTED_ACTOR_EMAILS allowlist or every call
-        here receives a mapped 403. Postgres-backed.
-      operationId: addCaseLabel
+        The caller supplies only "label"; this service supplies
+        entity-service's actorEmail field itself, from its own configured
+        trusted M2M identity (UMT_INTEGRATION_ACTOR_EMAIL), the same way it
+        does for POST /cases/{id}/comments — never from the caller, since
+        an unchecked caller-supplied actorEmail would let any caller claim to
+        be any user. Postgres-backed; a pure M2M call succeeds when that
+        configured value matches an entry in entity-service's
+        M2M_TRUSTED_ACTOR_EMAILS allowlist, and 403s otherwise.
+      operationId: addCaseTag
       parameters:
         - name: id
           in: path
@@ -605,14 +586,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CaseLabelCreateRequest'
+              $ref: '#/components/schemas/CaseTagCreateRequest'
       responses:
         "201":
-          description: The label was added.
+          description: The tag was added.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CaseLabelCreateResult'
+                $ref: '#/components/schemas/CaseTagCreateResponse'
         "400":
           description: BadRequest
           content:
@@ -620,7 +601,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: >
+            Unauthorized — on DATA_SOURCE=servicenow, entity-service forwards
+            this call to ServiceNow with an empty user token (this service has
+            no end-user identity to forward), and ServiceNow returns 401.
           content:
             application/json:
               schema:
@@ -635,78 +619,6 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: NotFound
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "413":
-          description: RequestEntityTooLarge
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /cases/{id}/conclude:
-    post:
-      summary: Mark a case's fix as issued and add a closing comment, in one call.
-      description: >
-        Added for WSO2's internal UMT tool — the first composite endpoint in
-        this service. Calls entity-service twice: (1) PATCH /cases/{id} with
-        {"markFixIssued": true}, expected to succeed over M2M; (2)
-        POST /cases/{id}/comments with the given comment, injecting this
-        service's own configured M2M actor identity
-        (UMT_INTEGRATION_ACTOR_EMAIL) the same way CreateCaseComment and
-        AddCaseLabel do — expected to succeed too on DATA_SOURCE=postgres
-        once that value is allowlisted on entity-service, and to still 401 on
-        DATA_SOURCE=servicenow (see CreateCaseComment's own documentation for
-        that split). Both legs are always attempted regardless of the
-        other's outcome. This endpoint returns 200 whenever the request
-        itself is well-formed, reporting both legs' outcomes independently
-        in the response body, rather than letting either leg's failure hide
-        the other's success (or vice versa).
-
-
-        Not safely retryable as a whole: markFixIssued is idempotent
-        (first-write-wins, a repeat call is a no-op success), but the
-        comment leg is not — retrying a call whose comment leg failed will
-        attempt to create the comment again and can result in duplicate
-        comments if an earlier attempt actually succeeded upstream despite
-        reporting failure to the caller (e.g. a timeout after the write
-        landed). Callers that must retry should check comment.success on
-        the prior response and only resubmit the comment leg's own content
-        deliberately, not blindly repeat the whole call.
-      operationId: concludeCase
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConcludeCaseRequest'
-      responses:
-        "200":
-          description: >
-            The request was well-formed; both legs were attempted. Check
-            markFixIssued.success and comment.success independently — a 200
-            here does not mean both legs succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConcludeCaseResponse'
-        "400":
-          description: BadRequest (missing "comment", invalid case UUID, oversized/invalid body)
           content:
             application/json:
               schema:
@@ -1813,6 +1725,77 @@ components:
         comment:
           $ref: '#/components/schemas/CaseCommentCreateResult'
 
+    CaseTagCreateRequest:
+      type: object
+      required:
+        - label
+      properties:
+        label:
+          type: string
+          description: >
+            The label text to add. actorEmail is never accepted here — this
+            service supplies it itself from its own configured M2M identity
+            (UMT_INTEGRATION_ACTOR_EMAIL).
+
+    CaseTagCreateResponse:
+      type: object
+      description: >
+        Mirrors entity-service's flat domain.Tag response verbatim — no
+        message/tag wrapper, no createdOn/createdBy.
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        color:
+          type: string
+          nullable: true
+
+    CaseFieldFilter:
+      type: object
+      description: A single "field op values" predicate in a case search filter expression, mirroring entity-service's own case-search contract.
+      properties:
+        field:
+          type: string
+        op:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
+
+    CaseSearchPayload:
+      type: object
+      description: >
+        Forwarded verbatim to entity-service's own POST /cases/search — this
+        service does not define or validate the filter/pagination shape
+        itself. See entity-service's own OpenAPI spec for the full contract.
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        filters:
+          type: object
+          properties:
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/CaseFieldFilter'
+
+    CaseSearchResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
     ProductVulnerabilitySyncPayload:
       type: array
       description: >
@@ -1824,99 +1807,6 @@ components:
         description: >
           Opaque per-record payload passed through to the entity service
           as-is — its shape is not defined or validated by this layer.
-
-    CaseSearchResult:
-      type: object
-      description: >
-        A minimal view of a matched case. The entity service's full case
-        search result carries more fields than are listed here; this schema
-        is deliberately not fully re-specified — see the entity service's own
-        OpenAPI spec for the complete shape.
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: This platform's own case UUID. Never a ServiceNow sys_id.
-        number:
-          type: string
-      additionalProperties: true
-
-    CaseSearchResponse:
-      type: object
-      properties:
-        cases:
-          type: array
-          items:
-            $ref: '#/components/schemas/CaseSearchResult'
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-
-    CaseLabelCreateRequest:
-      type: object
-      required:
-        - label
-      properties:
-        label:
-          type: string
-          description: >
-            The label text to add. actorEmail is never accepted here — this
-            service supplies it itself from its own configured M2M identity.
-
-    CaseLabelCreateResult:
-      type: object
-      properties:
-        id:
-          type: string
-        label:
-          type: string
-        color:
-          type: string
-          nullable: true
-
-    ConcludeCaseRequest:
-      type: object
-      required:
-        - comment
-      properties:
-        comment:
-          type: string
-          description: The closing comment to add to the case.
-        updateLevel:
-          type: string
-          description: >
-            Optional. When present, folded into the comment's content
-            (entity-service's comment body has no separate field for it).
-
-    LegOutcome:
-      type: object
-      description: >
-        The independent outcome of one leg of a composite operation. result is
-        present only when success is true; error is a short, caller-safe
-        summary present only when success is false — never the raw upstream
-        error body.
-      required:
-        - success
-      properties:
-        success:
-          type: boolean
-        result:
-          type: object
-          additionalProperties: true
-          nullable: true
-        error:
-          type: string
-
-    ConcludeCaseResponse:
-      type: object
-      properties:
-        markFixIssued:
-          $ref: '#/components/schemas/LegOutcome'
-        comment:
-          $ref: '#/components/schemas/LegOutcome'
 
     EntityRef:
       type: object

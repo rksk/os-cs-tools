@@ -134,15 +134,14 @@ is, and don't assume a 400 here means bad input from the caller — check both
 which fields were sent and which data source entity-service is running.
 
 **`POST /cases/{id}/comments` (`CreateCaseComment`) is now a partial
-exception to "always 401" too, mirroring `POST /cases/{id}/tags`
-(`AddCaseLabel`)'s M2M `actorEmail` path. Know the difference before
-assuming it's still stuck in the always-401 state described in earlier
-revisions of this doc.**
+exception to "always 401" too, mirroring `POST /cases/{id}/tags`'s M2M
+`actorEmail` path. Know the difference before assuming it's still stuck in
+the always-401 state described in earlier revisions of this doc.**
 
 - On `DATA_SOURCE=postgres`, this handler injects this service's own
   configured `UMT_INTEGRATION_ACTOR_EMAIL` into the request body as
-  `actorEmail`, never taken from the caller, the same way `AddCaseLabel`
-  injects it for case labels. entity-service checks it against its own
+  `actorEmail`, never taken from the caller, the same way `AddCaseTag`
+  injects it. entity-service checks it against its own
   `M2M_TRUSTED_ACTOR_EMAILS` allowlist and, when it matches, creates the
   comment with no forwarded token required. **Succeeds** today when
   `UMT_INTEGRATION_ACTOR_EMAIL` is configured and allowlisted; **403** if
@@ -156,10 +155,8 @@ revisions of this doc.**
   this data source still gets a mapped **401** from ServiceNow itself, same
   as before this fix.
 
-`ConcludeCase`'s comment leg (`concludeAddComment`) builds and sends its own
-request body directly to the entity client, it does not go through
-`CreateCaseComment`'s HTTP handler, so it injects
-`UMT_INTEGRATION_ACTOR_EMAIL` into its own body too, for the same
+`POST /cases/{id}/tags` (`AddCaseTag`, see `cases.go`) injects
+`UMT_INTEGRATION_ACTOR_EMAIL` the same way, for the same
 Postgres-succeeds/ServiceNow-still-401 split described above.
 
 ## `POST /alert-incident-mappings` and `POST /alert-incident-mappings/lookup` are functional today
@@ -204,7 +201,7 @@ handler so every `slog.*Context(r.Context(), …)` call automatically includes
 
 | Package | Upstream | Notes |
 |---------|----------|-------|
-| `entity` | Entity service | Account/Project + Contacts sub-resource, Case (patch + comment create), Opportunity/Invoice/ProjectOpportunityLink (read-only), incident creation/search/update, alert-incident mapping create/lookup; raw `[]byte` passthrough |
+| `entity` | Entity service | Account/Project + Contacts sub-resource, Case (search + patch + comment create + tag create), Opportunity/Invoice/ProjectOpportunityLink (read-only), incident creation/search/update, alert-incident mapping create/lookup; raw `[]byte` passthrough |
 
 A new upstream service would get its own package under `internal/`, following the
 same `Config`/`Client`/`NewClient`/`do()` pattern as `internal/entity`.

@@ -42,10 +42,8 @@ const (
 	ErrMsgInternal        = "An internal server error occurred. Please try again later."
 	ErrMsgInvalidUUID     = "Invalid UUID format."
 	errMsgReadBody        = "Failed to read request body."
-	ErrMsgNumberRequired  = "The 'number' query parameter is required."
-	ErrMsgLabelRequired   = "The 'label' field is required."
-	ErrMsgCommentRequired = "The 'comment' field is required."
 	ErrMsgContentRequired = "The 'content' field is required."
+	ErrMsgLabelRequired   = "The 'label' field is required."
 )
 
 // errorBody is the JSON error payload format.
