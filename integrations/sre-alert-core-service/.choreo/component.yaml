@@ -24,7 +24,7 @@ endpoints:
       port: 8080
     type: REST
     networkVisibilities:
-      - Project
+      - Public
   - name: healthz
     displayName: Alert Healthz
     service:
@@ -32,7 +32,7 @@ endpoints:
       port: 8080
     type: REST
     networkVisibilities:
-      - Project
+      - Public
   - name: livez
     displayName: Alert Livez
     service:
