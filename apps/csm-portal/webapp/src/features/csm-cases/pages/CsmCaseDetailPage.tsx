@@ -1555,7 +1555,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // Assign the case to the chosen engineer via PATCH { assigneeEmail }, or
   // clear the assignee via PATCH { assigneeEmail: null }. The detail query is
   // invalidated by the hook, so the assignee display refreshes on success.
-  // (ServiceNow-source only; the BE rejects it for PG cases.)
+  // Supported for both data sources on this branch (the Postgres path has
+  // its own native assignee handling, see entity-service's updateCaseAssignee).
   const onAssign = useCallback(
     (email: string | null) => {
       patchCase.mutate(
