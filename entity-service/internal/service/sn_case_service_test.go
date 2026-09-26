@@ -2877,3 +2877,141 @@ func TestSNCaseService_PatchCaseFields_NoGetCaseByIDOrEventPublish(t *testing.T)
 		})
 	}
 }
+
+// --- patchCaseFieldsBundle (DATA_SOURCE=postgres-servicenow-dual-write mirror only) ---
+
+// TestSNCaseService_PatchCaseFieldsBundle_SendsAllSupportedFieldsWhenPresent
+// proves patchCaseFieldsBundle forwards every field it supports -- Subject,
+// the three reference ids (as ServiceNow sysids, not the platform UUIDs the
+// request carries), the three fix-ETA dates, and WorkaroundProvided -- in a
+// single PATCH, using the same SN-side JSON keys (title/deploymentId/
+// deployedProductId/relatedCaseId) as the primary UpdateCase path.
+func TestSNCaseService_PatchCaseFieldsBundle_SendsAllSupportedFieldsWhenPresent(t *testing.T) {
+	subject := "Updated subject"
+	bestCase := "2026-08-02"
+	mostLikely := "2026-08-03"
+	worstCase := "2026-08-04"
+	workaroundProvided := true
+
+	var gotBody map[string]any
+	requestCount := 0
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+
+	req := domain.UpdateCaseRequest{
+		ID:                 testDeploymentUUID,
+		Subject:            &subject,
+		DeploymentID:       strPtr(testDeploymentUUID),
+		DeployedProductID:  strPtr(testDeployedProdID),
+		RelatedCaseID:      strPtr(testRelatedCaseUUID),
+		BestCaseFixEta:     &bestCase,
+		MostLikelyFixEta:   &mostLikely,
+		WorstCaseFixEta:    &worstCase,
+		WorkaroundProvided: &workaroundProvided,
+	}
+
+	if err := svc.patchCaseFieldsBundle(contextWithUserIDToken("token"), testDeploymentUUID, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected exactly 1 HTTP request (the PATCH), got %d", requestCount)
+	}
+
+	want := map[string]any{
+		"title":              subject,
+		"deploymentId":       uuidToSysid(testDeploymentUUID),
+		"deployedProductId":  uuidToSysid(testDeployedProdID),
+		"relatedCaseId":      uuidToSysid(testRelatedCaseUUID),
+		"bestCaseFixEta":     bestCase,
+		"mostLikelyFixEta":   mostLikely,
+		"worstCaseFixEta":    worstCase,
+		"workaroundProvided": workaroundProvided,
+	}
+	for field, wantVal := range want {
+		got, ok := gotBody[field]
+		if !ok {
+			t.Fatalf("expected payload field %q to be present in %+v", field, gotBody)
+		}
+		if got != wantVal {
+			t.Errorf("payload field %q: got %v, want %v", field, got, wantVal)
+		}
+	}
+	// description is genuinely ACL-blocked on the ServiceNow side at update
+	// time and must never be sent by this mirror -- see patchCaseFieldsBundle's
+	// own doc comment.
+	if _, ok := gotBody["description"]; ok {
+		t.Errorf("description must never be sent by patchCaseFieldsBundle, got %v", gotBody["description"])
+	}
+}
+
+// TestSNCaseService_PatchCaseFieldsBundle_OmitsFieldsNotInRequest proves the
+// partial-update semantics: patchCaseFieldsBundle is a combinable "plain
+// field" bundle, not a full snapshot, so a field the caller's update didn't
+// set must never appear in the outgoing PATCH body, even though several
+// other fields are present in this request.
+func TestSNCaseService_PatchCaseFieldsBundle_OmitsFieldsNotInRequest(t *testing.T) {
+	subject := "Only subject changed"
+
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+
+	req := domain.UpdateCaseRequest{ID: testDeploymentUUID, Subject: &subject}
+	if err := svc.patchCaseFieldsBundle(contextWithUserIDToken("token"), testDeploymentUUID, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got, ok := gotBody["title"]; !ok || got != subject {
+		t.Fatalf("title = %v (present=%v), want %q", got, ok, subject)
+	}
+	for _, field := range []string{"deploymentId", "deployedProductId", "relatedCaseId", "description",
+		"bestCaseFixEta", "mostLikelyFixEta", "worstCaseFixEta", "workaroundProvided"} {
+		if got, ok := gotBody[field]; ok {
+			t.Errorf("field %q must be omitted when not part of this update, got %v", field, got)
+		}
+	}
+}
+
+// TestSNCaseService_PatchCaseFieldsBundle_NoOpWhenNoSupportedFieldSet proves
+// patchCaseFieldsBundle returns nil without issuing any HTTP request when
+// req sets none of the eight fields it mirrors -- it must never send an
+// empty no-op PATCH.
+func TestSNCaseService_PatchCaseFieldsBundle_NoOpWhenNoSupportedFieldSet(t *testing.T) {
+	requestCount := 0
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message": "ok", "case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00"}}`))
+	})
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil).(*snCaseService)
+
+	// Description is set (mirrored elsewhere, or simply not part of this
+	// bundle) but every field this bundle actually forwards is nil.
+	desc := "not mirrored"
+	req := domain.UpdateCaseRequest{ID: testDeploymentUUID, Description: &desc}
+	if err := svc.patchCaseFieldsBundle(contextWithUserIDToken("token"), testDeploymentUUID, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("expected 0 HTTP requests for a no-op bundle, got %d", requestCount)
+	}
+}
