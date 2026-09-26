@@ -63,7 +63,7 @@ type stubCaseRepo struct {
 	addCaseTag                    func(ctx context.Context, caseID, label, actorEmail string) (domain.Tag, error)
 	setCaseWatchList              func(ctx context.Context, caseID string, userIDs []string, actorEmail string) ([]domain.WatchListUser, time.Time, error)
 	accountDefaultWatcherIDs      func(ctx context.Context, projectID string) ([]string, error)
-	updateCaseAssignee            func(ctx context.Context, caseID, userID, callerEmail string) (time.Time, bool, error)
+	updateCaseAssignee            func(ctx context.Context, caseID string, userID *string, callerEmail string) (time.Time, bool, error)
 	acknowledgeCase               func(ctx context.Context, caseID, actorID, actorEmail string) (bool, domain.AssignedEngineerRef, string, time.Time, error)
 	updateCaseParent              func(ctx context.Context, caseID, parentID, callerEmail string) (time.Time, error)
 	updateCaseFields              func(ctx context.Context, req domain.UpdateCaseRequest, actorID, actorEmail string) (time.Time, error)
@@ -197,7 +197,7 @@ func (s *stubCaseRepo) AccountDefaultWatcherIDs(ctx context.Context, projectID s
 	}
 	return nil, nil
 }
-func (s *stubCaseRepo) UpdateCaseAssignee(ctx context.Context, caseID, userID, callerEmail string) (time.Time, bool, error) {
+func (s *stubCaseRepo) UpdateCaseAssignee(ctx context.Context, caseID string, userID *string, callerEmail string) (time.Time, bool, error) {
 	if s.updateCaseAssignee != nil {
 		return s.updateCaseAssignee(ctx, caseID, userID, callerEmail)
 	}
@@ -717,8 +717,8 @@ func TestCaseService_UpdateCase_RejectsExclusiveFieldCombinations(t *testing.T) 
 		name string
 		req  domain.UpdateCaseRequest
 	}{
-		{name: "state+assigneeEmail", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &open, AssigneeEmail: &email}},
-		{name: "assigneeEmail+acknowledge", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: &email, Acknowledge: &ack}},
+		{name: "state+assigneeEmail", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &open, AssigneeEmail: json.RawMessage(`"` + email + `"`)}},
+		{name: "assigneeEmail+acknowledge", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: json.RawMessage(`"` + email + `"`), Acknowledge: &ack}},
 		{name: "parentId+watchList", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, ParentID: &parentID, WatchList: &[]string{}}},
 		{name: "acknowledge+subject", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, Acknowledge: &ack, Subject: &subject}},
 		{name: "state+subject", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &open, Subject: &subject}},
@@ -728,7 +728,7 @@ func TestCaseService_UpdateCase_RejectsExclusiveFieldCombinations(t *testing.T) 
 		// combinableCount at all, so these used to sail past the mutual-
 		// exclusion check and get silently dropped by whichever branch
 		// handled the other field.
-		{name: "assigneeEmail+closeNotes", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: &email, CloseNotes: &subject}},
+		{name: "assigneeEmail+closeNotes", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: json.RawMessage(`"` + email + `"`), CloseNotes: &subject}},
 		{name: "subject+closeNotes", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, Subject: &subject, CloseNotes: &subject}},
 	}
 	for _, tc := range cases {
@@ -750,8 +750,12 @@ func TestCaseService_UpdateCase_UpdatesAssignee(t *testing.T) {
 	assigneeEmail := "assignee@example.com"
 	called := make(chan string, 1)
 	mirror := &stubMirrorCaseService{
-		patchCaseAssigneeFn: func(_ context.Context, caseID, email string) error {
-			called <- email
+		patchCaseAssigneeFn: func(_ context.Context, caseID string, email *string) error {
+			if email == nil {
+				called <- ""
+				return nil
+			}
+			called <- *email
 			return nil
 		},
 	}
@@ -763,9 +767,9 @@ func TestCaseService_UpdateCase_UpdatesAssignee(t *testing.T) {
 			// decision comes from updateCaseAssignee's own "changed" return.
 			return domain.CaseView{ID: id, Number: "CS0001"}, nil
 		},
-		updateCaseAssignee: func(_ context.Context, caseID, userID, callerEmail string) (time.Time, bool, error) {
-			if userID != "assignee-id" {
-				t.Errorf("userID = %q, want assignee-id", userID)
+		updateCaseAssignee: func(_ context.Context, caseID string, userID *string, callerEmail string) (time.Time, bool, error) {
+			if userID == nil || *userID != "assignee-id" {
+				t.Errorf("userID = %v, want assignee-id", userID)
 			}
 			return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), true, nil
 		},
@@ -780,7 +784,7 @@ func TestCaseService_UpdateCase_UpdatesAssignee(t *testing.T) {
 	svc := NewCaseServiceWithSNWriteback(repo, userRepo, nil, alwaysUnrestrictedAccess{}, dispatcher, mirror)
 
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
-	resp, err := svc.UpdateCase(ctx, domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: &assigneeEmail})
+	resp, err := svc.UpdateCase(ctx, domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: json.RawMessage(`"` + assigneeEmail + `"`)})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -803,14 +807,92 @@ func TestCaseService_UpdateCase_UpdatesAssignee(t *testing.T) {
 
 // TestCaseService_UpdateCase_RejectsEmptyAssigneeEmail proves an explicitly
 // empty assigneeEmail is a validation error rather than clearing the
-// assignee -- AssigneeEmail has no documented "unassign" semantics.
+// assignee -- an explicit null (json.RawMessage(`null`)) is the only way to
+// clear it; a quoted empty string is still rejected.
 func TestCaseService_UpdateCase_RejectsEmptyAssigneeEmail(t *testing.T) {
 	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{}, nil, alwaysUnrestrictedAccess{})
-	empty := ""
-	_, err := svc.UpdateCase(contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com")), domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: &empty})
+	_, err := svc.UpdateCase(contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com")), domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: json.RawMessage(`""`)})
 	var ve *apierror.ValidationError
 	if !asValidationError(err, &ve) {
 		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestCaseService_UpdateCase_ClearsAssignee proves an explicit
+// assigneeEmail:null PATCH clears work_item.assigned_to_id (nil userID
+// passed through to CaseRepository.UpdateCaseAssignee), never publishes
+// case.assigned (publishCaseAssigned's own `assigneeEmail == ""` guard),
+// records the activity-feed entry with the literal "Unassigned" new value,
+// returns AssignedTo/AssignedToUser as nil, and forwards the clear to the
+// ServiceNow mirror as a nil *string (not an ambiguous empty string).
+func TestCaseService_UpdateCase_ClearsAssignee(t *testing.T) {
+	called := make(chan *string, 1)
+	mirror := &stubMirrorCaseService{
+		patchCaseAssigneeFn: func(_ context.Context, caseID string, email *string) error {
+			called <- email
+			return nil
+		},
+	}
+	var recordedNewValue string
+	repo := &stubCaseRepo{
+		getCaseByID: func(_ context.Context, id string, _ repository.SearchScope) (domain.CaseView, error) {
+			return domain.CaseView{
+				ID:               id,
+				Number:           "CS0002",
+				AssignedEngineer: domain.NewUserReference("assignee-id", "john.roe@example.com", "John Roe"),
+			}, nil
+		},
+		updateCaseAssignee: func(_ context.Context, caseID string, userID *string, callerEmail string) (time.Time, bool, error) {
+			if userID != nil {
+				t.Errorf("userID = %v, want nil (clear)", *userID)
+			}
+			return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), true, nil
+		},
+		recordCaseFieldChangeActivity: func(_ context.Context, _, field, _, newValue, _ string) error {
+			if field == "assigned_to_id" {
+				recordedNewValue = newValue
+			}
+			return nil
+		},
+	}
+	// resolveActor also goes through GetUserByEmail (for the caller, "jane.doe@example.com"
+	// below) -- only an assignee lookup (any other email) is disallowed on a clear.
+	userRepo := stubUserRepo{getUserByEmail: func(_ context.Context, email string) (domain.User, error) {
+		if email == "jane.doe@example.com" {
+			return domain.User{ID: "actor-id", Email: email}, nil
+		}
+		t.Fatalf("GetUserByEmail should not be called for an assignee lookup on a clear, got email %q", email)
+		return domain.User{}, nil
+	}}
+	publisher := &mockEventPublisher{}
+	dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
+	svc := NewCaseServiceWithSNWriteback(repo, userRepo, publisher, alwaysUnrestrictedAccess{}, dispatcher, mirror)
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	resp, err := svc.UpdateCase(ctx, domain.UpdateCaseRequest{ID: testDeploymentUUID, AssigneeEmail: json.RawMessage(`null`)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Case.AssignedTo != nil {
+		t.Errorf("AssignedTo = %+v, want nil", resp.Case.AssignedTo)
+	}
+	if resp.Case.AssignedToUser != nil {
+		t.Errorf("AssignedToUser = %+v, want nil", resp.Case.AssignedToUser)
+	}
+	if len(publisher.calls) != 0 {
+		t.Errorf("case.assigned published on a clear, got %d calls", len(publisher.calls))
+	}
+	if recordedNewValue != "Unassigned" {
+		t.Errorf("activity new value = %q, want Unassigned", recordedNewValue)
+	}
+
+	select {
+	case got := <-called:
+		if got != nil {
+			t.Errorf("mirror got %v, want nil (clear)", *got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror.patchCaseAssignee was never called")
 	}
 }
 
@@ -1132,7 +1214,7 @@ type stubMirrorCaseService struct {
 	addCaseTagAsFn          func(ctx context.Context, caseID, label, actorEmail string) (domain.Tag, error)
 	removeCaseTagFn         func(ctx context.Context, caseID, tagID string) error
 	patchCaseWatchListFn    func(ctx context.Context, caseID string, userIDs []string) (domain.UpdatedCase, error)
-	patchCaseAssigneeFn     func(ctx context.Context, caseID, assigneeEmail string) error
+	patchCaseAssigneeFn     func(ctx context.Context, caseID string, assigneeEmail *string) error
 	patchCaseAcknowledgeFn  func(ctx context.Context, caseID string) error
 	patchCaseParentFn       func(ctx context.Context, caseID, parentID string) error
 	patchCaseFieldsBundleFn func(ctx context.Context, caseID string, req domain.UpdateCaseRequest) error
@@ -1150,7 +1232,7 @@ func (s *stubMirrorCaseService) CreateBareCaseComment(ctx context.Context, caseI
 	return s.createBareCaseComment(ctx, caseID, commentType, content)
 }
 
-func (s *stubMirrorCaseService) patchCaseAssignee(ctx context.Context, caseID, assigneeEmail string) error {
+func (s *stubMirrorCaseService) patchCaseAssignee(ctx context.Context, caseID string, assigneeEmail *string) error {
 	return s.patchCaseAssigneeFn(ctx, caseID, assigneeEmail)
 }
 

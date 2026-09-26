@@ -328,10 +328,15 @@ type CaseRepository interface {
 	// the same case to the same engineer can't both observe "unchanged" and
 	// both publish/mirror the same no-op write -- see CaseService.
 	// updateCaseAssignee's own doc comment for why that race mattered
-	// (CodeRabbit finding on PR #1989). changed reports whether this call
+	// (CodeRabbit finding on PR #1989). userID is nil to clear the assignee
+	// (assigned_to_id UUID REFERENCES "user"(id) ON DELETE SET NULL, migration
+	// 000036, is already nullable) and non-nil to set it -- pgx binds a nil
+	// *string parameter as SQL NULL automatically, and the query's own
+	// IS DISTINCT FROM already treats NULL correctly on both sides, so the SQL
+	// itself needs no change for this. changed reports whether this call
 	// was the one that wrote it; updatedOn is the row's current value
 	// either way. Returns a NotFoundError if caseID does not exist.
-	UpdateCaseAssignee(ctx context.Context, caseID, userID, callerEmail string) (updatedOn time.Time, changed bool, err error)
+	UpdateCaseAssignee(ctx context.Context, caseID string, userID *string, callerEmail string) (updatedOn time.Time, changed bool, err error)
 	// AcknowledgeCase atomically claims the case for actorID if nobody has
 	// acknowledged it yet (work_item.acknowledged_by_user_id IS NULL), or
 	// leaves it untouched if someone already has -- the same idempotent
@@ -2205,7 +2210,7 @@ const updateCaseAssigneeQuery = `
 	WHERE wi.id = $1`
 
 // UpdateCaseAssignee implements CaseRepository.
-func (r *caseRepo) UpdateCaseAssignee(ctx context.Context, caseID, userID, callerEmail string) (time.Time, bool, error) {
+func (r *caseRepo) UpdateCaseAssignee(ctx context.Context, caseID string, userID *string, callerEmail string) (time.Time, bool, error) {
 	var updatedOn time.Time
 	var changed bool
 	err := r.db.QueryRow(ctx, updateCaseAssigneeQuery, caseID, userID, callerEmail).Scan(&updatedOn, &changed)

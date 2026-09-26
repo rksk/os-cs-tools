@@ -2420,8 +2420,10 @@ type snUpdateCasePayload struct {
 	Variables             []snCaseVariable `json:"variables,omitempty"`
 	// WatchList replaces the whole list, so an explicitly empty list must still be
 	// sent to clear it rather than be omitted -- hence the pointer.
-	WatchList     *[]string `json:"watchList,omitempty"`
-	AssigneeEmail *string   `json:"assigneeEmail,omitempty"`
+	WatchList *[]string `json:"watchList,omitempty"`
+	// AssigneeEmail is json.RawMessage so an explicit null (clear the assignee) can be
+	// distinguished from an omitted field, mirroring snUpdateDeployedProductPayload.Description.
+	AssigneeEmail json.RawMessage `json:"assigneeEmail,omitempty"`
 	// Acknowledge claims the case for the calling engineer, first-write-wins. Only
 	// true is ever sent -- there is no unacknowledge -- and the backing service keeps
 	// it mutually exclusive with every other field in this payload.
@@ -2674,7 +2676,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WatchList != nil {
 		exclusiveCount++
 	}
-	if req.AssigneeEmail != nil {
+	if len(req.AssigneeEmail) > 0 {
 		exclusiveCount++
 	}
 	if req.ParentID != nil {
@@ -2921,7 +2923,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 		payload.WatchList = &emails
 	}
-	if req.AssigneeEmail != nil {
+	if len(req.AssigneeEmail) > 0 {
 		payload.AssigneeEmail = req.AssigneeEmail
 	}
 	if req.Acknowledge != nil {
@@ -3079,18 +3081,34 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	// for the same call.
 	var caseBeforeAssign domain.CaseView
 	publishCaseAssign := false
-	if req.AssigneeEmail != nil && s.publisher != nil {
-		enrichCtx, cancel := context.WithTimeout(ctx, publishCaseAssignedTimeout)
-		cv, err := s.GetCaseByID(enrichCtx, req.ID)
-		cancel()
+	var assigneeEmail string
+	if len(req.AssigneeEmail) > 0 && s.publisher != nil {
+		isClear, email, err := parseAssigneeEmail(req.AssigneeEmail)
 		switch {
 		case err != nil:
-			slog.ErrorContext(ctx, "sn update case: enrich case for case.assigned publish failed", "caseId", req.ID)
-		case cv.AssignedEngineer != nil && strings.EqualFold(cv.AssignedEngineer.Email, *req.AssigneeEmail):
-			slog.InfoContext(ctx, "sn update case: case.assigned not published, assignee is unchanged", "caseId", req.ID)
+			// Malformed assigneeEmail JSON that isn't null and isn't a valid string
+			// (e.g. a JSON number) -- SN itself would 400 on this, so it should
+			// realistically never happen here. Skip the publish block rather than
+			// failing the whole PATCH over an event-publishing concern.
+			slog.ErrorContext(ctx, "sn update case: parse assigneeEmail for case.assigned publish failed", "caseId", req.ID)
+		case isClear:
+			// A clear (explicit null) never publishes case.assigned -- nobody was
+			// assigned, so that event would be actively wrong, and there is no
+			// case.unassigned event to publish instead.
 		default:
-			caseBeforeAssign = cv
-			publishCaseAssign = true
+			assigneeEmail = email
+			enrichCtx, cancel := context.WithTimeout(ctx, publishCaseAssignedTimeout)
+			cv, err := s.GetCaseByID(enrichCtx, req.ID)
+			cancel()
+			switch {
+			case err != nil:
+				slog.ErrorContext(ctx, "sn update case: enrich case for case.assigned publish failed", "caseId", req.ID)
+			case cv.AssignedEngineer != nil && strings.EqualFold(cv.AssignedEngineer.Email, assigneeEmail):
+				slog.InfoContext(ctx, "sn update case: case.assigned not published, assignee is unchanged", "caseId", req.ID)
+			default:
+				caseBeforeAssign = cv
+				publishCaseAssign = true
+			}
 		}
 	}
 
@@ -3227,11 +3245,11 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		s.applyCaseStateSLAEffects(ctx, req.ID, derefState(resp.Case.State))
 	}
 	if publishCaseAssign {
-		assigneeName := *req.AssigneeEmail
+		assigneeName := assigneeEmail
 		if snResp.Case.AssignedTo != nil && snResp.Case.AssignedTo.Name != "" {
 			assigneeName = snResp.Case.AssignedTo.Name
 		}
-		s.publishCaseAssigned(ctx, req.ID, assigneeName, *req.AssigneeEmail, caseBeforeAssign)
+		s.publishCaseAssigned(ctx, req.ID, assigneeName, assigneeEmail, caseBeforeAssign)
 	}
 	// AlreadyAcknowledged distinguishes a genuine first-time claim from a
 	// repeat Acknowledge:true call that succeeded without changing anything
@@ -3403,12 +3421,38 @@ func (s *snCaseService) patchCaseWatchList(ctx context.Context, caseID string, u
 // publishing -- same reasoning as patchCaseFields's own doc comment, extended
 // to AssigneeEmail for DATA_SOURCE=postgres-servicenow-dual-write's async
 // assignee mirror (see caseService.updateCaseAssignee's own doc comment).
+// assigneeEmail is nil to clear the assignee (sent to ServiceNow as an
+// explicit JSON null) and non-nil to set it -- a bare empty string can't
+// carry that distinction, since it collides with a genuinely empty value.
 // The response is discarded -- the dispatcher only needs to know whether the
 // write succeeded.
-func (s *snCaseService) patchCaseAssignee(ctx context.Context, caseID, assigneeEmail string) error {
+func (s *snCaseService) patchCaseAssignee(ctx context.Context, caseID string, assigneeEmail *string) error {
+	var raw json.RawMessage
+	if assigneeEmail == nil {
+		raw = json.RawMessage("null")
+	} else {
+		quoted, err := json.Marshal(*assigneeEmail)
+		if err != nil {
+			return fmt.Errorf("sn patch case assignee: encode assigneeEmail: %w", err)
+		}
+		raw = json.RawMessage(quoted)
+	}
 	token := middleware.UserIDTokenFromContext(ctx)
-	_, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(caseID), token, snUpdateCasePayload{AssigneeEmail: &assigneeEmail})
+	_, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(caseID), token, snUpdateCasePayload{AssigneeEmail: raw})
 	return err
+}
+
+// parseAssigneeEmail interprets a json.RawMessage assigneeEmail field. Call only when
+// the field is known to be present (len(raw) > 0). Returns isClear=true for an explicit
+// null (no email value); otherwise unmarshals the raw JSON into email and returns it.
+func parseAssigneeEmail(raw json.RawMessage) (isClear bool, email string, err error) {
+	if string(raw) == "null" {
+		return true, "", nil
+	}
+	if err := json.Unmarshal(raw, &email); err != nil {
+		return false, "", err
+	}
+	return false, email, nil
 }
 
 // patchCaseAcknowledge performs a bare ServiceNow PATCH setting acknowledge,

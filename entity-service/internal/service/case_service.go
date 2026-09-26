@@ -93,9 +93,10 @@ type snWatchListPatcher interface {
 // snAssigneePatcher is implemented by *snCaseService (see patchCaseAssignee's
 // own doc comment). A narrow interface for the same reason snFieldPatcher is
 // one: updateCaseAssignee's mirror needs a bare assignee-only PATCH, not the
-// full CaseService surface.
+// full CaseService surface. assigneeEmail is nil to clear the assignee and
+// non-nil to set it -- an empty string can't carry that distinction.
 type snAssigneePatcher interface {
-	patchCaseAssignee(ctx context.Context, caseID, assigneeEmail string) error
+	patchCaseAssignee(ctx context.Context, caseID string, assigneeEmail *string) error
 }
 
 // snAcknowledgePatcher is implemented by *snCaseService (see
@@ -822,7 +823,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if req.WatchList != nil {
 		exclusiveCount++
 	}
-	if req.AssigneeEmail != nil {
+	if len(req.AssigneeEmail) > 0 {
 		exclusiveCount++
 	}
 	if req.ParentID != nil {
@@ -894,7 +895,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if req.WatchList != nil {
 		return s.updateCaseWatchList(ctx, req)
 	}
-	if req.AssigneeEmail != nil {
+	if len(req.AssigneeEmail) > 0 {
 		return s.updateCaseAssignee(ctx, req)
 	}
 	if req.ParentID != nil {
@@ -1152,13 +1153,27 @@ func (s *caseService) updateCaseWatchList(ctx context.Context, req domain.Update
 // caller-role check to enforce here (no role/permission model exists for
 // Postgres-side case mutations at all yet -- see AccessService's own "not
 // yet wired" list) -- deliberately left unenforced rather than invented.
+//
+// req.AssigneeEmail is json.RawMessage to preserve a third state beyond
+// set/omit: an explicit null clears the assignee (parseAssigneeEmail's
+// isClear), skipping GetUserByEmail entirely (there is no email to
+// resolve) and writing assigned_to_id = NULL via CaseRepository.
+// UpdateCaseAssignee's now-nilable userID parameter.
 func (s *caseService) updateCaseAssignee(ctx context.Context, req domain.UpdateCaseRequest) (domain.UpdateCaseResponse, error) {
-	if *req.AssigneeEmail == "" {
+	isClear, email, err := parseAssigneeEmail(req.AssigneeEmail)
+	if err != nil {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "assigneeEmail must be a JSON string or null"}
+	}
+	if !isClear && email == "" {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "assigneeEmail must not be empty"}
 	}
-	assignee, err := s.userRepo.GetUserByEmail(ctx, *req.AssigneeEmail)
-	if err != nil {
-		return domain.UpdateCaseResponse{}, err
+
+	var assignee domain.User
+	if !isClear {
+		assignee, err = s.userRepo.GetUserByEmail(ctx, email)
+		if err != nil {
+			return domain.UpdateCaseResponse{}, err
+		}
 	}
 	actor, err := s.resolveActor(ctx)
 	if err != nil {
@@ -1193,47 +1208,72 @@ func (s *caseService) updateCaseAssignee(ctx context.Context, req domain.UpdateC
 	// a stale "not yet assigned" state and both publish/mirror the same
 	// no-op, sending watchers a duplicate "case assigned" notification
 	// (CodeRabbit finding on PR #1989).
-	updatedOn, changed, err := s.repo.UpdateCaseAssignee(ctx, req.ID, assignee.ID, actor.Email)
+	var userID *string
+	if !isClear {
+		userID = &assignee.ID
+	}
+	updatedOn, changed, err := s.repo.UpdateCaseAssignee(ctx, req.ID, userID, actor.Email)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, err
 	}
 
-	assigneeName := strings.TrimSpace(assignee.FirstName + " " + assignee.LastName)
-	if assigneeName == "" {
-		assigneeName = assignee.Email
+	// assigneeName/assigneeEmail feed the activity log and case.assigned
+	// publish below. On a clear there is no user to derive a name from --
+	// "Unassigned" is a literal, display-only value for the activity feed's
+	// "changed to" entry (matching how AssignEngineerDialog.tsx already
+	// displays a blank assignee); assigneeEmail stays "" so
+	// publishCaseAssigned's own existing `assigneeEmail == ""` guard skips
+	// the publish for free, with no fabricated placeholder in the email slot.
+	assigneeName := "Unassigned"
+	assigneeEmail := ""
+	if !isClear {
+		assigneeName = strings.TrimSpace(assignee.FirstName + " " + assignee.LastName)
+		if assigneeName == "" {
+			assigneeName = assignee.Email
+		}
+		assigneeEmail = assignee.Email
 	}
 
 	// Event publishing/activity-feed logging both follow the write, not
 	// DATA_SOURCE -- see publishCaseCreatedEvent's own doc comment for why.
 	if changed {
-		s.publishCaseAssigned(ctx, req.ID, assigneeName, assignee.Email)
+		s.publishCaseAssigned(ctx, req.ID, assigneeName, assigneeEmail)
 		s.recordFieldChangeActivity(ctx, req.ID, "assigned_to_id", previousAssigneeName, assigneeName, actor.Email)
 	}
 
 	// Best-effort ServiceNow mirror write, DATA_SOURCE=postgres-servicenow-dual-write
 	// only -- same Postgres-first/async posture as updateCaseWatchList's own
-	// mirror above.
+	// mirror above. On a clear, patcher.patchCaseAssignee receives a nil
+	// pointer rather than an empty string, since an empty string is
+	// ambiguous with a genuinely empty value.
 	if s.snWriteback != nil {
 		if patcher, ok := s.snMirror.(snAssigneePatcher); ok {
-			assigneeEmail := *req.AssigneeEmail
+			var mirrorEmail *string
+			if !isClear {
+				e := assignee.Email
+				mirrorEmail = &e
+			}
 			s.snWriteback.Dispatch(ctx, "case", req.ID, "update",
-				map[string]any{"id": req.ID, "assigneeEmail": assigneeEmail},
+				map[string]any{"id": req.ID, "assigneeEmail": mirrorEmail},
 				func(writeCtx context.Context) error {
-					return patcher.patchCaseAssignee(writeCtx, req.ID, assigneeEmail)
+					return patcher.patchCaseAssignee(writeCtx, req.ID, mirrorEmail)
 				},
 			)
 		}
 	}
 
-	return domain.UpdateCaseResponse{
+	resp := domain.UpdateCaseResponse{
 		Message: "Case updated successfully",
 		Case: domain.UpdatedCase{
-			ID:             req.ID,
-			UpdatedOn:      updatedOn,
-			AssignedTo:     &domain.AssignedEngineerRef{ID: assignee.ID, Name: assigneeName, Email: &assignee.Email},
-			AssignedToUser: domain.NewUserReference(assignee.ID, assignee.Email, assigneeName),
+			ID:        req.ID,
+			UpdatedOn: updatedOn,
 		},
-	}, nil
+	}
+	if !isClear {
+		resp.Case.AssignedTo = &domain.AssignedEngineerRef{ID: assignee.ID, Name: assigneeName, Email: &assignee.Email}
+		resp.Case.AssignedToUser = domain.NewUserReference(assignee.ID, assignee.Email, assigneeName)
+	}
+	return resp, nil
 }
 
 // updateCaseMarkFixIssued implements UpdateCase's MarkFixIssued branch:
