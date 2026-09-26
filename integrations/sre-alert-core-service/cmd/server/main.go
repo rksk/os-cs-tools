@@ -78,6 +78,11 @@ func main() {
 		logger.Error("failed to initialise incident repository", "error", err)
 		os.Exit(1)
 	}
+	// One-time (per process start) backfill so incidents_pending covers rows created before this
+	// index existed; a failure here doesn't block startup since it can just be retried on next restart.
+	if err := incidents.BackfillPendingIndex(context.Background()); err != nil {
+		logger.Warn("failed to backfill pending incident index, will retry on next restart", "error", err)
+	}
 	defaults, err := model.LoadDefaults()
 	if err != nil {
 		logger.Error("failed to load alert defaults", "error", err)

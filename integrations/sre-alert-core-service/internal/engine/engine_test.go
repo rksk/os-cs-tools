@@ -558,6 +558,43 @@ func TestHandle_DedupWindowExpired_StartsNewIncidentGeneration(t *testing.T) {
 	}
 }
 
+// TestHandle_GenerationReset_FlushesPendingNotesFirst is the case a CodeRabbit review of the dedup
+// window flagged: Upsert's generation-reset branch discards PendingNotes, so a note that was queued
+// (e.g. a CSM PATCH failed earlier) but never got flushed before the incident aged out of its dedup
+// window would be silently lost instead of ever reaching CSM. Handle must flush it first.
+func TestHandle_GenerationReset_FlushesPendingNotesFirst(t *testing.T) {
+	notifier := &fakeNotifier{csmOK: true, csmID: "csm-1", csmNumber: "INC0000001"}
+	incidents := newFakeIncidents()
+	incidents.dedupWindow = 5 * time.Minute
+	e := New(testLogger(), &fakeAlerts{}, incidents, notifier, model.Defaults{}, 3, 0, 5*time.Minute)
+	ctx := context.Background()
+
+	alert := model.Alert{Service: "svc", MetricName: "cpu", Severity: "critical", Source: "vendor"}
+	e.Handle(ctx, "ALT1", alert) // creates + confirms the incident
+	fp := model.Fingerprint(alert.Source, alert.Service, alert.MetricName, alert.Environment, alert.UniqueIdentifier)
+
+	// A note queued on the outgoing generation, still unflushed, and the incident has aged past its
+	// dedup window -- the next alert on this fingerprint is about to trigger a generation reset.
+	inc := incidents.byFP[fp]
+	inc.PendingNotes = []string{"queued note"}
+	inc.FirstSeen = time.Now().Add(-6 * time.Minute)
+	incidents.byFP[fp] = inc
+
+	notifier.csmID, notifier.csmNumber = "csm-2", "INC0000002"
+	outcome := e.Handle(ctx, "ALT2", alert)
+	if outcome != Processed {
+		t.Fatalf("outcome = %v, want Processed", outcome)
+	}
+
+	if len(notifier.pushedNotes) != 1 || notifier.pushedNotes[0] != "queued note" {
+		t.Fatalf("expected the queued note to be pushed to CSM before the generation reset, got %v", notifier.pushedNotes)
+	}
+	inc = incidents.byFP[fp]
+	if inc.IncidentNumber != "INC0000002" {
+		t.Fatalf("expected a fresh incident generation, got %+v", inc)
+	}
+}
+
 // TestAnnotate_PushesPendingNoteImmediately_AndRetriesOnFailure is the case the latest review
 // flagged: engine.go's old annotate() pushed a work note to CSM at most once, best-effort, with no
 // retry on PATCH failure and no path at all for a note written before CSM confirmed the incident.
