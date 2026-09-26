@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -80,6 +81,13 @@ type problemService struct {
 	// Postgres path's ServiceUnavailableError below, mirroring
 	// incidentService's identical snMirror-gated branch for CreateIncident.
 	snMirror ProblemService
+	// snWriteback is nil in every mode except
+	// DATA_SOURCE=postgres-servicenow-dual-write, same convention as
+	// incidentService's identical field -- see
+	// NewIncidentServiceWithSNMirror's own doc comment. Set only via
+	// NewProblemServiceWithSNMirror. Backs UpdateProblem's best-effort async
+	// ServiceNow mirror write.
+	snWriteback *SNWritebackDispatcher
 }
 
 // NewProblemService constructs a ProblemService backed by Postgres.
@@ -88,20 +96,46 @@ func NewProblemService(repo repository.ProblemRepository) ProblemService {
 }
 
 // NewProblemServiceWithSNMirror is NewProblemService plus the wiring
-// DATA_SOURCE=postgres-servicenow-dual-write needs for problem CREATE: a
-// synchronous, ServiceNow-first creation path -- see
+// DATA_SOURCE=postgres-servicenow-dual-write needs for problem CREATE and
+// UPDATE: a synchronous, ServiceNow-first creation path -- see
 // createProblemSNFirst's own doc comment for the full reasoning (identical
 // to incidentService.createIncidentSNFirst's: a Postgres-first async create
-// could leave a permanent orphan). This mode has no problem UPDATE mirror --
-// UpdateProblem stays exactly as unsupported here as it is in every other
-// mode; only CREATE is in scope for this pilot extension.
+// could leave a permanent orphan) -- plus a Postgres-first, best-effort async
+// ServiceNow mirror for UPDATE (see UpdateProblem's own doc comment),
+// identical in shape to incidentService's own snMirror/snWriteback pair.
 //
 // mirror is the ServiceNow-backed ProblemService (from
 // NewServiceNowProblemService) whose CreateProblem performs the real
-// ServiceNow POST. It is never made the active ProblemService here -- reads
-// always stay on Postgres in this mode.
-func NewProblemServiceWithSNMirror(repo repository.ProblemRepository, mirror ProblemService) ProblemService {
-	return &problemService{repo: repo, snMirror: mirror}
+// ServiceNow POST and whose UpdateProblem is the async mirror's target. It
+// is never made the active ProblemService here -- reads always stay on
+// Postgres in this mode.
+//
+// dispatcher is the single shared *SNWritebackDispatcher constructed once in
+// routes.go and reused across case/incident/problem's UPDATE mirrors -- see
+// NewIncidentServiceWithSNMirror's own doc comment for why one shared
+// instance is correct (a fixed background worker pool plus one
+// sn_writeback_failures repository, nothing problem-specific about it).
+func NewProblemServiceWithSNMirror(repo repository.ProblemRepository, mirror ProblemService, dispatcher *SNWritebackDispatcher) ProblemService {
+	return &problemService{repo: repo, snMirror: mirror, snWriteback: dispatcher}
+}
+
+// resolveActorEmail resolves the caller's email from x-user-id-token, for
+// stamping work_item.updated_by on UpdateProblem -- a plain VARCHAR audit
+// string (an email, by this codebase's own convention), same shape as
+// deploymentService.resolveActorEmail. No UserRepository lookup to a full
+// domain.User is needed: unlike incidentService.UpdateIncident (which writes
+// a comment.created_by FK-adjacent field), UpdateProblem writes no comment
+// row at all.
+func (s *problemService) resolveActorEmail(ctx context.Context) (string, error) {
+	token := middleware.UserIDTokenFromContext(ctx)
+	if token == "" {
+		return "", &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
+	}
+	email, err := emailFromJWT(token)
+	if err != nil {
+		return "", &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+	}
+	return email, nil
 }
 
 // SearchProblems implements ProblemService.
@@ -235,14 +269,134 @@ func (s *problemService) createProblemSNFirst(ctx context.Context, req domain.Cr
 	return resp, nil
 }
 
-// UpdateProblem is not supported for the PostgreSQL data source: Transition
-// is validated server-side by ServiceNow's own workflow engine, with no
-// fixed, confirmed transition rule set (preconditions, side effects) to
-// reimplement here -- see domain.UpdateProblemRequest's own doc comment for
-// why this is deliberately not a closed enum this service could validate
-// and apply itself.
-func (s *problemService) UpdateProblem(_ context.Context, _ domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
-	return domain.UpdateProblemResponse{}, &apierror.ServiceUnavailableError{
-		Msg: "updating a problem is not available on this data source: no defined state-transition rule exists in this schema",
+// UpdateProblem supports exactly 5 fields under
+// DATA_SOURCE=postgres-servicenow-dual-write (s.snWriteback != nil):
+// AssignedToID, CauseNotes, FixNotes, Workaround, TargetResolutionDate --
+// see ProblemRepository.UpdateProblemFields' own doc comment for their
+// column mapping. Every other mode still returns the
+// unconditional ServiceUnavailableError below.
+//
+// Transition and AssignmentGroupID are rejected outright, exactly like
+// incidentService.UpdateIncident's own rejected-field list: Transition is
+// validated server-side by ServiceNow's own workflow engine, with no fixed,
+// confirmed transition rule set (preconditions, side effects) to reimplement
+// here (see domain.UpdateProblemRequest's own doc comment); AssignmentGroupID
+// has no backing column at all -- problem has no CMDB/assignment-group table
+// anywhere in this schema (same gap ChangeRequestRepository's own package
+// doc comment already documents for change_request.GroupID).
+//
+// A best-effort, async ServiceNow mirror write follows via s.snWriteback,
+// exactly the Postgres-first/async-mirror shape
+// incidentService.UpdateIncident already uses, for the identical reason: a
+// failed mirror here just leaves ServiceNow's copy of an EXISTING problem
+// stale on one field until retried by hand, not a permanent orphan the way
+// a failed async CREATE would be.
+//
+// snProblemService.UpdateProblem (the mirror target) does no live pre-read
+// either -- confirmed against its own doc comment, a straightforward
+// validate-then-PATCH, so mirrorReq is passed to it directly with no
+// narrower patcher interface needed, unlike case's snFieldsBundlePatcher
+// indirection.
+func (s *problemService) UpdateProblem(ctx context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+	if s.snWriteback == nil {
+		return domain.UpdateProblemResponse{}, &apierror.ServiceUnavailableError{
+			Msg: "updating a problem is not available on this data source: no defined state-transition rule exists in this schema",
+		}
 	}
+	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+	if req.Transition != nil || req.AssignmentGroupID != nil {
+		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "transition and assignmentGroupId are only supported for the ServiceNow data source"}
+	}
+	if req.AssignedToID == nil && req.CauseNotes == nil && req.FixNotes == nil &&
+		req.Workaround == nil && req.TargetResolutionDate == nil {
+		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "at least one of assignedToId, causeNotes, fixNotes, workaround, or targetResolutionDate must be provided"}
+	}
+	if req.AssignedToID != nil {
+		if err := validateUUIDs("assignedToId", []string{*req.AssignedToID}); err != nil {
+			return domain.UpdateProblemResponse{}, err
+		}
+	}
+	if req.TargetResolutionDate != nil {
+		if _, err := time.Parse(time.RFC3339, *req.TargetResolutionDate); err != nil {
+			return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "targetResolutionDate must be a valid RFC3339 timestamp"}
+		}
+	}
+
+	actorEmail, err := s.resolveActorEmail(ctx)
+	if err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	updatedOn, err := s.repo.UpdateProblemFields(ctx, req, actorEmail)
+	if err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	// Re-read via GetProblem, matching incidentService.UpdateIncident's own
+	// GetIncidentByID re-read pattern, since UpdateProblemFields only
+	// returns updated_on -- State/ResolutionCode/AssignedTo must reflect the
+	// real post-write state, not be guessed at from req.
+	detail, err := s.repo.GetProblem(ctx, req.ID)
+	if err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	updatedOnStr := updatedOn.UTC().Format(time.RFC3339)
+	view := domain.UpdateProblemView{
+		ID:             detail.ID,
+		UpdatedOn:      &updatedOnStr,
+		UpdatedBy:      &actorEmail,
+		State:          detail.State,
+		ResolutionCode: detail.ResolutionCode,
+		AssignedTo:     detail.AssignedTo,
+		// AssignmentGroup is always nil -- problem has no assignment-group
+		// column anywhere (see this type's own package doc comment in
+		// problem_repo.go).
+	}
+
+	// Best-effort ServiceNow mirror write, DATA_SOURCE=postgres-servicenow-dual-write
+	// only (guaranteed by the s.snWriteback == nil guard above). Postgres has
+	// already committed by this point; this fires after, asynchronously, and
+	// never affects this response. mirrorReq carries only ID plus the
+	// field(s) this call actually set -- never forwards req itself -- so
+	// this can never accidentally carry Transition/AssignmentGroupID (both
+	// already rejected above and therefore always nil here) into the mirror
+	// call.
+	mirrorReq := domain.UpdateProblemRequest{
+		ID:                   req.ID,
+		AssignedToID:         req.AssignedToID,
+		CauseNotes:           req.CauseNotes,
+		FixNotes:             req.FixNotes,
+		Workaround:           req.Workaround,
+		TargetResolutionDate: req.TargetResolutionDate,
+	}
+	payload := map[string]any{"id": req.ID}
+	if req.AssignedToID != nil {
+		payload["assignedToId"] = *req.AssignedToID
+	}
+	if req.CauseNotes != nil {
+		payload["causeNotes"] = *req.CauseNotes
+	}
+	if req.FixNotes != nil {
+		payload["fixNotes"] = *req.FixNotes
+	}
+	if req.Workaround != nil {
+		payload["workaround"] = *req.Workaround
+	}
+	if req.TargetResolutionDate != nil {
+		payload["targetResolutionDate"] = *req.TargetResolutionDate
+	}
+	s.snWriteback.Dispatch(ctx, "problem", req.ID, "update", payload,
+		func(writeCtx context.Context) error {
+			_, err := s.snMirror.UpdateProblem(writeCtx, mirrorReq)
+			return err
+		},
+	)
+
+	return domain.UpdateProblemResponse{
+		Message: "Problem updated successfully",
+		Problem: view,
+	}, nil
 }

@@ -849,14 +849,19 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	case config.DataSourceServiceNow:
 		activeProblemSvc = service.NewServiceNowProblemService(serviceNowIntegrationServiceClient)
 	case config.DataSourcePostgresServiceNowDualWrite:
-		// Pilot extension: problem CREATE only, same ServiceNow-first,
-		// synchronous shape as the case/incident/change-request pilots
-		// above -- see problemService.createProblemSNFirst's own doc
-		// comment. Reads stay on Postgres in this mode;
-		// snProblemMirrorSvc's CreateProblem is the only method of it this
-		// mode ever calls.
+		// Pilot extension: problem CREATE (ServiceNow-first, synchronous,
+		// same shape as the case/incident/change-request pilots above -- see
+		// problemService.createProblemSNFirst's own doc comment) plus problem
+		// UPDATE (Postgres-first, best-effort async ServiceNow mirror -- see
+		// problemService.UpdateProblem's own doc comment). Reads stay on
+		// Postgres in this mode; snProblemMirrorSvc's CreateProblem/
+		// UpdateProblem are the only methods of it this mode ever calls.
+		//
+		// snWritebackDispatcher (the single shared instance constructed once
+		// above) is reused as-is for problem UPDATE's async ServiceNow
+		// mirror, same as incident's own dual-write branch above.
 		snProblemMirrorSvc := service.NewServiceNowProblemService(serviceNowIntegrationServiceClient)
-		activeProblemSvc = service.NewProblemServiceWithSNMirror(problemRepo, snProblemMirrorSvc)
+		activeProblemSvc = service.NewProblemServiceWithSNMirror(problemRepo, snProblemMirrorSvc, snWritebackDispatcher)
 	default:
 		activeProblemSvc = service.NewProblemService(problemRepo)
 	}

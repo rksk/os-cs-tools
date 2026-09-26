@@ -119,6 +119,28 @@ type ProblemRepository interface {
 	// free-text choice-list spelling has no established mapping back to
 	// problem_category_enum or problem_subcategory's lookup rows.
 	CreateProblemFromServiceNow(ctx context.Context, req domain.CreateProblemRequest, id, number, createdBy string, state *string) (domain.ProblemDetail, error)
+
+	// UpdateProblemFields writes any subset of the PATCH /problems/{id}
+	// fields that have an unambiguous, established Postgres column mapping --
+	// req.CauseNotes/FixNotes/Workaround/TargetResolutionDate (problem.cause_notes/
+	// fix_notes/workaround/due_on) and req.AssignedToID (work_item.assigned_to_id,
+	// the same generic column CaseRepository.UpdateCaseFields already writes for
+	// "case"). req.Transition and req.AssignmentGroupID are rejected earlier, by
+	// problemService.UpdateProblem's own validation -- there is no
+	// state-transition rule set or assignment-group column to apply them to
+	// (see this file's own package doc comment) -- so this method never sees
+	// them set.
+	//
+	// work_item.updated_on/updated_by are bumped unconditionally, matching
+	// UpdateCaseFields' identical convention, using actorEmail (the caller's
+	// own JWT email, resolved by problemService.resolveActorEmail) as
+	// updated_by.
+	//
+	// Returns a NotFoundError if id does not name an existing PROBLEM work
+	// item, or a ValidationError if assignedToId does not reference a real
+	// user row (FK violation) or targetResolutionDate is not a valid RFC3339
+	// timestamp.
+	UpdateProblemFields(ctx context.Context, req domain.UpdateProblemRequest, actorEmail string) (time.Time, error)
 }
 
 type problemRepo struct {
@@ -488,4 +510,88 @@ func (r *problemRepo) CreateProblemFromServiceNow(ctx context.Context, req domai
 		Subject: &outSubject,
 		State:   state,
 	}, nil
+}
+
+// UpdateProblemFields implements ProblemRepository. "problem" is updated
+// first (if it has any columns to touch), so a nonexistent id is caught
+// before work_item's own row is touched at all -- if req names no "problem"
+// column (i.e. only AssignedToID was set), work_item's own
+// UPDATE ... WHERE id = $1 AND type = 'PROBLEM' alone still correctly
+// reports not-found, and the explicit type check keeps this from silently
+// bumping updated_on/updated_by on a work_item row of some other type that
+// happens to share the id (same shared-primary-key space every work_item
+// extension table uses). Same overall shape as
+// CaseRepository.UpdateCaseFields.
+func (r *problemRepo) UpdateProblemFields(ctx context.Context, req domain.UpdateProblemRequest, actorEmail string) (time.Time, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("update problem fields: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var problemSets []string
+	problemArgs := []any{req.ID}
+	idx := 2
+	if req.CauseNotes != nil {
+		problemSets = append(problemSets, fmt.Sprintf("cause_notes = $%d", idx))
+		problemArgs = append(problemArgs, *req.CauseNotes)
+		idx++
+	}
+	if req.FixNotes != nil {
+		problemSets = append(problemSets, fmt.Sprintf("fix_notes = $%d", idx))
+		problemArgs = append(problemArgs, *req.FixNotes)
+		idx++
+	}
+	if req.Workaround != nil {
+		problemSets = append(problemSets, fmt.Sprintf("workaround = $%d", idx))
+		problemArgs = append(problemArgs, *req.Workaround)
+		idx++
+	}
+	if req.TargetResolutionDate != nil {
+		t, err := time.Parse(time.RFC3339, *req.TargetResolutionDate)
+		if err != nil {
+			return time.Time{}, &apierror.ValidationError{Msg: "targetResolutionDate must be a valid RFC3339 timestamp"}
+		}
+		problemSets = append(problemSets, fmt.Sprintf("due_on = $%d", idx))
+		problemArgs = append(problemArgs, t)
+		idx++
+	}
+	if len(problemSets) > 0 {
+		tag, err := tx.Exec(ctx, `UPDATE problem SET `+strings.Join(problemSets, ", ")+` WHERE id = $1`, problemArgs...)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("update problem fields: problem: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return time.Time{}, &apierror.NotFoundError{Msg: "problem not found"}
+		}
+	}
+
+	// work_item.updated_on/updated_by are bumped unconditionally, matching
+	// UpdateCaseFields' identical convention, even when only "problem"
+	// columns above changed.
+	wiSets := []string{"updated_on = NOW()", "updated_by = $2"}
+	wiArgs := []any{req.ID, actorEmail}
+	widx := 3
+	if req.AssignedToID != nil {
+		wiSets = append(wiSets, fmt.Sprintf("assigned_to_id = $%d::uuid", widx))
+		wiArgs = append(wiArgs, *req.AssignedToID)
+		widx++
+	}
+
+	var updatedOn time.Time
+	err = tx.QueryRow(ctx, `UPDATE work_item SET `+strings.Join(wiSets, ", ")+` WHERE id = $1 AND type = 'PROBLEM' RETURNING updated_on`, wiArgs...).Scan(&updatedOn)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, &apierror.NotFoundError{Msg: "problem not found"}
+	}
+	if err != nil {
+		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return time.Time{}, &apierror.ValidationError{Msg: "assignedToId does not exist: " + pgErr.Detail}
+		}
+		return time.Time{}, fmt.Errorf("update problem fields: work_item: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return time.Time{}, fmt.Errorf("update problem fields: commit tx: %w", err)
+	}
+	return updatedOn, nil
 }
