@@ -175,11 +175,21 @@ func ImpactUrgency(severityNum int) (impact, urgency string) {
 }
 
 // BuildWorkNote formats a journal entry, referencing the alert by id rather than an instance URL link.
-func BuildWorkNote(kind, alertID, metricName, source string, at time.Time) string {
+// CSM timestamps notes itself, so the text carries no separate timestamp.
+func BuildWorkNote(kind, alertID, metricName, source string) string {
 	metricName = firstNonEmpty(metricName, "N/A")
 	source = firstNonEmpty(source, "N/A")
-	return fmt.Sprintf("%s\n%s alert received\nAlert ID: %s\nMetric: %s\nSource: %s",
-		at.UTC().Format(time.RFC3339), kind, alertID, metricName, source)
+	return fmt.Sprintf("%s alert received.\nAlert: %s\nMetric: %s\nSource: %s",
+		kind, alertID, metricName, source)
+}
+
+// BuildCreationNote formats the note CSM receives when an incident is first auto-created from an
+// alert, referencing the alert by id rather than an instance URL link.
+func BuildCreationNote(alertID, metricName, source string) string {
+	metricName = firstNonEmpty(metricName, "N/A")
+	source = firstNonEmpty(source, "N/A")
+	return fmt.Sprintf("Incident auto-created from Alert.\nAlert: %s\nMetric: %s\nSource: %s",
+		alertID, metricName, source)
 }
 
 // Fingerprint is the dedup key; a distinct unique identifier always starts a new incident.
