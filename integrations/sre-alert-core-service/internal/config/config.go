@@ -48,7 +48,10 @@ type EngineConfig struct {
 
 // PollConfig tunes the alert poller's cadence, concurrency, and per-cycle alert id limits.
 type PollConfig struct {
-	// Interval is the backstop cadence; a websocket ping from alert-ingestion normally wakes the poller sooner.
+	// Interval is the backstop cadence for a missed Wake() ping; the websocket ping from
+	// alert-ingestion is what actually drives real-time pickup of new alerts, so this can
+	// stay wide without affecting responsiveness - it only bounds how long a dropped ping
+	// goes unnoticed.
 	Interval Duration `toml:"interval"`
 	// Concurrency is fingerprint-sharded worker count; same-fingerprint alerts stay serialized on one worker.
 	Concurrency int `toml:"concurrency"`
@@ -120,7 +123,7 @@ func (d Duration) Duration() time.Duration {
 func defaults() Config {
 	return Config{
 		Poll: PollConfig{
-			Interval:        Duration(10 * time.Second),
+			Interval:        Duration(60 * time.Second),
 			Concurrency:     128,
 			ReadConcurrency: 64,
 			MaxWindow:       2000,

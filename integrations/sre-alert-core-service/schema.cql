@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS alertintegration.incidents_processed (
   AND cosmosdb_cell_level_timestamp_tombstones = true
   AND cosmosdb_cell_level_timetolive = true;
 
+-- Maintained index of incidents still owing CSM/Chat delivery work, so RetrySweep never has to scan all of incidents_processed.
+CREATE TABLE IF NOT EXISTS alertintegration.incidents_pending (
+  fingerprint text PRIMARY KEY
+) WITH cosmosdb_cell_level_timestamp = true
+  AND cosmosdb_cell_level_timestamp_tombstones = true
+  AND cosmosdb_cell_level_timetolive = true;
+
 CREATE TABLE IF NOT EXISTS alertintegration.alert_cursor (
   name text PRIMARY KEY,
   seq  bigint

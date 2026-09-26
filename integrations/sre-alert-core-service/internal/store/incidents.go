@@ -69,6 +69,48 @@ func capTail[T any](list []T, max int) []T {
 	return append([]T{}, list[len(list)-max:]...)
 }
 
+// isPending mirrors the filter RetrySweep needs: an incident still owes CSM/Chat delivery either
+// because CSM hasn't been confirmed yet and hasn't permanently failed (so it must keep being
+// retried), or because CSM is confirmed but a work note is still queued to be pushed.
+func isPending(csmConfirmed, csmPermanentlyFailed bool, pendingNotesLen int) bool {
+	owesCSMOrChat := !csmConfirmed && !csmPermanentlyFailed
+	owesNotes := csmConfirmed && pendingNotesLen > 0
+	return owesCSMOrChat || owesNotes
+}
+
+// setPendingIndex keeps incidents_pending (RetrySweep's lookup index) in sync with pending, without
+// re-reading incidents_processed -- callers that already know the up-to-date field values (Upsert,
+// AppendWorkNote) use this directly to avoid an extra round trip.
+func (r *IncidentRepo) setPendingIndex(ctx context.Context, fp string, pending bool) error {
+	if pending {
+		stmt, names := qb.Insert("incidents_pending").Columns("fingerprint").ToCql()
+		if err := r.session.Query(stmt, names).WithContext(ctx).BindMap(qb.M{"fingerprint": fp}).ExecRelease(); err != nil {
+			return fmt.Errorf("mark incident %s pending: %w", fp, err)
+		}
+		return nil
+	}
+	stmt, names := qb.Delete("incidents_pending").Where(qb.Eq("fingerprint")).ToCql()
+	if err := r.session.Query(stmt, names).WithContext(ctx).BindMap(qb.M{"fingerprint": fp}).ExecRelease(); err != nil {
+		return fmt.Errorf("clear incident %s from pending index: %w", fp, err)
+	}
+	return nil
+}
+
+// syncPendingIndex re-derives pending status from the ground-truth row and applies it via
+// setPendingIndex -- used by callers (RecordCSMIncident, RecordCSMAttemptFailure, ClearPendingNotes)
+// that don't already have every relevant field in hand. Still a single point read on the primary key,
+// nothing like the full-table scan this index replaces.
+func (r *IncidentRepo) syncPendingIndex(ctx context.Context, fp string) error {
+	inc, found, err := r.get(ctx, fp)
+	if err != nil {
+		return fmt.Errorf("sync pending index for %s: %w", fp, err)
+	}
+	if !found {
+		return nil
+	}
+	return r.setPendingIndex(ctx, fp, isPending(inc.CSMConfirmed, inc.CSMPermanentlyFailed, len(inc.PendingNotes)))
+}
+
 // Upsert maps the alert onto an incident by fingerprint, creating it via IF NOT EXISTS or updating it.
 func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert, severityNum int) (model.Incident, bool, error) {
 	fp := model.Fingerprint(a.Source, a.Service, a.MetricName, a.Environment, a.UniqueIdentifier)
@@ -105,6 +147,9 @@ func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert
 			return model.Incident{}, false, fmt.Errorf("create incident %s: %w", fp, err)
 		}
 		if applied {
+			if err := r.setPendingIndex(ctx, fp, true); err != nil {
+				return model.Incident{}, false, fmt.Errorf("create incident %s: %w", fp, err)
+			}
 			return inc, true, nil
 		}
 		// Lost the race to another core; fall through and treat this alert as an update.
@@ -115,6 +160,9 @@ func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert
 		if !found {
 			ins, insNames := qb.Insert("incidents_processed").Columns(incidentColumns...).ToCql()
 			if err := r.session.Query(ins, insNames).WithContext(ctx).BindStruct(inc).ExecRelease(); err != nil {
+				return model.Incident{}, false, fmt.Errorf("create incident %s (unconditional after stale CAS): %w", fp, err)
+			}
+			if err := r.setPendingIndex(ctx, fp, true); err != nil {
 				return model.Incident{}, false, fmt.Errorf("create incident %s (unconditional after stale CAS): %w", fp, err)
 			}
 			return inc, true, nil
@@ -176,6 +224,9 @@ func (r *IncidentRepo) Upsert(ctx context.Context, alertID string, a model.Alert
 	if err := r.session.Query(stmt, names).WithContext(ctx).BindStruct(updated).ExecRelease(); err != nil {
 		return model.Incident{}, false, fmt.Errorf("update incident %s: %w", fp, err)
 	}
+	if err := r.setPendingIndex(ctx, fp, isPending(updated.CSMConfirmed, updated.CSMPermanentlyFailed, len(updated.PendingNotes))); err != nil {
+		return model.Incident{}, false, fmt.Errorf("update incident %s: %w", fp, err)
+	}
 	return updated, false, nil
 }
 
@@ -216,6 +267,9 @@ func (r *IncidentRepo) RecordCSMIncident(ctx context.Context, fingerprint, incid
 	if err != nil {
 		return fmt.Errorf("record csm incident for %s: %w", fingerprint, err)
 	}
+	if err := r.syncPendingIndex(ctx, fingerprint); err != nil {
+		return fmt.Errorf("record csm incident for %s: %w", fingerprint, err)
+	}
 	return nil
 }
 
@@ -252,6 +306,9 @@ func (r *IncidentRepo) RecordCSMAttemptFailure(ctx context.Context, fingerprint 
 		"csm_permanently_failed": failed,
 	}).ExecRelease()
 	if err != nil {
+		return fmt.Errorf("record csm attempt failure for %s: %w", fingerprint, err)
+	}
+	if err := r.syncPendingIndex(ctx, fingerprint); err != nil {
 		return fmt.Errorf("record csm attempt failure for %s: %w", fingerprint, err)
 	}
 	return nil
@@ -313,22 +370,32 @@ func (r *IncidentRepo) MarkNotified(ctx context.Context, fingerprint string) err
 	return nil
 }
 
+// ListPending reads the maintained incidents_pending index, bounded by outstanding work, instead of
+// scanning the whole (unbounded, ever-growing) incidents_processed table.
 func (r *IncidentRepo) ListPending(ctx context.Context) ([]model.Incident, error) {
-	stmt, names := qb.Select("incidents_processed").Columns(incidentColumns...).ToCql()
-	var all []model.Incident
-	if err := r.session.Query(stmt, names).WithContext(ctx).SelectRelease(&all); err != nil {
-		return nil, fmt.Errorf("list incidents: %w", err)
+	stmt, names := qb.Select("incidents_pending").Columns("fingerprint").ToCql()
+	var rows []struct {
+		Fingerprint string `db:"fingerprint"`
 	}
-	pending := make([]model.Incident, 0, len(all))
-	for _, inc := range all {
-		// Chat is owed only while CSM is unconfirmed; permanently-rejected rows are excluded to avoid retrying forever.
-		owesCSMOrChat := !inc.CSMConfirmed && !inc.CSMPermanentlyFailed
-		// A confirmed incident can still owe CSM its pending work notes (a PATCH failed, or the note
-		// was written before CSM confirmed), independent of the CSM/Chat delivery obligation above.
-		owesNotes := inc.CSMConfirmed && len(inc.PendingNotes) > 0
-		if owesCSMOrChat || owesNotes {
-			pending = append(pending, inc)
+	if err := r.session.Query(stmt, names).WithContext(ctx).SelectRelease(&rows); err != nil {
+		return nil, fmt.Errorf("list pending fingerprints: %w", err)
+	}
+	pending := make([]model.Incident, 0, len(rows))
+	for _, row := range rows {
+		inc, found, err := r.get(ctx, row.Fingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("list pending: read incident %s: %w", row.Fingerprint, err)
 		}
+		if !found {
+			continue // index entry outlived its row; skip, nothing to retry.
+		}
+		if !isPending(inc.CSMConfirmed, inc.CSMPermanentlyFailed, len(inc.PendingNotes)) {
+			// Index entry is stale (e.g. a partial failure between the primary write and its index
+			// sync elsewhere) -- self-heal so future sweeps don't keep re-reading a delivered incident.
+			_ = r.setPendingIndex(ctx, row.Fingerprint, false)
+			continue
+		}
+		pending = append(pending, inc)
 	}
 	return pending, nil
 }
@@ -350,6 +417,9 @@ func (r *IncidentRepo) AppendWorkNote(ctx context.Context, existing model.Incide
 	if err != nil {
 		return fmt.Errorf("append work note to incident %s: %w", existing.Fingerprint, err)
 	}
+	if err := r.setPendingIndex(ctx, existing.Fingerprint, isPending(existing.CSMConfirmed, existing.CSMPermanentlyFailed, len(updatedPending))); err != nil {
+		return fmt.Errorf("append work note to incident %s: %w", existing.Fingerprint, err)
+	}
 	return nil
 }
 
@@ -365,6 +435,9 @@ func (r *IncidentRepo) ClearPendingNotes(ctx context.Context, fingerprint string
 		"pending_notes": remaining,
 	}).ExecRelease()
 	if err != nil {
+		return fmt.Errorf("clear pending notes for %s: %w", fingerprint, err)
+	}
+	if err := r.syncPendingIndex(ctx, fingerprint); err != nil {
 		return fmt.Errorf("clear pending notes for %s: %w", fingerprint, err)
 	}
 	return nil
