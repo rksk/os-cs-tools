@@ -222,7 +222,7 @@ func (e *Engine) annotate(ctx context.Context, existing model.Incident, alertID,
 		return Retry
 	}
 
-	note := model.BuildWorkNote(kind, alertID, alert.MetricName, alert.Source, time.Now())
+	note := model.BuildWorkNote(kind, alertID, alert.MetricName, alert.Source)
 	if err := e.incidents.AppendWorkNote(ctx, current, note); err != nil {
 		unlock()
 		e.logger.Warn("work note append failed, will retry", "alert_id", alertID, "error", err)
