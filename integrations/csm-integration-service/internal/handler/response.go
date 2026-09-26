@@ -34,18 +34,18 @@ const maxRequestBodyBytes = 1 << 20
 
 // Error message constants matching apps/csm-portal/backend's error vocabulary.
 const (
-	ErrMsgUnauthorized    = "You are not authorized to perform this action. Please try again."
-	ErrMsgForbidden       = "Access to the requested resource is forbidden!"
-	ErrMsgNotFound        = "The requested resource was not found!"
-	ErrMsgBadRequest      = "Invalid request payload."
-	ErrMsgTooLarge        = "Request body too large."
-	ErrMsgInternal        = "An internal server error occurred. Please try again later."
-	ErrMsgInvalidUUID     = "Invalid UUID format."
-	errMsgReadBody        = "Failed to read request body."
-	ErrMsgNumberRequired  = "The 'number' query parameter is required."
-	ErrMsgLabelRequired   = "The 'label' field is required."
-	ErrMsgCommentRequired = "The 'comment' field is required."
-	ErrMsgContentRequired = "The 'content' field is required."
+	ErrMsgUnauthorized            = "You are not authorized to perform this action. Please try again."
+	ErrMsgForbidden               = "Access to the requested resource is forbidden!"
+	ErrMsgNotFound                = "The requested resource was not found!"
+	ErrMsgBadRequest              = "Invalid request payload."
+	ErrMsgTooLarge                = "Request body too large."
+	ErrMsgInternal                = "An internal server error occurred. Please try again later."
+	ErrMsgInvalidUUID             = "Invalid UUID format."
+	errMsgReadBody                = "Failed to read request body."
+	ErrMsgContentRequired         = "The 'content' field is required."
+	ErrMsgCaseNumberRequired      = "The 'caseNumber' field is required."
+	ErrMsgUpdatesActionRequired   = "At least one of 'label', 'bestCaseFixEta', 'mostLikelyFixEta', 'worstCaseFixEta', 'comment', or 'markFixIssued' must be provided."
+	ErrMsgMarkFixIssuedMustBeTrue = "The 'markFixIssued' field only accepts true; false is not supported."
 )
 
 // errorBody is the JSON error payload format.

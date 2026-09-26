@@ -40,9 +40,10 @@ type entityCaseClient interface {
 type CaseHandler struct {
 	entity entityCaseClient
 	// umtActorEmail is this service's own trusted M2M actor identity, asserted
-	// on AddCaseLabel calls (see cases_umt.go) as entity-service's
-	// AddCaseTagRequest.ActorEmail, and on CreateCaseComment/ConcludeCase's
-	// comment leg as entity-service's CreateCaseCommentRequest.ActorEmail. It
+	// on CreateCaseComment as entity-service's
+	// CreateCaseCommentRequest.ActorEmail, and on POST /updates' label/
+	// comment legs (see cases_umt.go) as entity-service's
+	// AddCaseTagRequest.ActorEmail / CreateCaseCommentRequest.ActorEmail. It
 	// must match an entry in entity-service's M2M_TRUSTED_ACTOR_EMAILS
 	// allowlist or every call 403s. Never accepted from the caller — that
 	// would defeat the point of the allowlist being server-configured rather
@@ -123,7 +124,7 @@ type createCaseCommentUpstreamRequest struct {
 // only "type" and "content"; this handler supplies entity-service's
 // actorEmail field itself, from this service's own configured trusted M2M
 // identity (CaseHandler.umtActorEmail) -- it is never taken from the caller,
-// the same way AddCaseLabel injects it for POST /cases/{id}/tags. If
+// the same way POST /updates injects it for its label action. If
 // umtActorEmail is unset or not on entity-service's
 // M2M_TRUSTED_ACTOR_EMAILS allowlist, entity-service rejects the call with
 // 403, which is surfaced normally rather than special-cased here.

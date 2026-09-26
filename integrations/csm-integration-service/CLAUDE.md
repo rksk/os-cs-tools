@@ -134,15 +134,14 @@ is, and don't assume a 400 here means bad input from the caller — check both
 which fields were sent and which data source entity-service is running.
 
 **`POST /cases/{id}/comments` (`CreateCaseComment`) is now a partial
-exception to "always 401" too, mirroring `POST /cases/{id}/tags`
-(`AddCaseLabel`)'s M2M `actorEmail` path. Know the difference before
-assuming it's still stuck in the always-401 state described in earlier
-revisions of this doc.**
+exception to "always 401" too, mirroring `POST /updates`'s M2M `actorEmail`
+path for its label action. Know the difference before assuming it's still
+stuck in the always-401 state described in earlier revisions of this doc.**
 
 - On `DATA_SOURCE=postgres`, this handler injects this service's own
   configured `UMT_INTEGRATION_ACTOR_EMAIL` into the request body as
-  `actorEmail`, never taken from the caller, the same way `AddCaseLabel`
-  injects it for case labels. entity-service checks it against its own
+  `actorEmail`, never taken from the caller, the same way `POST /updates`
+  injects it for its label action. entity-service checks it against its own
   `M2M_TRUSTED_ACTOR_EMAILS` allowlist and, when it matches, creates the
   comment with no forwarded token required. **Succeeds** today when
   `UMT_INTEGRATION_ACTOR_EMAIL` is configured and allowlisted; **403** if
@@ -156,11 +155,12 @@ revisions of this doc.**
   this data source still gets a mapped **401** from ServiceNow itself, same
   as before this fix.
 
-`ConcludeCase`'s comment leg (`concludeAddComment`) builds and sends its own
-request body directly to the entity client, it does not go through
-`CreateCaseComment`'s HTTP handler, so it injects
+`POST /updates`'s comment action (`updatesAddComment`, see `cases_umt.go`)
+builds and sends its own request body directly to the entity client, it does
+not go through `CreateCaseComment`'s HTTP handler, so it injects
 `UMT_INTEGRATION_ACTOR_EMAIL` into its own body too, for the same
-Postgres-succeeds/ServiceNow-still-401 split described above.
+Postgres-succeeds/ServiceNow-still-401 split described above. Its label
+action (`updatesAddLabel`) does the same for `AddCaseTag`.
 
 ## `POST /alert-incident-mappings` and `POST /alert-incident-mappings/lookup` are functional today
 

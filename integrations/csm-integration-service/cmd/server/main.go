@@ -52,14 +52,13 @@ func main() {
 	projectHandler := handler.NewProjectHandler(entityClient)
 	vulnerabilityHandler := handler.NewVulnerabilityHandler(entityClient)
 	// UMT_INTEGRATION_ACTOR_EMAIL is this service's own trusted M2M actor
-	// identity, asserted on POST /cases/{id}/tags (AddCaseLabel) and
-	// POST /cases/{id}/comments (CreateCaseComment, including
-	// ConcludeCase's comment leg) as entity-service's actorEmail field. It
-	// must match an entry in entity-service's M2M_TRUSTED_ACTOR_EMAILS
-	// allowlist or every call to those endpoints 403s. Optional here at
-	// startup by design: an empty/unset value is a deploy-time
-	// misconfiguration, not something this service validates defensively --
-	// the resulting entity-service 403 surfaces normally.
+	// identity, asserted on POST /cases/{id}/comments (CreateCaseComment)
+	// and on POST /updates' label/comment legs, as entity-service's
+	// actorEmail field. It must match an entry in entity-service's
+	// M2M_TRUSTED_ACTOR_EMAILS allowlist or every call needing it 403s.
+	// Optional here at startup by design: an empty/unset value is a
+	// deploy-time misconfiguration, not something this service validates
+	// defensively -- the resulting entity-service 403 surfaces normally.
 	umtActorEmail := os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL")
 	caseHandler := handler.NewCaseHandler(entityClient, umtActorEmail)
 	opportunityHandler := handler.NewOpportunityHandler(entityClient)
@@ -81,11 +80,9 @@ func main() {
 	mux.HandleFunc("POST /projects/{id}/contacts/search", projectHandler.SearchProjectContacts)
 	mux.HandleFunc("PATCH /projects/{id}", projectHandler.UpdateProject)
 	mux.HandleFunc("POST /vulnerabilities/sync", vulnerabilityHandler.SyncProductVulnerabilities)
-	mux.HandleFunc("GET /cases/lookup", caseHandler.LookupCase)
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
-	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseLabel)
-	mux.HandleFunc("POST /cases/{id}/conclude", caseHandler.ConcludeCase)
+	mux.HandleFunc("POST /updates", caseHandler.Updates)
 	mux.HandleFunc("POST /opportunities/search", opportunityHandler.SearchOpportunities)
 	mux.HandleFunc("GET /opportunities/{id}", opportunityHandler.GetOpportunity)
 	mux.HandleFunc("POST /invoices/search", invoiceHandler.SearchInvoices)

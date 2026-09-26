@@ -25,42 +25,139 @@ import (
 	"testing"
 )
 
-func TestLookupCase(t *testing.T) {
-	t.Run("rejects missing number", func(t *testing.T) {
+const testCaseNumber = "CS0012345"
+const testCaseID = "11111111-1111-1111-1111-111111111111"
+
+// searchFoundCase returns a searchCasesFn that resolves testCaseNumber to
+// testCaseID, mirroring a real entity-service POST /cases/search response.
+func searchFoundCase() func(context.Context, []byte) ([]byte, error) {
+	return func(_ context.Context, _ []byte) ([]byte, error) {
+		return []byte(`{"cases":[{"id":"` + testCaseID + `","number":"` + testCaseNumber + `"}],"total":1,"limit":0,"offset":0}`), nil
+	}
+}
+
+func TestUpdates_RequestValidation(t *testing.T) {
+	t.Run("rejects missing caseNumber", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodGet, "/cases/lookup", nil)
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"label":"urgent"}`))
 		w := httptest.NewRecorder()
-		h.LookupCase(w, r)
+		h.Updates(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgNumberRequired)
+		assertErrorMessage(t, w, ErrMsgCaseNumberRequired)
 		assertContentType(t, w, "application/json")
 	})
 
-	t.Run("rejects blank number", func(t *testing.T) {
+	t.Run("rejects blank caseNumber", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodGet, "/cases/lookup?number=%20%20", nil)
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"   ","label":"urgent"}`))
 		w := httptest.NewRecorder()
-		h.LookupCase(w, r)
+		h.Updates(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgNumberRequired)
-		assertContentType(t, w, "application/json")
+		assertErrorMessage(t, w, ErrMsgCaseNumberRequired)
 	})
 
-	t.Run("builds an exact-match filter and returns upstream response", func(t *testing.T) {
+	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{}, "")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1)))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusRequestEntityTooLarge)
+		assertErrorMessage(t, w, ErrMsgTooLarge)
+	})
+
+	t.Run("rejects invalid JSON body", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{}, "")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`not-json`))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+	})
+
+	t.Run("rejects empty body", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{}, "")
+		r := httptest.NewRequest(http.MethodPost, "/updates", nil)
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+	})
+
+	t.Run("rejects caseNumber with no action field", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{}, "")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"`+testCaseNumber+`"}`))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgUpdatesActionRequired)
+	})
+
+	t.Run("rejects markFixIssued: false", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{}, "")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"`+testCaseNumber+`","markFixIssued":false}`))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgMarkFixIssuedMustBeTrue)
+	})
+}
+
+func TestUpdates_CaseResolution(t *testing.T) {
+	t.Run("case not found: 404, no leg calls attempted", func(t *testing.T) {
+		legCalled := false
+		client := &mockEntityCaseClient{
+			searchCasesFn: func(_ context.Context, _ []byte) ([]byte, error) {
+				return []byte(`{"cases":[],"total":0,"limit":0,"offset":0}`), nil
+			},
+			addCaseTagFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				legCalled = true
+				return []byte(`{}`), nil
+			},
+		}
+		h := NewCaseHandler(client, "svc@example.com")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"CS9999999","label":"urgent"}`))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+		assertStatus(t, w, http.StatusNotFound)
+		if legCalled {
+			t.Error("a leg was attempted after case resolution failed with not-found")
+		}
+	})
+
+	t.Run("search upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrors("Failed to look up case.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					searchCasesFn: func(_ context.Context, _ []byte) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client, "")
+				r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"`+testCaseNumber+`","label":"urgent"}`))
+				w := httptest.NewRecorder()
+				h.Updates(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+			})
+		}
+	})
+
+	t.Run("builds an exact-match filter on caseNumber", func(t *testing.T) {
 		var capturedBody []byte
 		client := &mockEntityCaseClient{
 			searchCasesFn: func(_ context.Context, body []byte) ([]byte, error) {
 				capturedBody = body
-				return []byte(`{"cases":[{"id":"11111111-1111-1111-1111-111111111111","number":"CS0012345"}],"total":1,"limit":0,"offset":0}`), nil
+				return []byte(`{"cases":[{"id":"` + testCaseID + `","number":"` + testCaseNumber + `"}],"total":1,"limit":0,"offset":0}`), nil
+			},
+			addCaseTagFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return []byte(`{"id":"tag-1","label":"urgent"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, "")
-		r := httptest.NewRequest(http.MethodGet, "/cases/lookup?number=CS0012345", nil)
+		h := NewCaseHandler(client, "svc@example.com")
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(`{"caseNumber":"`+testCaseNumber+`","label":"urgent"}`))
 		w := httptest.NewRecorder()
-		h.LookupCase(w, r)
-
-		assertStatus(t, w, http.StatusOK)
-		assertContentType(t, w, "application/json")
+		h.Updates(w, r)
 
 		var sent struct {
 			Filters struct {
@@ -78,140 +175,18 @@ func TestLookupCase(t *testing.T) {
 			t.Fatalf("filters = %v, want exactly 1", sent.Filters.Filters)
 		}
 		f := sent.Filters.Filters[0]
-		if f.Field != "number" || f.Op != "eq" || len(f.Values) != 1 || f.Values[0] != "CS0012345" {
-			t.Errorf("filter = %+v, want field=number op=eq values=[CS0012345]", f)
-		}
-
-		resp := decodeJSON[map[string]any](t, w)
-		cases, _ := resp["cases"].([]any)
-		if len(cases) != 1 {
-			t.Errorf("cases = %v, want 1 entry", resp["cases"])
-		}
-	})
-
-	t.Run("returns empty result set verbatim when no case matches", func(t *testing.T) {
-		client := &mockEntityCaseClient{
-			searchCasesFn: func(_ context.Context, _ []byte) ([]byte, error) {
-				return []byte(`{"cases":[],"total":0,"limit":0,"offset":0}`), nil
-			},
-		}
-		h := NewCaseHandler(client, "")
-		r := httptest.NewRequest(http.MethodGet, "/cases/lookup?number=CS9999999", nil)
-		w := httptest.NewRecorder()
-		h.LookupCase(w, r)
-
-		assertStatus(t, w, http.StatusOK)
-		resp := decodeJSON[map[string]any](t, w)
-		cases, _ := resp["cases"].([]any)
-		if len(cases) != 0 {
-			t.Errorf("cases = %v, want empty", resp["cases"])
-		}
-	})
-
-	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to look up case.") {
-			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
-				client := &mockEntityCaseClient{
-					searchCasesFn: func(_ context.Context, _ []byte) ([]byte, error) {
-						return nil, tc.err
-					},
-				}
-				h := NewCaseHandler(client, "")
-				r := httptest.NewRequest(http.MethodGet, "/cases/lookup?number=CS0012345", nil)
-				w := httptest.NewRecorder()
-				h.LookupCase(w, r)
-				assertStatus(t, w, tc.wantCode)
-				assertErrorMessage(t, w, tc.wantMsg)
-				assertContentType(t, w, "application/json")
-			})
+		if f.Field != "number" || f.Op != "eq" || len(f.Values) != 1 || f.Values[0] != testCaseNumber {
+			t.Errorf("filter = %+v, want field=number op=eq values=[%s]", f, testCaseNumber)
 		}
 	})
 }
 
-func TestAddCaseLabel(t *testing.T) {
-	const caseID = "11111111-1111-1111-1111-111111111111"
-
-	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases//tags", strings.NewReader(`{"label":"urgent"}`))
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgInvalidUUID)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects non-UUID case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/case-42/tags", strings.NewReader(`{"label":"urgent"}`))
-		r.SetPathValue("id", "case-42")
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgInvalidUUID)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1)))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusRequestEntityTooLarge)
-		assertErrorMessage(t, w, ErrMsgTooLarge)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`not-json`))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects empty body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", nil)
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects missing label", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`{}`))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgLabelRequired)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects blank label", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`{"label":"   "}`))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgLabelRequired)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("injects the configured actorEmail and ignores a caller-supplied one", func(t *testing.T) {
+func TestUpdates_LabelLeg(t *testing.T) {
+	t.Run("injects the configured actorEmail and ignores a caller-supplied one; only label key present", func(t *testing.T) {
 		var capturedCaseID string
 		var capturedBody []byte
 		client := &mockEntityCaseClient{
+			searchCasesFn: searchFoundCase(),
 			addCaseTagFn: func(_ context.Context, id string, body []byte) ([]byte, error) {
 				capturedCaseID = id
 				capturedBody = body
@@ -219,17 +194,14 @@ func TestAddCaseLabel(t *testing.T) {
 			},
 		}
 		h := NewCaseHandler(client, "svc@example.com")
-		reqBody := `{"label":"urgent","actorEmail":"attacker@example.com"}`
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(reqBody))
-		r.SetPathValue("id", caseID)
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","label":"urgent","actorEmail":"attacker@example.com"}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
-		h.AddCaseLabel(w, r)
+		h.Updates(w, r)
 
-		assertStatus(t, w, http.StatusCreated)
-		assertContentType(t, w, "application/json")
-
-		if capturedCaseID != caseID {
-			t.Errorf("caseID = %q, want %q", capturedCaseID, caseID)
+		assertStatus(t, w, http.StatusOK)
+		if capturedCaseID != testCaseID {
+			t.Errorf("caseID = %q, want %q", capturedCaseID, testCaseID)
 		}
 
 		var sent struct {
@@ -247,233 +219,222 @@ func TestAddCaseLabel(t *testing.T) {
 		}
 
 		resp := decodeJSON[map[string]any](t, w)
-		if resp["label"] != "urgent" {
-			t.Errorf("label = %v, want %v", resp["label"], "urgent")
+		if resp["caseId"] != testCaseID {
+			t.Errorf("caseId = %v, want %q", resp["caseId"], testCaseID)
 		}
-	})
-
-	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to add case label.") {
-			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
-				client := &mockEntityCaseClient{
-					addCaseTagFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-						return nil, tc.err
-					},
-				}
-				h := NewCaseHandler(client, "svc@example.com")
-				r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`{"label":"urgent"}`))
-				r.SetPathValue("id", caseID)
-				w := httptest.NewRecorder()
-				h.AddCaseLabel(w, r)
-				assertStatus(t, w, tc.wantCode)
-				assertErrorMessage(t, w, tc.wantMsg)
-				assertContentType(t, w, "application/json")
-			})
+		if _, ok := resp["label"]; !ok {
+			t.Error("label key missing from response")
+		}
+		for _, key := range []string{"fixEta", "markFixIssued", "comment"} {
+			if _, ok := resp[key]; ok {
+				t.Errorf("%s key present in response, want absent (not requested)", key)
+			}
 		}
 	})
 }
 
-func TestConcludeCase(t *testing.T) {
-	const caseID = "11111111-1111-1111-1111-111111111111"
-
-	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases//conclude", strings.NewReader(`{"comment":"done"}`))
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgInvalidUUID)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects non-UUID case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/case-42/conclude", strings.NewReader(`{"comment":"done"}`))
-		r.SetPathValue("id", "case-42")
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgInvalidUUID)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1)))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusRequestEntityTooLarge)
-		assertErrorMessage(t, w, ErrMsgTooLarge)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(`not-json`))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects empty body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", nil)
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("rejects missing comment", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(`{"updateLevel":"1.2.3"}`))
-		r.SetPathValue("id", caseID)
-		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgCommentRequired)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("both legs succeed: reports both outcomes with 200", func(t *testing.T) {
-		var patchBody, commentBody []byte
+func TestUpdates_FixEtaLeg(t *testing.T) {
+	t.Run("sends only the fix-ETA fields the caller supplied", func(t *testing.T) {
+		var capturedBody []byte
 		client := &mockEntityCaseClient{
-			patchCaseFn: func(_ context.Context, id string, body []byte) ([]byte, error) {
-				if id != caseID {
-					t.Errorf("PatchCase caseID = %q, want %q", id, caseID)
-				}
-				patchBody = body
-				return []byte(`{"message":"Case updated successfully","case":{"id":"` + caseID + `"}}`), nil
+			searchCasesFn: searchFoundCase(),
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				capturedBody = body
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `"}}`), nil
 			},
-			createCaseCommentFn: func(_ context.Context, id string, body []byte) ([]byte, error) {
-				if id != caseID {
-					t.Errorf("CreateCaseComment caseID = %q, want %q", id, caseID)
+		}
+		h := NewCaseHandler(client, "")
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","bestCaseFixEta":"2026-10-15","worstCaseFixEta":"2026-11-05"}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		var sent map[string]any
+		if err := json.Unmarshal(capturedBody, &sent); err != nil {
+			t.Fatalf("decode captured body: %v; raw: %s", err, capturedBody)
+		}
+		if sent["bestCaseFixEta"] != "2026-10-15" {
+			t.Errorf("bestCaseFixEta = %v, want 2026-10-15", sent["bestCaseFixEta"])
+		}
+		if sent["worstCaseFixEta"] != "2026-11-05" {
+			t.Errorf("worstCaseFixEta = %v, want 2026-11-05", sent["worstCaseFixEta"])
+		}
+		if _, present := sent["mostLikelyFixEta"]; present {
+			t.Errorf("mostLikelyFixEta present in upstream body, want omitted (not supplied by caller)")
+		}
+
+		resp := decodeJSON[map[string]any](t, w)
+		if _, ok := resp["fixEta"]; !ok {
+			t.Error("fixEta key missing from response")
+		}
+	})
+}
+
+func TestUpdates_MarkFixIssuedLeg(t *testing.T) {
+	t.Run("sends its own PATCH call, separate from fix-ETA", func(t *testing.T) {
+		var patchCalls []map[string]any
+		client := &mockEntityCaseClient{
+			searchCasesFn: searchFoundCase(),
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				var m map[string]any
+				_ = json.Unmarshal(body, &m)
+				patchCalls = append(patchCalls, m)
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `"}}`), nil
+			},
+		}
+		h := NewCaseHandler(client, "")
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","bestCaseFixEta":"2026-10-15","markFixIssued":true}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
+		w := httptest.NewRecorder()
+		h.Updates(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		if len(patchCalls) != 2 {
+			t.Fatalf("PatchCase called %d times, want 2 (one for fix-ETA, one for markFixIssued)", len(patchCalls))
+		}
+		var sawFixEta, sawMarkFixIssued bool
+		for _, call := range patchCalls {
+			if _, ok := call["bestCaseFixEta"]; ok {
+				sawFixEta = true
+				if _, ok := call["markFixIssued"]; ok {
+					t.Error("a single PatchCase call carried both bestCaseFixEta and markFixIssued, want them in separate calls")
 				}
-				commentBody = body
+			}
+			if v, ok := call["markFixIssued"]; ok {
+				sawMarkFixIssued = true
+				if v != true {
+					t.Errorf("markFixIssued = %v, want true", v)
+				}
+			}
+		}
+		if !sawFixEta || !sawMarkFixIssued {
+			t.Errorf("expected one call carrying bestCaseFixEta and one carrying markFixIssued, got %+v", patchCalls)
+		}
+
+		resp := decodeJSON[map[string]any](t, w)
+		if _, ok := resp["markFixIssued"]; !ok {
+			t.Error("markFixIssued key missing from response")
+		}
+	})
+}
+
+func TestUpdates_CommentLeg(t *testing.T) {
+	t.Run("injects actorEmail and folds updateLevel into content", func(t *testing.T) {
+		var capturedBody []byte
+		client := &mockEntityCaseClient{
+			searchCasesFn: searchFoundCase(),
+			createCaseCommentFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				capturedBody = body
 				return []byte(`{"message":"Comment created successfully","comment":{"id":"c-1"}}`), nil
 			},
 		}
 		h := NewCaseHandler(client, "svc@example.com")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(`{"comment":"Fix issued in 1.2.3.","updateLevel":"1.2.3"}`))
-		r.SetPathValue("id", caseID)
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","comment":"Fix issued.","updateLevel":"1.2.3"}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
+		h.Updates(w, r)
 
 		assertStatus(t, w, http.StatusOK)
-		assertContentType(t, w, "application/json")
-
-		var sentPatch struct {
-			MarkFixIssued bool `json:"markFixIssued"`
-		}
-		if err := json.Unmarshal(patchBody, &sentPatch); err != nil {
-			t.Fatalf("decode patch body: %v; raw: %s", err, patchBody)
-		}
-		if !sentPatch.MarkFixIssued {
-			t.Errorf("markFixIssued = %v, want true", sentPatch.MarkFixIssued)
-		}
-
-		var sentComment struct {
+		var sent struct {
 			Type       string `json:"type"`
 			Content    string `json:"content"`
 			ActorEmail string `json:"actorEmail"`
 		}
-		if err := json.Unmarshal(commentBody, &sentComment); err != nil {
-			t.Fatalf("decode comment body: %v; raw: %s", err, commentBody)
+		if err := json.Unmarshal(capturedBody, &sent); err != nil {
+			t.Fatalf("decode captured body: %v; raw: %s", err, capturedBody)
 		}
-		if sentComment.Type != "comment" {
-			t.Errorf("comment type = %q, want %q", sentComment.Type, "comment")
+		if sent.Type != "comment" {
+			t.Errorf("type = %q, want %q", sent.Type, "comment")
 		}
-		if !strings.Contains(sentComment.Content, "1.2.3") || !strings.Contains(sentComment.Content, "Fix issued in 1.2.3.") {
-			t.Errorf("comment content = %q, want it to fold in the updateLevel and the original comment", sentComment.Content)
+		if !strings.Contains(sent.Content, "1.2.3") || !strings.Contains(sent.Content, "Fix issued.") {
+			t.Errorf("content = %q, want it to fold in updateLevel and the original comment", sent.Content)
 		}
-		// ConcludeCase builds and sends this leg's body directly to the entity
-		// client -- it does not go through CreateCaseComment's own
-		// actorEmail-injection logic, so this leg must inject the configured
-		// M2M actor identity itself, the same way AddCaseLabel does.
-		if sentComment.ActorEmail != "svc@example.com" {
-			t.Errorf("comment actorEmail = %q, want the configured service actor email %q", sentComment.ActorEmail, "svc@example.com")
-		}
-
-		resp := decodeJSON[map[string]map[string]any](t, w)
-		if resp["markFixIssued"]["success"] != true {
-			t.Errorf("markFixIssued.success = %v, want true", resp["markFixIssued"]["success"])
-		}
-		if resp["comment"]["success"] != true {
-			t.Errorf("comment.success = %v, want true", resp["comment"]["success"])
-		}
-		if _, hasErr := resp["markFixIssued"]["error"]; hasErr {
-			t.Errorf("markFixIssued.error = %v, want absent on success", resp["markFixIssued"]["error"])
+		if sent.ActorEmail != "svc@example.com" {
+			t.Errorf("actorEmail = %q, want the configured service actor email", sent.ActorEmail)
 		}
 	})
+}
 
-	t.Run("markFixIssued succeeds, comment leg upstream error: still 200 reporting both independently", func(t *testing.T) {
-		patchCalled := false
-		commentCalled := false
+func TestUpdates_AllLegsTogether(t *testing.T) {
+	t.Run("all four legs requested: all attempted, all reported independently", func(t *testing.T) {
+		var patchCalls, addTagCalls, commentCalls int
 		client := &mockEntityCaseClient{
+			searchCasesFn: searchFoundCase(),
+			addCaseTagFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				addTagCalls++
+				return []byte(`{"id":"tag-1","label":"urgent"}`), nil
+			},
 			patchCaseFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-				patchCalled = true
-				return []byte(`{"message":"Case updated successfully","case":{"id":"` + caseID + `"}}`), nil
+				patchCalls++
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `"}}`), nil
 			},
 			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-				commentCalled = true
-				return nil, upstreamErrors("")[0].err // apierror 401
+				commentCalls++
+				return []byte(`{"message":"Comment created successfully","comment":{"id":"c-1"}}`), nil
 			},
 		}
-		h := NewCaseHandler(client, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(`{"comment":"Fix issued."}`))
-		r.SetPathValue("id", caseID)
+		h := NewCaseHandler(client, "svc@example.com")
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","label":"urgent","bestCaseFixEta":"2026-10-15","markFixIssued":true,"comment":"Fix issued."}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
+		h.Updates(w, r)
 
 		assertStatus(t, w, http.StatusOK)
-		if !patchCalled {
-			t.Error("PatchCase was not called")
+		if addTagCalls != 1 {
+			t.Errorf("AddCaseTag called %d times, want 1", addTagCalls)
 		}
-		if !commentCalled {
-			t.Error("CreateCaseComment was not called")
+		if patchCalls != 2 {
+			t.Errorf("PatchCase called %d times, want 2 (fix-ETA + markFixIssued)", patchCalls)
+		}
+		if commentCalls != 1 {
+			t.Errorf("CreateCaseComment called %d times, want 1", commentCalls)
 		}
 
-		resp := decodeJSON[map[string]map[string]any](t, w)
-		if resp["markFixIssued"]["success"] != true {
-			t.Errorf("markFixIssued.success = %v, want true (this leg is expected to succeed)", resp["markFixIssued"]["success"])
-		}
-		if resp["comment"]["success"] != false {
-			t.Errorf("comment.success = %v, want false (upstream returned an error for this leg)", resp["comment"]["success"])
-		}
-		if resp["comment"]["error"] != ErrMsgUnauthorized {
-			t.Errorf("comment.error = %v, want %v", resp["comment"]["error"], ErrMsgUnauthorized)
+		resp := decodeJSON[map[string]any](t, w)
+		for _, key := range []string{"label", "fixEta", "markFixIssued", "comment"} {
+			leg, ok := resp[key].(map[string]any)
+			if !ok {
+				t.Fatalf("%s missing or not an object in response: %v", key, resp[key])
+			}
+			if leg["success"] != true {
+				t.Errorf("%s.success = %v, want true", key, leg["success"])
+			}
 		}
 	})
 
-	t.Run("both legs fail: still 200, both reported as failures", func(t *testing.T) {
+	t.Run("partial failure: each leg's outcome is independent", func(t *testing.T) {
 		client := &mockEntityCaseClient{
+			searchCasesFn: searchFoundCase(),
+			addCaseTagFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return []byte(`{"id":"tag-1","label":"urgent"}`), nil
+			},
 			patchCaseFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
 				return nil, upstreamErrors("")[0].err
 			},
 			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-				return nil, upstreamErrors("")[0].err
+				return []byte(`{"message":"Comment created successfully","comment":{"id":"c-1"}}`), nil
 			},
 		}
-		h := NewCaseHandler(client, "")
-		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/conclude", strings.NewReader(`{"comment":"Fix issued."}`))
-		r.SetPathValue("id", caseID)
+		h := NewCaseHandler(client, "svc@example.com")
+		reqBody := `{"caseNumber":"` + testCaseNumber + `","label":"urgent","markFixIssued":true,"comment":"Fix issued."}`
+		r := httptest.NewRequest(http.MethodPost, "/updates", strings.NewReader(reqBody))
 		w := httptest.NewRecorder()
-		h.ConcludeCase(w, r)
+		h.Updates(w, r)
 
 		assertStatus(t, w, http.StatusOK)
-		resp := decodeJSON[map[string]map[string]any](t, w)
-		if resp["markFixIssued"]["success"] != false {
-			t.Errorf("markFixIssued.success = %v, want false", resp["markFixIssued"]["success"])
+		resp := decodeJSON[map[string]any](t, w)
+		label, _ := resp["label"].(map[string]any)
+		markFixIssued, _ := resp["markFixIssued"].(map[string]any)
+		comment, _ := resp["comment"].(map[string]any)
+		if label["success"] != true {
+			t.Errorf("label.success = %v, want true", label["success"])
 		}
-		if resp["comment"]["success"] != false {
-			t.Errorf("comment.success = %v, want false", resp["comment"]["success"])
+		if markFixIssued["success"] != false {
+			t.Errorf("markFixIssued.success = %v, want false (PatchCase errored)", markFixIssued["success"])
+		}
+		if comment["success"] != true {
+			t.Errorf("comment.success = %v, want true", comment["success"])
 		}
 	})
 }
