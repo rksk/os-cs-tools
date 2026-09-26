@@ -98,9 +98,10 @@ func (c *Client) PatchCase(ctx context.Context, id string, body []byte) ([]byte,
 }
 
 // SearchCases calls POST /cases/search on the entity service, mirroring
-// SearchAccounts's shape. Used by the UMT case-lookup-by-number endpoint to
-// resolve a case number to this platform's own case UUID — never a
-// ServiceNow sys_id, which the entity service's case model never exposes.
+// SearchAccounts's shape. A generic passthrough — callers build whatever
+// filter/pagination shape they need (e.g. an exact-match filter on "number"
+// to resolve a case number to this platform's own case UUID, never a
+// ServiceNow sys_id, which the entity service's case model never exposes).
 // Postgres-backed; a pure M2M call succeeds here, no forwarded identity
 // required. Response is returned as raw JSON; typed response structs are
 // deferred.
