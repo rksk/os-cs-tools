@@ -2443,8 +2443,9 @@ type snUpdateCasePayload struct {
 	// as an exactly-one-field option -- fully wired.
 	ParentID *string `json:"parentId,omitempty"`
 	// RelatedCaseID writes the looser, non-hierarchical u_related_case cross-link.
-	// A matching field on the backing service's case-update payload and its validation
-	// exists, but is not yet available in the backing service.
+	// Confirmed live against the existing case-update resource -- same
+	// single-field PATCH pathway as ParentID above -- including the async
+	// postgres-servicenow-dual-write mirror (patchCaseFieldsBundle).
 	RelatedCaseID *string `json:"relatedCaseId,omitempty"`
 	// AutocloseHoldUntil places the case on hold in ServiceNow's staged auto-closure
 	// sequence, internally setting u_autoclosure_step = ON_HOLD and
@@ -2452,9 +2453,21 @@ type snUpdateCasePayload struct {
 	// service's case-update payload exists, but is not yet available in the backing
 	// service.
 	AutocloseHoldUntil *string `json:"autocloseHoldUntil,omitempty"`
-	// Title/Description/DeploymentID/DeployedProductID as PATCH-time fields (previously
-	// the backing service's case-update payload only supported these at create time, via
-	// the case-create payload) -- not yet available in the backing service.
+	// Title/DeploymentID/DeployedProductID as PATCH-time fields (previously the backing
+	// service's case-update payload only supported these at create time, via the
+	// case-create payload). Confirmed live against the existing case-update resource --
+	// same single-field PATCH pathway as AutocloseHoldUntil above -- including the async
+	// postgres-servicenow-dual-write mirror (patchCaseFieldsBundle). DeploymentID/
+	// DeployedProductID are reference fields (u_enviroment / install_base), validated by
+	// ServiceNow against u_cmdb_ci_wso2_software_deployment / sn_install_base_item -- an
+	// unresolvable id 404s.
+	//
+	// Description is the one exception: PATCH-time writes to it are blocked by an active
+	// deny-ACL on sn_customerservice_case.description enforced via GlideRecordSecure
+	// (case *creation* writes it through a plain GlideRecord, which does not enforce field
+	// ACLs). Fixing that needs a ServiceNow-side ACL change -- shared-layer, out of scope
+	// here -- so Description is deliberately never populated by patchCaseFieldsBundle; see
+	// that method's own doc comment.
 	Title             *string `json:"title,omitempty"`
 	Description       *string `json:"description,omitempty"`
 	DeploymentID      *string `json:"deploymentId,omitempty"`
@@ -3428,32 +3441,58 @@ func (s *snCaseService) patchCaseParent(ctx context.Context, caseID, parentID st
 
 // patchCaseFieldsBundle performs a bare ServiceNow PATCH covering the part
 // of UpdateCase's combinable "plain field" bundle the backing service
-// actually implements today -- BestCaseFixEta/MostLikelyFixEta/
-// WorstCaseFixEta/WorkaroundProvided -- with none of UpdateCase's
-// enrichment reads, no-op detection, or event publishing -- same reasoning
-// as patchCaseFields's own doc comment, extended to this bundle for
+// actually implements today -- Subject/DeploymentID/DeployedProductID/
+// RelatedCaseID/BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta/
+// WorkaroundProvided -- with none of UpdateCase's enrichment reads, no-op
+// detection, or event publishing -- same reasoning as patchCaseFields's own
+// doc comment, extended to this bundle for
 // DATA_SOURCE=postgres-servicenow-dual-write's async mirror (see
 // caseService.updateCaseFields's own doc comment).
 //
-// Subject/Description/DeploymentID/DeployedProductID/RelatedCaseID are
-// deliberately never sent here, even though CaseRepository.UpdateCaseFields
-// happily writes all of them to Postgres: snUpdateCasePayload's own field
-// comments say Title/Description/DeploymentID/DeployedProductID/
-// RelatedCaseID are "not yet available in the backing service" -- sending
-// them would either be silently ignored or fail the whole PATCH, and either
-// way would leave ServiceNow's copy no better off than not mirroring them
-// at all. Returns nil without a PATCH call when req sets none of the four
-// supported fields, rather than sending an empty no-op request.
+// DeploymentID/DeployedProductID/RelatedCaseID are platform UUIDs, converted
+// to ServiceNow sysids before dispatch (outbound rule, see this file's own
+// conventions doc) without re-validating UUID shape here -- the synchronous
+// Postgres write in caseService.updateCaseFields already validated it before
+// this mirror was ever dispatched. ServiceNow validates each sysid as a
+// reference (u_enviroment / install_base / u_related_case respectively) and
+// 404s on one that doesn't resolve; that 404 surfaces as an ordinary mirror
+// failure through the caller's snWriteback.Dispatch wrapper (WARN log +
+// sn_writeback_failures row), same as any other mirror error -- the Postgres
+// write already succeeded and returned by the time this fires.
+//
+// Description is deliberately never sent here, even though
+// CaseRepository.UpdateCaseFields happily writes it to Postgres: unlike
+// every other field in this bundle, ServiceNow enforces a deny-ACL on
+// sn_customerservice_case.description at update time (case *creation* writes
+// it through a plain, non-ACL-enforcing GlideRecord, but update goes through
+// GlideRecordSecure, which does enforce it) -- sending it would be silently
+// dropped by that ACL, leaving ServiceNow's copy no better off than not
+// mirroring it at all. Returns nil without a PATCH call when req sets none
+// of the eight supported fields, rather than sending an empty no-op request.
 func (s *snCaseService) patchCaseFieldsBundle(ctx context.Context, caseID string, req domain.UpdateCaseRequest) error {
-	if req.BestCaseFixEta == nil && req.MostLikelyFixEta == nil && req.WorstCaseFixEta == nil && req.WorkaroundProvided == nil {
+	if req.Subject == nil && req.DeploymentID == nil && req.DeployedProductID == nil && req.RelatedCaseID == nil &&
+		req.BestCaseFixEta == nil && req.MostLikelyFixEta == nil && req.WorstCaseFixEta == nil && req.WorkaroundProvided == nil {
 		return nil
 	}
 	token := middleware.UserIDTokenFromContext(ctx)
 	payload := snUpdateCasePayload{
+		Title:              req.Subject,
 		BestCaseFixEta:     req.BestCaseFixEta,
 		MostLikelyFixEta:   req.MostLikelyFixEta,
 		WorstCaseFixEta:    req.WorstCaseFixEta,
 		WorkaroundProvided: req.WorkaroundProvided,
+	}
+	if req.DeploymentID != nil {
+		sysid := uuidToSysid(*req.DeploymentID)
+		payload.DeploymentID = &sysid
+	}
+	if req.DeployedProductID != nil {
+		sysid := uuidToSysid(*req.DeployedProductID)
+		payload.DeployedProductID = &sysid
+	}
+	if req.RelatedCaseID != nil {
+		sysid := uuidToSysid(*req.RelatedCaseID)
+		payload.RelatedCaseID = &sysid
 	}
 	_, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(caseID), token, payload)
 	return err

@@ -1534,13 +1534,25 @@ func (s *caseService) updateCaseFields(ctx context.Context, req domain.UpdateCas
 	// Best-effort ServiceNow mirror write, DATA_SOURCE=postgres-servicenow-dual-write
 	// only -- same Postgres-first/async posture as every sibling branch
 	// above. The recorded payload carries the actual values patchCaseFieldsBundle
-	// forwards to ServiceNow (only the four fields that backing service
-	// actually supports -- see that method's own doc comment), not a fixed
-	// field-name placeholder, so a manual replay off sn_writeback_failures
-	// has something to replay.
+	// forwards to ServiceNow (every field that backing service actually
+	// supports except Description -- see that method's own doc comment for
+	// why), not a fixed field-name placeholder, so a manual replay off
+	// sn_writeback_failures has something to replay.
 	if s.snWriteback != nil {
 		if patcher, ok := s.snMirror.(snFieldsBundlePatcher); ok {
 			writebackPayload := map[string]any{"id": req.ID}
+			if req.Subject != nil {
+				writebackPayload["subject"] = *req.Subject
+			}
+			if req.DeploymentID != nil {
+				writebackPayload["deploymentId"] = *req.DeploymentID
+			}
+			if req.DeployedProductID != nil {
+				writebackPayload["deployedProductId"] = *req.DeployedProductID
+			}
+			if req.RelatedCaseID != nil {
+				writebackPayload["relatedCaseId"] = *req.RelatedCaseID
+			}
 			if req.BestCaseFixEta != nil {
 				writebackPayload["bestCaseFixEta"] = *req.BestCaseFixEta
 			}
