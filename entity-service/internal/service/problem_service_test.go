@@ -403,3 +403,53 @@ func TestProblemService_UpdateProblem_MirrorNotConfiguredReturnsUnavailable(t *t
 		t.Fatalf("expected *apierror.ServiceUnavailableError, got %T: %v", err, err)
 	}
 }
+
+// TestProblemService_UpdateProblem_MirrorDispatchedEvenWhenReReadFails is
+// the CodeRabbit-flagged regression guard on PR #2042: UpdateProblemFields
+// has already committed the Postgres write by the time GetProblem runs, so
+// a re-read failure must NOT skip the ServiceNow mirror dispatch. Skipping
+// it would mean the caller gets an error for a write that actually
+// succeeded, ServiceNow never gets the update, and -- since
+// s.snWriteback.Dispatch itself would never have been called -- nothing
+// would even land in sn_writeback_failures to flag the drift. This asserts
+// the mirror fires (checked via the channel) even though GetProblem returns
+// an error and UpdateProblem itself therefore also returns an error.
+func TestProblemService_UpdateProblem_MirrorDispatchedEvenWhenReReadFails(t *testing.T) {
+	repo := &stubProblemRepo{
+		updateProblemFields: func(context.Context, domain.UpdateProblemRequest, string) (time.Time, error) {
+			return time.Now(), nil
+		},
+		getProblem: func(context.Context, string) (domain.ProblemDetail, error) {
+			return domain.ProblemDetail{}, errors.New("re-read: connection reset")
+		},
+	}
+
+	mirrorCalled := make(chan domain.UpdateProblemRequest, 1)
+	mirror := &stubMirrorProblemService{
+		updateProblem: func(_ context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+			mirrorCalled <- req
+			return domain.UpdateProblemResponse{}, nil
+		},
+	}
+	dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
+	svc := NewProblemServiceWithSNMirror(repo, mirror, dispatcher)
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	fixNotes := "applied patch"
+	_, err := svc.UpdateProblem(ctx, domain.UpdateProblemRequest{ID: testDeploymentUUID, FixNotes: &fixNotes})
+	if err == nil {
+		t.Fatal("expected an error surfaced from the failed post-write re-read")
+	}
+
+	select {
+	case mirrorReq := <-mirrorCalled:
+		if mirrorReq.ID != testDeploymentUUID {
+			t.Errorf("mirror got ID %q, want %q", mirrorReq.ID, testDeploymentUUID)
+		}
+		if mirrorReq.FixNotes == nil || *mirrorReq.FixNotes != fixNotes {
+			t.Errorf("mirror got FixNotes %v, want %q", mirrorReq.FixNotes, fixNotes)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror.UpdateProblem was never called despite the Postgres write succeeding -- the re-read failure must not skip the mirror dispatch")
+	}
+}

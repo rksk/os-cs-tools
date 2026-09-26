@@ -334,36 +334,22 @@ func (s *problemService) UpdateProblem(ctx context.Context, req domain.UpdatePro
 		return domain.UpdateProblemResponse{}, err
 	}
 
-	// Re-read via GetProblem, matching incidentService.UpdateIncident's own
-	// GetIncidentByID re-read pattern, since UpdateProblemFields only
-	// returns updated_on -- State/ResolutionCode/AssignedTo must reflect the
-	// real post-write state, not be guessed at from req.
-	detail, err := s.repo.GetProblem(ctx, req.ID)
-	if err != nil {
-		return domain.UpdateProblemResponse{}, err
-	}
-
-	updatedOnStr := updatedOn.UTC().Format(time.RFC3339)
-	view := domain.UpdateProblemView{
-		ID:             detail.ID,
-		UpdatedOn:      &updatedOnStr,
-		UpdatedBy:      &actorEmail,
-		State:          detail.State,
-		ResolutionCode: detail.ResolutionCode,
-		AssignedTo:     detail.AssignedTo,
-		// AssignmentGroup is always nil -- problem has no assignment-group
-		// column anywhere (see this type's own package doc comment in
-		// problem_repo.go).
-	}
-
 	// Best-effort ServiceNow mirror write, DATA_SOURCE=postgres-servicenow-dual-write
-	// only (guaranteed by the s.snWriteback == nil guard above). Postgres has
-	// already committed by this point; this fires after, asynchronously, and
-	// never affects this response. mirrorReq carries only ID plus the
-	// field(s) this call actually set -- never forwards req itself -- so
-	// this can never accidentally carry Transition/AssignmentGroupID (both
-	// already rejected above and therefore always nil here) into the mirror
-	// call.
+	// only (guaranteed by the s.snWriteback == nil guard above). Dispatched
+	// immediately once Postgres has committed -- BEFORE the GetProblem
+	// re-read below, deliberately -- because the write has already
+	// succeeded at this point regardless of whether the re-read that
+	// follows does. Dispatching only after a successful re-read would mean
+	// a re-read failure (e.g. a transient connection blip) skips the mirror
+	// entirely: the caller gets an error for a write that actually
+	// succeeded, ServiceNow never gets the update, and -- since
+	// s.snWriteback.Dispatch itself was never called -- nothing lands in
+	// sn_writeback_failures either, silent drift the dispatcher can't even
+	// report on. Fires asynchronously and never affects this response.
+	// mirrorReq carries only ID plus the field(s) this call actually set --
+	// never forwards req itself -- so this can never accidentally carry
+	// Transition/AssignmentGroupID (both already rejected above and
+	// therefore always nil here) into the mirror call.
 	mirrorReq := domain.UpdateProblemRequest{
 		ID:                   req.ID,
 		AssignedToID:         req.AssignedToID,
@@ -394,6 +380,37 @@ func (s *problemService) UpdateProblem(ctx context.Context, req domain.UpdatePro
 			return err
 		},
 	)
+
+	// Re-read via GetProblem, matching incidentService.UpdateIncident's own
+	// GetIncidentByID re-read pattern, since UpdateProblemFields only
+	// returns updated_on -- State/ResolutionCode/AssignedTo must reflect the
+	// real post-write state, not be guessed at from req. The mirror above
+	// has already been dispatched by this point regardless of whether this
+	// re-read succeeds: a failure here only means this response can't
+	// confirm the post-write view, not that the write itself (or its
+	// mirror) is in question -- logged loudly, same convention as
+	// createProblemSNFirst's own drift-logging branch, and returned as an
+	// error since UpdateProblemResponse has no partial-view shape to fall
+	// back to.
+	detail, err := s.repo.GetProblem(ctx, req.ID)
+	if err != nil {
+		slog.ErrorContext(ctx, "update problem: problem was updated but the post-write re-read failed",
+			"problemId", req.ID, "error", err)
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	updatedOnStr := updatedOn.UTC().Format(time.RFC3339)
+	view := domain.UpdateProblemView{
+		ID:             detail.ID,
+		UpdatedOn:      &updatedOnStr,
+		UpdatedBy:      &actorEmail,
+		State:          detail.State,
+		ResolutionCode: detail.ResolutionCode,
+		AssignedTo:     detail.AssignedTo,
+		// AssignmentGroup is always nil -- problem has no assignment-group
+		// column anywhere (see this type's own package doc comment in
+		// problem_repo.go).
+	}
 
 	return domain.UpdateProblemResponse{
 		Message: "Problem updated successfully",
