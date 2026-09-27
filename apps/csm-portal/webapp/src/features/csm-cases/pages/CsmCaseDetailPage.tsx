@@ -307,6 +307,11 @@ type CaseTabId =
   | "call-requests"
   | "tasks";
 
+// Paused product-wide pending a data-model decision upstream. Flip this back
+// to `true` to restore the search query, widget and create-task dialog below
+// — nothing else needs to change.
+const TASKS_FEATURE_ENABLED = false;
+
 
 const TAB_DEFS: Array<{
   id: CaseTabId;
@@ -560,8 +565,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
     refetch: refetchCallRequests,
     isFetching: isFetchingCallRequests,
   } = useGetCsmCaseCallRequests(isAnnouncement ? undefined : caseId);
+  // TASKS_FEATURE_ENABLED gate: `undefined` disables the underlying
+  // react-query call entirely (see useSearchCaseTasks' `enabled: !!caseId`),
+  // so this is a real no-request, not just a hidden result — restoring the
+  // `caseId` arg below is the only change needed to bring the query back.
   const { data: caseTasks } = useSearchCaseTasks(
-    isAnnouncement ? undefined : caseId,
+    TASKS_FEATURE_ENABLED && !isAnnouncement ? caseId : undefined,
   );
   const { data: caseTimeCards } = useCaseTimeCards(
     isAnnouncement ? undefined : caseId,
@@ -2191,6 +2200,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // more than the real (server-side) gate is likely to. This is UI-only — the
   // entity-service enforces the authoritative close gate, and a rejection
   // still surfaces via showError even if this signal is stale or absent.
+  // While TASKS_FEATURE_ENABLED is false, `caseTasks` is always undefined, so
+  // this advisory never fires — the closure UI just falls silent on it,
+  // rather than misleadingly claiming "no open tasks".
   const hasOpenTask = (caseTasks?.tasks ?? []).some((t) => t.state === "OPEN");
   const closeBlockedReason = hasOpenTask
     ? "This case has an open task. Closing may be rejected until it's resolved or closed."
@@ -2985,7 +2997,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         </Box>
       )}
 
-      {activeTab === "tasks" && caseId && (
+      {TASKS_FEATURE_ENABLED && activeTab === "tasks" && caseId && (
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
           <TasksWidget caseId={caseId} />
         </Box>
@@ -3140,7 +3152,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         />
       )}
 
-      {createTaskOpen && (
+      {TASKS_FEATURE_ENABLED && createTaskOpen && (
         <CreateTaskDialog
           isSaving={createTask.isPending}
           onClose={() => setCreateTaskOpen(false)}
