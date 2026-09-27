@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -34,9 +35,12 @@ type recordingSLAEngineRepo struct {
 	registered []string // "workItemID|policyID"
 	completed  []string // "workItemID|target"
 	paused     []string // "workItemID|target|true" or "...|false"
+	cancelled  []string // "workItemID"
 
 	registerErr error
 	registerOK  bool // if false, RegisterClock reports "already registered"
+	cancelErr   error
+	cancelCount int
 }
 
 func newRecordingSLAEngineRepo() *recordingSLAEngineRepo {
@@ -59,6 +63,14 @@ func (r *recordingSLAEngineRepo) CompleteClock(_ context.Context, workItemID, ta
 func (r *recordingSLAEngineRepo) SetPaused(_ context.Context, workItemID, target string, paused bool) (bool, error) {
 	r.paused = append(r.paused, fmt.Sprintf("%s|%s|%v", workItemID, target, paused))
 	return true, nil
+}
+
+func (r *recordingSLAEngineRepo) CancelActiveClocks(_ context.Context, workItemID string) (int, error) {
+	if r.cancelErr != nil {
+		return 0, r.cancelErr
+	}
+	r.cancelled = append(r.cancelled, workItemID)
+	return r.cancelCount, nil
 }
 
 func TestSLAEngineService_RegisterCaseClocks_CatastrophicRegistersAllThree(t *testing.T) {
@@ -207,5 +219,71 @@ func TestSLAEngineService_RegisterCaseClocks_UsesResolvedPlan(t *testing.T) {
 	// for P3 aren't in the fake set at all, so only resolution registers.
 	if len(repo.registered) != 1 || repo.registered[0] != "case-7|p3-res-ms" {
 		t.Errorf("registered = %v, want [case-7|p3-res-ms]", repo.registered)
+	}
+}
+
+// TestSLAEngineService_ApplySeverityChange_CancelsThenRegistersFresh confirms
+// a severity change cancels the case's existing clocks before registering
+// new ones for the new severity, in that order -- so the new registration
+// is never blocked by RegisterClock's own NOT EXISTS guard seeing a still-
+// active old-severity row.
+func TestSLAEngineService_ApplySeverityChange_CancelsThenRegistersFresh(t *testing.T) {
+	repo := newRecordingSLAEngineRepo()
+	svc := NewSLAEngineService(repo, nil)
+
+	sev := domain.CaseSeverityCatastrophic // P0
+	svc.ApplySeverityChange(context.Background(), "case-8", &sev, "")
+
+	if len(repo.cancelled) != 1 || repo.cancelled[0] != "case-8" {
+		t.Fatalf("cancelled = %v, want [case-8]", repo.cancelled)
+	}
+	want := []string{"case-8|p0-r-ms", "case-8|p0-w-ms", "case-8|p0-res-ms"}
+	if len(repo.registered) != len(want) {
+		t.Fatalf("registered = %v, want %v", repo.registered, want)
+	}
+	for i, w := range want {
+		if repo.registered[i] != w {
+			t.Errorf("registered[%d] = %q, want %q", i, repo.registered[i], w)
+		}
+	}
+}
+
+// TestSLAEngineService_ApplySeverityChange_StillRegistersIfCancelFails
+// confirms a failed cancel doesn't abandon registering fresh clocks for the
+// new severity -- see ApplySeverityChange's own doc comment on why.
+func TestSLAEngineService_ApplySeverityChange_StillRegistersIfCancelFails(t *testing.T) {
+	repo := newRecordingSLAEngineRepo()
+	repo.cancelErr = errors.New("db unavailable")
+	svc := NewSLAEngineService(repo, nil)
+
+	sev := domain.CaseSeverityLow // Query -- response only
+	svc.ApplySeverityChange(context.Background(), "case-9", &sev, "")
+
+	if len(repo.cancelled) != 0 {
+		t.Errorf("cancelled = %v, want none recorded (CancelActiveClocks errored)", repo.cancelled)
+	}
+	// Registration still proceeds despite the cancel failure -- see
+	// ApplySeverityChange's own doc comment on why. Query/Low resolves one
+	// clock (response) under the fake policy set's Open Source default plan.
+	if len(repo.registered) != 1 || repo.registered[0] != "case-9|q-r-os" {
+		t.Errorf("registered = %v, want [case-9|q-r-os]", repo.registered)
+	}
+}
+
+// TestSLAEngineService_ApplySeverityChange_NilSeverityStillCancels confirms
+// a nil newSeverity (RegisterCaseClocks' own no-op case) still runs the
+// cancel step -- a case moving to an unrecognised/nil severity must not
+// keep its old clocks running just because the new one can't be resolved.
+func TestSLAEngineService_ApplySeverityChange_NilSeverityStillCancels(t *testing.T) {
+	repo := newRecordingSLAEngineRepo()
+	svc := NewSLAEngineService(repo, nil)
+
+	svc.ApplySeverityChange(context.Background(), "case-10", nil, "")
+
+	if len(repo.cancelled) != 1 || repo.cancelled[0] != "case-10" {
+		t.Fatalf("cancelled = %v, want [case-10]", repo.cancelled)
+	}
+	if len(repo.registered) != 0 {
+		t.Errorf("registered = %v, want none (nil severity)", repo.registered)
 	}
 }

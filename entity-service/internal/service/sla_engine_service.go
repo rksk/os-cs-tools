@@ -66,6 +66,16 @@ type SLAEngineService interface {
 	// for the exact per-state behavior this ports (unchanged, including its
 	// documented workaround-completion gap).
 	ApplyCaseStateEffects(ctx context.Context, caseID string, state domain.CaseState)
+	// ApplySeverityChange runs every existing CSM-authored clock for the
+	// case into CANCELLED (CancelActiveClocks), then registers a fresh set
+	// for newSeverity via RegisterCaseClocks -- old thresholds no longer
+	// describe the case once its severity changes, so its clocks restart
+	// from zero elapsed time under the new severity's policies rather than
+	// being repointed or left running under stale ones. Called once per
+	// confirmed severity change (the caller has already verified newSeverity
+	// genuinely differs from the case's prior severity); newSeverity may be
+	// nil the same way RegisterCaseClocks tolerates it.
+	ApplySeverityChange(ctx context.Context, caseID string, newSeverity *domain.CaseSeverity, projectID string)
 }
 
 type slaEngineService struct {
@@ -112,6 +122,23 @@ func (s *slaEngineService) RegisterCaseClocks(ctx context.Context, caseID string
 			slog.InfoContext(ctx, "sla engine: clock already registered, skipped", "caseId", caseID, "clockType", clockType)
 		}
 	}
+}
+
+// ApplySeverityChange implements SLAEngineService.
+func (s *slaEngineService) ApplySeverityChange(ctx context.Context, caseID string, newSeverity *domain.CaseSeverity, projectID string) {
+	cancelled, err := s.repo.CancelActiveClocks(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sla engine: cancel active clocks on severity change failed", "caseId", caseID, "err", err)
+		// Deliberately still attempts registration below even if the
+		// cancel failed -- RegisterClock's own NOT EXISTS guard means a
+		// clock type whose old row is still active just gets skipped
+		// (logged, not silently duplicated), same as any other
+		// already-registered case; better to register what it can than to
+		// abandon the whole severity change over one failed UPDATE.
+	} else if cancelled > 0 {
+		slog.InfoContext(ctx, "sla engine: cancelled active clocks for severity change", "caseId", caseID, "count", cancelled)
+	}
+	s.RegisterCaseClocks(ctx, caseID, newSeverity, projectID)
 }
 
 // CompleteResponseClock implements SLAEngineService.

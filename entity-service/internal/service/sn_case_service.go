@@ -1097,6 +1097,32 @@ func (s *snCaseService) registerCaseSLAClocks(ctx context.Context, caseID string
 	s.slaEngine.RegisterCaseClocks(ctx, caseID, cv.Severity, projectID)
 }
 
+// applyCaseSeverityChangeSLAEffects best-effort cancels the case's existing
+// CSM-native SLA clocks and registers fresh ones for its new severity (see
+// SLAEngineService.ApplySeverityChange) -- called from UpdateCase once a
+// severity change has already been confirmed by its own caller (this
+// function does no severity comparison itself). Skips entirely when
+// s.slaEngine is nil or the re-fetch below fails, same reasoning and same
+// independent-re-fetch pattern as registerCaseSLAClocks.
+func (s *snCaseService) applyCaseSeverityChangeSLAEffects(ctx context.Context, caseID string) {
+	if s.slaEngine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, applyCaseStateSLATimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: sla severity-change effects not evaluated, get case failed", "caseId", caseID)
+		return
+	}
+	projectID := ""
+	if cv.ProjectDetails != nil {
+		projectID = cv.ProjectDetails.ID
+	}
+	s.slaEngine.ApplySeverityChange(ctx, caseID, cv.Severity, projectID)
+}
+
 // publishCaseCreated best-effort publishes a case.created event for a newly
 // created case. See publishCaseCreatedEvent's own doc comment for the full
 // reasoning — this is now a thin wrapper around it, same shape as
@@ -3008,9 +3034,18 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	// "severity changed" notification. req.State and req.Severity are
 	// mutually exclusive per request (see exclusiveCount above), so this and
 	// the block above never both fire for the same call.
+	//
+	// Gated on s.publisher != nil OR s.slaEngine != nil, not publisher alone
+	// -- this fetch also backs applyCaseSeverityChangeSLAEffects below, and
+	// that call must not depend on Event Hub being configured, same
+	// reasoning applyCaseStateSLAEffects/applyResponseSLAOnComment already
+	// give for being independent of s.publisher. publishSeverityChanged and
+	// applyCaseSeverityChangeSLAEffects are each still separately, safely
+	// no-op-able (nil publisher / nil slaEngine respectively) if only one
+	// of the two is actually configured.
 	var caseBeforeSeverity domain.CaseView
 	publishSeverityChange := false
-	if req.Severity != nil && s.publisher != nil {
+	if req.Severity != nil && (s.publisher != nil || s.slaEngine != nil) {
 		enrichCtx, cancel := context.WithTimeout(ctx, publishSeverityChangedTimeout)
 		cv, err := s.GetCaseByID(enrichCtx, req.ID)
 		cancel()
@@ -3205,6 +3240,13 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	// values.
 	if publishSeverityChange && resp.Case.Severity != nil && derefSeverity(resp.Case.Severity) != derefSeverity(caseBeforeSeverity.Severity) {
 		s.publishSeverityChanged(ctx, req.ID, string(derefSeverity(caseBeforeSeverity.Severity)), string(derefSeverity(resp.Case.Severity)), caseBeforeSeverity)
+		// Same confirmed-severity-change guard as the event publish above,
+		// deliberately independent of s.publisher (see applyCaseStateSLAEffects'
+		// own doc comment on why SLA side effects must not depend on Event
+		// Hub being configured) -- the old severity's clocks no longer
+		// describe this case and must not keep counting toward a breach
+		// under thresholds that no longer apply.
+		s.applyCaseSeverityChangeSLAEffects(ctx, req.ID)
 	}
 
 	return resp, nil

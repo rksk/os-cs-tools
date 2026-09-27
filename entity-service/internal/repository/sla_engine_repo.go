@@ -91,6 +91,19 @@ type SLAEngineRepository interface {
 	// and stage to BREACHED once elapsed time reaches the policy duration,
 	// and returns how many rows were touched.
 	RecomputeActive(ctx context.Context) (int, error)
+
+	// CancelActiveClocks marks every active (see slaEngineActiveStageFilter)
+	// source='CSM' clock for workItemID CANCELLED, across every clock type --
+	// used when a case's severity changes: the old severity's clocks no
+	// longer apply and must not keep counting toward a breach under
+	// thresholds that no longer describe the case, so they run into a
+	// terminal CANCELLED state rather than being silently repointed at a
+	// new policy or left running. The caller registers fresh clocks for the
+	// new severity separately (RegisterClock's own NOT EXISTS guard is why
+	// this must happen first -- it would otherwise see the still-active old
+	// clock and skip registering a new one for the same clock type).
+	// Returns how many rows were cancelled.
+	CancelActiveClocks(ctx context.Context, workItemID string) (int, error)
 }
 
 type slaEngineRepo struct {
@@ -247,6 +260,23 @@ func (r *slaEngineRepo) RecomputeActive(ctx context.Context) (int, error) {
 	tag, err := r.db.Exec(ctx, query, sqlActorLiteral)
 	if err != nil {
 		return 0, fmt.Errorf("recompute csm sla clocks: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CancelActiveClocks implements SLAEngineRepository.
+func (r *slaEngineRepo) CancelActiveClocks(ctx context.Context, workItemID string) (int, error) {
+	const query = `
+		UPDATE sla
+		SET stage = 'CANCELLED'::sla_stage_enum,
+		    updated_on = NOW(), updated_by = $2
+		WHERE work_item_id = $1::uuid
+		  AND source = 'CSM'
+		  AND stage::TEXT ` + slaEngineActiveStageFilter
+
+	tag, err := r.db.Exec(ctx, query, workItemID, sqlActorLiteral)
+	if err != nil {
+		return 0, fmt.Errorf("cancel active csm sla clocks: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
 }

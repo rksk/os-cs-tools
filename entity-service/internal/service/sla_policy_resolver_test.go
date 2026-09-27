@@ -58,6 +58,9 @@ func (f *fakePolicyLookupRepo) SetPaused(context.Context, string, string, bool) 
 func (f *fakePolicyLookupRepo) RecomputeActive(context.Context) (int, error) {
 	panic("not implemented")
 }
+func (f *fakePolicyLookupRepo) CancelActiveClocks(context.Context, string) (int, error) {
+	panic("not implemented")
+}
 
 func newFakePolicyLookupRepo() *fakePolicyLookupRepo {
 	return &fakePolicyLookupRepo{

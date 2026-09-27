@@ -31,9 +31,10 @@ import (
 // projectId/caseId/state actually reach SLAEngineService, not the
 // resolver/repository logic behind it.
 type fakeSLAEngineService struct {
-	registerCalls []fakeSLARegisterCall
-	completeCalls []string // caseID
-	stateCalls    []fakeSLAStateCall
+	registerCalls       []fakeSLARegisterCall
+	completeCalls       []string // caseID
+	stateCalls          []fakeSLAStateCall
+	severityChangeCalls []fakeSLARegisterCall // reuses the same shape: caseID/severity/projectID
 }
 
 type fakeSLARegisterCall struct {
@@ -57,6 +58,10 @@ func (f *fakeSLAEngineService) CompleteResponseClock(_ context.Context, caseID s
 
 func (f *fakeSLAEngineService) ApplyCaseStateEffects(_ context.Context, caseID string, state domain.CaseState) {
 	f.stateCalls = append(f.stateCalls, fakeSLAStateCall{caseID, state})
+}
+
+func (f *fakeSLAEngineService) ApplySeverityChange(_ context.Context, caseID string, severity *domain.CaseSeverity, projectID string) {
+	f.severityChangeCalls = append(f.severityChangeCalls, fakeSLARegisterCall{caseID, severity, projectID})
 }
 
 // TestSNCaseService_CreateCase_RegistersSLAClocks verifies CreateCase, for
@@ -320,5 +325,92 @@ func TestSNCaseService_UpdateCase_NilSLAEngineSkipsStateEffects(t *testing.T) {
 	req := domain.UpdateCaseRequest{ID: caseID, State: &newState}
 	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
 		t.Fatalf("UpdateCase() error = %v", err)
+	}
+}
+
+// TestSNCaseService_UpdateCase_SeverityChangeAppliesSLAEffects verifies a
+// confirmed severity PATCH (the PATCH response's severity genuinely differs
+// from the pre-PATCH GetCaseByID fetch) calls
+// SLAEngineService.ApplySeverityChange -- and, critically, does so with NO
+// publisher configured, proving the severity-changed detection this hook
+// depends on is no longer gated on s.publisher (see UpdateCase's own
+// updated doc comment on why that gate had to widen to s.slaEngine != nil
+// too). applyCaseSeverityChangeSLAEffects does its own GetCaseByID
+// re-fetch, which this fixture's static getCaseBody answers again -- so the
+// severity ApplySeverityChange actually receives is getCaseBody's ("High"),
+// not the PATCH response's ("Catastrophic"); that's a test-fixture
+// limitation, not a claim about which value production code would use.
+func TestSNCaseService_UpdateCase_SeverityChangeAppliesSLAEffects(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-024",
+		"number": "CS0024001",
+		"title": "Severity change test",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"severity": {"id": 3, "label": "3 - High"},
+		"state": {"id": 1, "label": "Open"}
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "severity": {"id": 1, "label": "1 - Catastrophic"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	slaEngine := &fakeSLAEngineService{}
+	// No publisher (nil EventPublisherService) -- proves this doesn't depend on it.
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil, "", slaEngine)
+
+	newSeverity := domain.CaseSeverityCatastrophic
+	req := domain.UpdateCaseRequest{ID: caseID, Severity: &newSeverity}
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("UpdateCase() error = %v", err)
+	}
+
+	if len(slaEngine.severityChangeCalls) != 1 {
+		t.Fatalf("ApplySeverityChange calls = %d, want 1", len(slaEngine.severityChangeCalls))
+	}
+	call := slaEngine.severityChangeCalls[0]
+	if call.caseID != caseID {
+		t.Errorf("caseID = %q, want %q", call.caseID, caseID)
+	}
+	if call.projectID != sysidToUUID(projectSysid) {
+		t.Errorf("projectID = %q, want %q", call.projectID, sysidToUUID(projectSysid))
+	}
+}
+
+// TestSNCaseService_UpdateCase_UnchangedSeveritySkipsSLAEffects verifies a
+// PATCH that re-sends the case's own current severity (a ServiceNow no-op)
+// does not call ApplySeverityChange at all.
+func TestSNCaseService_UpdateCase_UnchangedSeveritySkipsSLAEffects(t *testing.T) {
+	caseSysid := sysid32('a')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{"id": "` + caseSysid + `", "severity": {"id": 3, "label": "3 - High"}}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "severity": {"id": 3, "label": "3 - High"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	slaEngine := &fakeSLAEngineService{}
+	svc := NewServiceNowCaseService(client, nil, nil, nil, nil, "", slaEngine)
+
+	sameSeverity := domain.CaseSeverityHigh
+	req := domain.UpdateCaseRequest{ID: caseID, Severity: &sameSeverity}
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("UpdateCase() error = %v", err)
+	}
+
+	if len(slaEngine.severityChangeCalls) != 0 {
+		t.Errorf("ApplySeverityChange calls = %v, want none for an unchanged severity", slaEngine.severityChangeCalls)
 	}
 }
