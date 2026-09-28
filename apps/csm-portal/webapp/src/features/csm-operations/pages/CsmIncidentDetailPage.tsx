@@ -40,6 +40,7 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
+import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import { BackendApiError } from "@api/backend/client";
 import ExportPdfButton from "@components/ExportPdfButton";
 import { ApiQueryKeys } from "@constants/apiConstants";
@@ -735,12 +736,25 @@ export default function CsmIncidentDetailPage(): JSX.Element {
         <Typography variant="h5">{incident.subject || "Incident"}</Typography>
       </Box>
 
-      {incident.description && (
+      {incident.description && !isBlankHtml(incident.description) && (
         <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography variant="subtitle2">Description</Typography>
-          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-            {incident.description}
-          </Typography>
+          <Box
+            sx={{
+              color: "text.secondary",
+              fontSize: "0.875rem",
+              lineHeight: 1.5,
+              wordBreak: "break-word",
+              whiteSpace: "pre-wrap",
+              "& p": { my: 0.5 },
+              "& p:first-of-type": { mt: 0 },
+              "& p:last-child": { mb: 0 },
+              "& ul, & ol": { my: 0.5, pl: 3 },
+              "& a": { color: "primary.main" },
+              "& img": { maxWidth: "100%", height: "auto" },
+            }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(incident.description) }}
+          />
         </Card>
       )}
 
