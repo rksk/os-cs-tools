@@ -494,14 +494,14 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 	if err := validateUUIDs("id", []string{req.ID}); err != nil {
 		return domain.UpdateIncidentResponse{}, err
 	}
-	if req.Subject != nil || req.Priority != nil || req.State != nil || req.Category != nil ||
+	if req.Subject != nil || req.Description != nil || req.Priority != nil || req.State != nil || req.Category != nil ||
 		req.Subcategory != nil || req.ContactType != nil || req.ResolutionCode != nil ||
 		req.ParentID != nil || req.ParentIncidentID != nil || req.AssignmentGroupID != nil ||
 		req.AssignedEngineerID != nil || req.ServiceID != nil || req.ServiceOfferingID != nil ||
 		req.ConfigurationItemID != nil || req.ChangeRequestID != nil || req.ProblemID != nil ||
 		req.CausedByID != nil || req.ResolvedByID != nil || req.ResolutionNotes != nil ||
 		req.IncidentReport != nil || req.WatchList != nil {
-		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "subject, priority, state, category, subcategory, contactType, resolutionCode, parentId, parentIncidentId, assignmentGroupId, assignedEngineerId, serviceId, serviceOfferingId, configurationItemId, changeRequestId, problemId, causedById, resolvedById, resolutionNotes, incidentReport, and watchList are only supported for the ServiceNow data source"}
+		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "subject, description, priority, state, category, subcategory, contactType, resolutionCode, parentId, parentIncidentId, assignmentGroupId, assignedEngineerId, serviceId, serviceOfferingId, configurationItemId, changeRequestId, problemId, causedById, resolvedById, resolutionNotes, incidentReport, and watchList are only supported for the ServiceNow data source"}
 	}
 	if req.WorkNotes == nil && req.AdditionalComments == nil {
 		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "at least one of workNotes or additionalComments must be provided"}

@@ -741,11 +741,11 @@ const createIncidentFromServiceNowQuery = `
 	WITH inserted_work_item AS (
 		INSERT INTO work_item (
 			id, created_on, updated_on, created_by, updated_by,
-			number, subject, type, parent_id
+			number, subject, type, parent_id, description
 		)
 		VALUES (
 			$1, NOW(), NOW(), $2, $2,
-			$3, $4, 'INCIDENT'::work_item_type_enum, $5::uuid
+			$3, $4, 'INCIDENT'::work_item_type_enum, $5::uuid, $19
 		)
 		RETURNING id, number, subject, created_on, updated_on, created_by
 	),
@@ -786,7 +786,7 @@ func (r *incidentRepo) CreateIncidentFromServiceNow(ctx context.Context, req dom
 		req.CallerID, string(req.Category), string(req.Impact), string(req.Urgency),
 		req.ServiceID, req.ServiceOfferingID, contactType,
 		req.ChangeRequestID, req.CausedByID, req.ParentIncidentID, req.ProblemID,
-		req.CorrelationID, req.Environment,
+		req.CorrelationID, req.Environment, req.Description,
 	).Scan(&outID, &outNumber, &outSubject, &outCreatedOn, &outUpdatedOn, &outCreatedBy)
 	if err != nil {
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) {

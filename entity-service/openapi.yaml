@@ -17450,6 +17450,9 @@ components:
           nullable: true
         subject:
           type: string
+        description:
+          type: string
+          nullable: true
         watchList:
           type: array
           items:
@@ -17920,6 +17923,9 @@ components:
       properties:
         subject:
           type: string
+        description:
+          type: string
+          nullable: true
         priority:
           type: string
           enum: [CRITICAL, HIGH, MODERATE, LOW, PLANNING]

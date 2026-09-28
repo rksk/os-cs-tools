@@ -5350,14 +5350,18 @@ type CreateIncidentRequest struct {
 	AssignmentGroupID   *string              `json:"assignmentGroupId,omitempty"`
 	AssignedEngineerID  *string              `json:"assignedEngineerId,omitempty"`
 	Subject             string               `json:"subject"`
-	WatchList           []string             `json:"watchList,omitempty"`
-	AdditionalComments  *string              `json:"additionalComments,omitempty"`
-	WorkNotes           *string              `json:"workNotes,omitempty"`
-	ParentID            *string              `json:"parentId,omitempty"`
-	ParentIncidentID    *string              `json:"parentIncidentId,omitempty"`
-	ChangeRequestID     *string              `json:"changeRequestId,omitempty"`
-	ProblemID           *string              `json:"problemId,omitempty"`
-	CausedByID          *string              `json:"causedById,omitempty"`
+	// Description is the full free-text body, separate from the shorter
+	// Subject. Maps to ServiceNow's own incident.description field and,
+	// on this service's own Postgres row, work_item.description.
+	Description        *string  `json:"description,omitempty"`
+	WatchList          []string `json:"watchList,omitempty"`
+	AdditionalComments *string  `json:"additionalComments,omitempty"`
+	WorkNotes          *string  `json:"workNotes,omitempty"`
+	ParentID           *string  `json:"parentId,omitempty"`
+	ParentIncidentID   *string  `json:"parentIncidentId,omitempty"`
+	ChangeRequestID    *string  `json:"changeRequestId,omitempty"`
+	ProblemID          *string  `json:"problemId,omitempty"`
+	CausedByID         *string  `json:"causedById,omitempty"`
 	// CorrelationID is an optional caller-supplied external-system key, stored
 	// on ServiceNow's stock `correlation_id` field. Lets a monitoring
 	// integration find an incident it already created (SearchIncidentsFilters.
@@ -5387,8 +5391,12 @@ type CreateIncidentResponse struct {
 // UpdateIncidentRequest is the input for PATCH /incidents/{id}. All fields are optional,
 // but at least one must be provided.
 type UpdateIncidentRequest struct {
-	ID                  string                  `json:"-"`
-	Subject             *string                 `json:"subject,omitempty"`
+	ID      string  `json:"-"`
+	Subject *string `json:"subject,omitempty"`
+	// Description is the full free-text body, separate from the shorter
+	// Subject. Maps to ServiceNow's own incident.description field and,
+	// on this service's own Postgres row, work_item.description.
+	Description         *string                 `json:"description,omitempty"`
 	Priority            *IncidentPriority       `json:"priority,omitempty"`
 	State               *IncidentState          `json:"state,omitempty"`
 	Category            *IncidentCategory       `json:"category,omitempty"`
@@ -5476,8 +5484,10 @@ type IncidentView struct {
 	ResolvedOn      *string `json:"resolvedOn"`
 	IncidentReport  *string `json:"incidentReport"`
 	// Description is ServiceNow's incident.description field (separate from Subject, which
-	// maps to the shorter short_description), read from work_item.description -- the same
-	// column every other work_item type already uses for its own long-form description.
+	// maps to the shorter short_description). On this data source, read from
+	// work_item.description -- the same column every other work_item type already
+	// uses for its own long-form description. On the ServiceNow data source, read
+	// directly from ServiceNow's own response.
 	Description *string `json:"description"`
 	// SpecialistHandoff is the derived summary of a specialist-group handoff, null when the
 	// incident has never been handed off. Nothing is persisted for it: the backing data

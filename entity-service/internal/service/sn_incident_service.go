@@ -669,6 +669,7 @@ type snCreateIncidentPayload struct {
 	AssignmentGroupID   *string  `json:"assignmentGroupId,omitempty"`
 	AssignedEngineerID  *string  `json:"assignedEngineerId,omitempty"`
 	Subject             string   `json:"subject"`
+	Description         *string  `json:"description,omitempty"`
 	WatchList           []string `json:"watchList,omitempty"`
 	AdditionalComments  *string  `json:"additionalComments,omitempty"`
 	WorkNotes           *string  `json:"workNotes,omitempty"`
@@ -788,6 +789,7 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 		ImpactKey:          snIncidentImpactKeyMap[req.Impact],
 		UrgencyKey:         snIncidentUrgencyKeyMap[req.Urgency],
 		Subject:            req.Subject,
+		Description:        req.Description,
 		WatchList:          watchList,
 		AdditionalComments: req.AdditionalComments,
 		WorkNotes:          req.WorkNotes,
@@ -1039,6 +1041,7 @@ type snGetIncidentResponse struct {
 	ResolvedBy            *string                     `json:"resolvedBy"`
 	ResolvedOn            *string                     `json:"resolved"`
 	IncidentReport        *string                     `json:"incidentReport"`
+	Description           *string                     `json:"description"`
 	LinkedServiceRequests []snLinkedServiceRequestRef `json:"linkedServiceRequests"`
 	// SpecialistHandoff: see domain.IncidentSpecialistHandoffSummary doc comment. Null when
 	// the incident has never been handed off to its specialist group.
@@ -1107,6 +1110,7 @@ func mapSNIncidentToView(sn snGetIncidentResponse) domain.IncidentView {
 		ResolvedBy:         sn.ResolvedBy,
 		ResolvedOn:         sn.ResolvedOn,
 		IncidentReport:     sn.IncidentReport,
+		Description:        sn.Description,
 		Environment:        sn.Environment,
 	}
 	if sn.ResolutionCode != nil {
@@ -1240,6 +1244,7 @@ func mapSNIncidentSpecialistHandoffSummary(sn snIncidentSpecialistHandoffSummary
 // snUpdateIncidentPayload is the Choreo PATCH /incidents/{id} request body.
 type snUpdateIncidentPayload struct {
 	Subject             *string   `json:"subject,omitempty"`
+	Description         *string   `json:"description,omitempty"`
 	PriorityKey         *int      `json:"priorityKey,omitempty"`
 	StateKey            *int      `json:"stateKey,omitempty"`
 	CategoryKey         *string   `json:"categoryKey,omitempty"`
@@ -1282,7 +1287,7 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 		return domain.UpdateIncidentResponse{}, err
 	}
 
-	hasUpdate := req.Subject != nil || req.Priority != nil || req.State != nil || req.Category != nil ||
+	hasUpdate := req.Subject != nil || req.Description != nil || req.Priority != nil || req.State != nil || req.Category != nil ||
 		req.Subcategory != nil || req.ContactType != nil || req.Impact != nil || req.Urgency != nil ||
 		req.ResolutionCode != nil || req.ParentID != nil || req.ParentIncidentID != nil ||
 		req.AssignmentGroupID != nil || req.AssignedEngineerID != nil || req.ServiceID != nil ||
@@ -1359,6 +1364,7 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 
 	payload := snUpdateIncidentPayload{
 		Subject:            req.Subject,
+		Description:        req.Description,
 		ResolutionNotes:    req.ResolutionNotes,
 		IncidentReport:     req.IncidentReport,
 		AdditionalComments: req.AdditionalComments,
