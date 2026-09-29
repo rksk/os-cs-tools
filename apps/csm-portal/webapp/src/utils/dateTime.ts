@@ -506,6 +506,27 @@ export function isPastDateTime(date: Date | null): boolean {
 }
 
 /**
+ * True when a picker wall-clock value ("YYYY-MM-DDTHH:mm", entered in the
+ * resolved user timezone) is an instant strictly before now. Unlike
+ * `isPastDateTime(parseDateTimeLocal(value))`, which reads the digits in the
+ * BROWSER timezone, this converts through {@link zonedInputToUtcIso} so the
+ * check agrees with what is actually submitted whenever the profile timezone
+ * differs from the browser's. Empty/unparseable values are never flagged.
+ *
+ * @param localValue - Picker value in the user's timezone.
+ * @param explicitTimeZone - Optional timezone override.
+ * @returns {boolean} True when the value denotes an instant before now.
+ */
+export function isPastZonedInput(
+  localValue: string,
+  explicitTimeZone?: string,
+): boolean {
+  if (!localValue) return false;
+  const iso = zonedInputToUtcIso(localValue, explicitTimeZone);
+  return isPastDateTime(iso ? new Date(iso) : null);
+}
+
+/**
  * True when `date` (a local-midnight Date, e.g. from {@link parseDateOnly})
  * falls on a calendar day strictly before today in the viewer's local time.
  * Compares day boundaries rather than instants, so "today" is never flagged

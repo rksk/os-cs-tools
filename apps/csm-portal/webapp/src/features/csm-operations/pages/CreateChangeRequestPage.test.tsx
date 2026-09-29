@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { clearUserPreferredTimeZone, setUserPreferredTimeZone } from "@utils/dateTime";
 import type {
@@ -663,5 +663,69 @@ describe("CreateChangeRequestPage — planned dates are sent as UTC", () => {
     const [payload] = postChangeRequestMutateMock.mock.calls[0];
     expect(payload.plannedStartDate).toBe("2030-03-01 10:00:00");
     expect(payload.plannedEndDate).toBe("2030-03-01 12:00:00");
+  });
+});
+
+describe("CreateChangeRequestPage — the 'in the past' hint follows the profile time zone", () => {
+  const PAST_HINT = /this date is in the past/i;
+
+  function seedDraft(plannedStartDate: string, plannedEndDate: string): void {
+    saveChangeRequestDraft(changeRequestDraftKey({ kind: "new" }), {
+      subject: "Roll out fix to production",
+      type: "normal",
+      impact: "low",
+      priority: "",
+      state: "new",
+      plannedStartDate,
+      plannedEndDate,
+      description: "",
+      justification: "",
+      implementationPlan: "",
+      riskImpactAnalysis: "",
+      backoutPlan: "",
+      testPlan: "",
+      isPlanningVisibleToCustomers: false,
+      groupId: "",
+      assignedEngineerId: "",
+      requestedById: "",
+      parentValue: "",
+    });
+  }
+
+  beforeAll(() => {
+    // Pin the browser zone so it differs from the profile zone under test.
+    vi.stubEnv("TZ", "UTC");
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    locationState = undefined;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-03-01T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearUserPreferredTimeZone();
+  });
+
+  it("warns when the value is past in the profile zone but would look future in the browser zone", () => {
+    setUserPreferredTimeZone("Asia/Colombo");
+    // 15:30 Colombo is 10:00Z (past); as browser (UTC) digits it is 15:30Z (future).
+    seedDraft("2030-03-01T15:30", "2030-03-01T15:30");
+    render(<CreateChangeRequestPage />);
+    expect(screen.getAllByText(PAST_HINT)).toHaveLength(2);
+  });
+
+  it("does not warn when the value is future in the profile zone but would look past in the browser zone", () => {
+    setUserPreferredTimeZone("America/Los_Angeles");
+    // 08:00 Los Angeles is 16:00Z (future); as browser (UTC) digits it is 08:00Z (past).
+    seedDraft("2030-03-01T08:00", "2030-03-01T09:00");
+    render(<CreateChangeRequestPage />);
+    expect(screen.queryByText(PAST_HINT)).not.toBeInTheDocument();
   });
 });

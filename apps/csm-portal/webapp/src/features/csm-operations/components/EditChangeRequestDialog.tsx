@@ -44,7 +44,7 @@ import Editor from "@components/rich-text-editor/Editor";
 import {
   backendUtcToZonedInput,
   formatDateTimeLocal,
-  isPastDateTime,
+  isPastZonedInput,
   parseDateTimeLocal,
   zonedInputToBackendUtc,
 } from "@utils/dateTime";
@@ -293,7 +293,7 @@ export default function EditChangeRequestDialog({
   // Non-blocking: editing a CR's planned start to a past instant is unusual
   // but not forbidden (e.g. recording when it actually started), so this
   // only warns.
-  const plannedStartIsPast = isPastDateTime(startDate);
+  const plannedStartIsPast = isPastZonedInput(plannedStart);
 
   // Rich-text plan field. The editor takes no `id`/native label, so the
   // visible label is a separate Typography tied to the control via

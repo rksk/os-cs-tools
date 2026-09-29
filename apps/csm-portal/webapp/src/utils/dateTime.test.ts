@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   backendUtcToZonedInput,
   clearUserPreferredTimeZone,
@@ -24,6 +24,7 @@ import {
   formatRelativeDateOnly,
   isPastDateOnly,
   isPastDateTime,
+  isPastZonedInput,
   parseDateOnly,
 } from "./dateTime";
 
@@ -229,4 +230,62 @@ describe("zonedInputToBackendUtc / backendUtcToZonedInput", () => {
       expect(zonedInputToBackendUtc(wallClock, zone)).toBe(stored);
     },
   );
+});
+
+describe("isPastZonedInput", () => {
+  // The whole point of this helper is that it must NOT read the picker digits
+  // in the browser zone, so pin the browser zone to UTC (independent of the
+  // machine running the tests) and vary the profile zone against it.
+
+  beforeAll(() => {
+    vi.stubEnv("TZ", "UTC");
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearUserPreferredTimeZone();
+  });
+
+  function freezeNow(): void {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-03-01T12:00:00Z"));
+  }
+
+  it("runs with the browser zone pinned to UTC", () => {
+    expect(new Date(2030, 2, 1, 12, 0).toISOString()).toBe("2030-03-01T12:00:00.000Z");
+  });
+
+  it("is past in the profile zone even though the same digits are in the future in the browser zone", () => {
+    freezeNow();
+    setUserPreferredTimeZone("Asia/Colombo");
+    // 15:30 Colombo (UTC+05:30) is 10:00Z, before now (12:00Z). Read as browser
+    // (UTC) digits it would be 15:30Z, i.e. still in the future.
+    expect(isPastZonedInput("2030-03-01T15:30")).toBe(true);
+    expect(isPastDateTime(new Date(2030, 2, 1, 15, 30))).toBe(false);
+  });
+
+  it("is future in the profile zone even though the same digits are in the past in the browser zone", () => {
+    freezeNow();
+    setUserPreferredTimeZone("America/Los_Angeles");
+    // 08:00 Los Angeles (UTC-08:00 on this date) is 16:00Z, after now. Read as
+    // browser (UTC) digits it would be 08:00Z, i.e. already past.
+    expect(isPastZonedInput("2030-03-01T08:00")).toBe(false);
+    expect(isPastDateTime(new Date(2030, 2, 1, 8, 0))).toBe(true);
+  });
+
+  it("honours an explicit time zone over the profile zone", () => {
+    freezeNow();
+    setUserPreferredTimeZone("America/Los_Angeles");
+    expect(isPastZonedInput("2030-03-01T15:30", "Asia/Colombo")).toBe(true);
+  });
+
+  it("never flags an empty or unparseable value", () => {
+    freezeNow();
+    expect(isPastZonedInput("")).toBe(false);
+    expect(isPastZonedInput("not a date")).toBe(false);
+  });
 });

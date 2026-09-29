@@ -40,7 +40,7 @@ import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import Editor from "@components/rich-text-editor/Editor";
 import { isBlankHtml } from "@utils/sanitizeHtml";
-import { isPastDateTime, zonedInputToBackendUtc } from "@utils/dateTime";
+import { isPastZonedInput, zonedInputToBackendUtc } from "@utils/dateTime";
 import { usePostChangeRequest } from "@features/csm-operations/api/usePostChangeRequest";
 import { usePatchChangeRequest } from "@features/csm-operations/api/usePatchChangeRequest";
 import { userLabel } from "@features/csm-operations/utils/incidentFormOptions";
@@ -386,8 +386,8 @@ export default function CreateChangeRequestPage(): JSX.Element {
   const canSubmit = subject.trim().length > 0 && !isSubmitting && !isIncidentParentSelected;
   // Non-blocking: a past planned start/end is unusual but not forbidden
   // (e.g. logging a change that already happened), so this only warns.
-  const plannedStartIsPast = isPastDateTime(parseDateTimeLocal(plannedStartDate));
-  const plannedEndIsPast = isPastDateTime(parseDateTimeLocal(plannedEndDate));
+  const plannedStartIsPast = isPastZonedInput(plannedStartDate);
+  const plannedEndIsPast = isPastZonedInput(plannedEndDate);
 
   const handleSubmit = (): void => {
     if (!canSubmit) return;
