@@ -3179,6 +3179,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
           currentDeployedProductId={c.productContext.deployedProductId}
           isSaving={patchCase.isPending}
           onClose={() => setEditDetailsOpen(false)}
+          onAllSaved={() => {
+            setEditDetailsOpen(false);
+            setFeedback({ message: "Case details saved.", severity: "success", sticky: false });
+          }}
           onSubmit={onEditCaseDetails}
         />
       )}
