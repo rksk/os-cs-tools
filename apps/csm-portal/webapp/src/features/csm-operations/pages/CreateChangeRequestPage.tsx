@@ -40,7 +40,7 @@ import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import Editor from "@components/rich-text-editor/Editor";
 import { isBlankHtml } from "@utils/sanitizeHtml";
-import { isPastDateTime } from "@utils/dateTime";
+import { isPastDateTime, zonedInputToBackendUtc } from "@utils/dateTime";
 import { usePostChangeRequest } from "@features/csm-operations/api/usePostChangeRequest";
 import { usePatchChangeRequest } from "@features/csm-operations/api/usePatchChangeRequest";
 import { useGetUsersMe } from "@features/settings/api/useGetUsersMe";
@@ -127,12 +127,6 @@ function userLabel(u: BeUser): string {
   return [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || u.id || "";
 }
 
-/** `datetime-local` input value ("YYYY-MM-DDTHH:MM") to the BE's expected
- * "YYYY-MM-DD HH:MM:SS" string. */
-function toBackendDateTime(localValue: string): string {
-  return `${localValue.replace("T", " ")}:00`;
-}
-
 /** "YYYY-MM-DDTHH:MM" (the wire format this form's state still uses) to a
  * local Date, avoiding the UTC-parse day/hour shift a plain `new Date(value)`
  * risks depending on the viewer's timezone. */
@@ -149,7 +143,7 @@ function parseDateTimeLocal(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Local Date back to "YYYY-MM-DDTHH:MM", matching toBackendDateTime's input. */
+/** Local Date back to "YYYY-MM-DDTHH:MM", the input `zonedInputToBackendUtc` expects. */
 function formatDateTimeLocal(date: Date): string {
   const y = date.getFullYear();
   const mo = String(date.getMonth() + 1).padStart(2, "0");
@@ -411,8 +405,11 @@ export default function CreateChangeRequestPage(): JSX.Element {
     if (impact) payload.impact = impact as BeChangeRequestImpact;
     if (priority) payload.priority = priority as BeChangeRequestPriority;
     if (state) payload.state = state as BeChangeRequestState;
-    if (plannedStartDate) payload.plannedStartDate = toBackendDateTime(plannedStartDate);
-    if (plannedEndDate) payload.plannedEndDate = toBackendDateTime(plannedEndDate);
+    // Picker values are wall-clock in the user's timezone; the BE wants UTC.
+    const plannedStartUtc = plannedStartDate ? zonedInputToBackendUtc(plannedStartDate) : null;
+    const plannedEndUtc = plannedEndDate ? zonedInputToBackendUtc(plannedEndDate) : null;
+    if (plannedStartUtc) payload.plannedStartDate = plannedStartUtc;
+    if (plannedEndUtc) payload.plannedEndDate = plannedEndUtc;
     // These six are rich-text HTML from Editor, not plain strings — an
     // untouched editor still produces non-empty-looking HTML (e.g.
     // "<p><br></p>"), so `.trim()` truthiness would send blank content as

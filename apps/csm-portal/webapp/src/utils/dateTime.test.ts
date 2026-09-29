@@ -16,6 +16,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  backendUtcToZonedInput,
+  clearUserPreferredTimeZone,
+  setUserPreferredTimeZone,
+  zonedInputToBackendUtc,
   formatDateOnlyForDisplay,
   formatRelativeDateOnly,
   isPastDateOnly,
@@ -170,4 +174,59 @@ describe("parseDateOnly's invalid-date rejection, through its public callers", (
   it("formatRelativeDateOnly falls back to '—' instead of a relative label for the wrong day", () => {
     expect(formatRelativeDateOnly("2026-02-31")).toBe("—");
   });
+});
+
+describe("zonedInputToBackendUtc / backendUtcToZonedInput", () => {
+  afterEach(() => {
+    clearUserPreferredTimeZone();
+  });
+
+  it("converts a wall-clock value east of UTC to the earlier UTC instant", () => {
+    // Asia/Colombo is UTC+05:30 all year.
+    expect(zonedInputToBackendUtc("2026-03-01T15:30", "Asia/Colombo")).toBe("2026-03-01 10:00:00");
+  });
+
+  it("converts a wall-clock value west of UTC to the later UTC instant, across midnight", () => {
+    // America/New_York is UTC-05:00 in early March (before DST starts on the 8th).
+    expect(zonedInputToBackendUtc("2026-03-01T22:00", "America/New_York")).toBe("2026-03-02 03:00:00");
+  });
+
+  it("applies the offset in force on that date (daylight saving)", () => {
+    // Same zone in July is UTC-04:00.
+    expect(zonedInputToBackendUtc("2026-07-01T10:00", "America/New_York")).toBe("2026-07-01 14:00:00");
+  });
+
+  it("is the identity in UTC", () => {
+    expect(zonedInputToBackendUtc("2026-03-01T10:00", "UTC")).toBe("2026-03-01 10:00:00");
+  });
+
+  it("uses the user's preferred time zone when none is passed", () => {
+    setUserPreferredTimeZone("Asia/Colombo");
+    expect(zonedInputToBackendUtc("2026-03-01T15:30")).toBe("2026-03-01 10:00:00");
+  });
+
+  it("returns null for an unparseable value", () => {
+    expect(zonedInputToBackendUtc("not a date", "UTC")).toBeNull();
+    expect(zonedInputToBackendUtc("", "UTC")).toBeNull();
+  });
+
+  it("reads a backend UTC timestamp back as the wall-clock value in the user's zone", () => {
+    expect(backendUtcToZonedInput("2026-03-01 10:00:00", "Asia/Colombo")).toBe("2026-03-01T15:30");
+    expect(backendUtcToZonedInput("2026-03-01T10:00:00Z", "Asia/Colombo")).toBe("2026-03-01T15:30");
+  });
+
+  it("returns an empty string for an empty or unparseable backend value", () => {
+    expect(backendUtcToZonedInput(null, "UTC")).toBe("");
+    expect(backendUtcToZonedInput(undefined, "UTC")).toBe("");
+    expect(backendUtcToZonedInput("garbage", "UTC")).toBe("");
+  });
+
+  it.each(["Asia/Colombo", "America/New_York", "Pacific/Auckland", "UTC"])(
+    "round-trips a backend value through the picker and back in %s",
+    (zone) => {
+      const stored = "2026-10-25 01:30:00";
+      const wallClock = backendUtcToZonedInput(stored, zone);
+      expect(zonedInputToBackendUtc(wallClock, zone)).toBe(stored);
+    },
+  );
 });

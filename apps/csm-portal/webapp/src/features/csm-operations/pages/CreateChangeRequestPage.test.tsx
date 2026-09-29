@@ -15,8 +15,9 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { clearUserPreferredTimeZone, setUserPreferredTimeZone } from "@utils/dateTime";
 import type {
   CloneChangeRequestNavState,
   CreateChangeRequestFromIncidentNavState,
@@ -105,7 +106,12 @@ vi.mock("@components/rich-text-editor/Editor", () => ({
 
 // Imported after the mocks above so the module picks them up.
 import CreateChangeRequestPage from "@features/csm-operations/pages/CreateChangeRequestPage";
-import { encodeParentRecordValue } from "@features/csm-operations/utils/changeRequests";
+import {
+  changeRequestDraftKey,
+  encodeParentRecordValue,
+  saveChangeRequestDraft,
+  type ChangeRequestDraft,
+} from "@features/csm-operations/utils/changeRequests";
 
 /**
  * Fill the one field the form requires, so a test can reach the submit path
@@ -609,5 +615,53 @@ describe("CreateChangeRequestPage — in-progress draft survives navigating away
 
     render(<CreateChangeRequestPage />);
     expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject");
+  });
+});
+
+describe("CreateChangeRequestPage — planned dates are sent as UTC", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    navigateMock.mockReset();
+    postChangeRequestMutateMock.mockReset();
+    patchChangeRequestMutateMock.mockReset();
+    showErrorMock.mockReset();
+    locationState = undefined;
+  });
+
+  afterEach(() => {
+    clearUserPreferredTimeZone();
+  });
+
+  it("converts the picker's wall-clock values from the user's time zone to UTC", () => {
+    // Asia/Colombo is UTC+05:30 with no daylight saving.
+    setUserPreferredTimeZone("Asia/Colombo");
+    const draft: ChangeRequestDraft = {
+      subject: "Roll out fix to production",
+      type: "normal",
+      impact: "low",
+      priority: "",
+      state: "new",
+      plannedStartDate: "2030-03-01T15:30",
+      plannedEndDate: "2030-03-01T17:30",
+      description: "",
+      justification: "",
+      implementationPlan: "",
+      riskImpactAnalysis: "",
+      backoutPlan: "",
+      testPlan: "",
+      isPlanningVisibleToCustomers: false,
+      groupId: "",
+      assignedEngineerId: "",
+      requestedById: "",
+      parentValue: "",
+    };
+    saveChangeRequestDraft(changeRequestDraftKey({ kind: "new" }), draft);
+
+    render(<CreateChangeRequestPage />);
+    fireEvent.click(screen.getByRole("button", { name: /create change request/i }));
+
+    const [payload] = postChangeRequestMutateMock.mock.calls[0];
+    expect(payload.plannedStartDate).toBe("2030-03-01 10:00:00");
+    expect(payload.plannedEndDate).toBe("2030-03-01 12:00:00");
   });
 });

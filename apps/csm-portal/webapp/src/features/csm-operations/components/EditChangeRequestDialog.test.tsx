@@ -15,8 +15,9 @@
 // under the License.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { clearUserPreferredTimeZone, setUserPreferredTimeZone } from "@utils/dateTime";
 import type { BeChangeRequestDetail, BePatchChangeRequestPayload } from "@api/backend/types";
 
 
@@ -380,5 +381,36 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
       screen.queryByText(/planned end must be after planned start/i),
     ).not.toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
+  });
+});
+
+describe("EditChangeRequestDialog — planned dates round-trip through the user's time zone", () => {
+  afterEach(() => {
+    clearUserPreferredTimeZone();
+  });
+
+  it("does not re-send an untouched planned date: the UTC value read in converts back to itself", () => {
+    // Asia/Colombo is UTC+05:30. Without the time zone conversion, the stored
+    // UTC digits were treated as wall-clock and a save would have shifted them.
+    setUserPreferredTimeZone("Asia/Colombo");
+    const { onSave } = renderDialog({
+      plannedStartOn: "2026-03-01 10:00:00",
+      plannedEndOn: "2026-03-01 12:00:00",
+    });
+    fireEvent.change(planEditor(/rollback plan/i), { target: { value: "<p>dirty</p>" } });
+    fireEvent.click(saveButton());
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const patch = onSave.mock.calls[0][0];
+    expect(patch).not.toHaveProperty("plannedStartOn");
+    expect(patch).not.toHaveProperty("plannedEndOn");
+  });
+
+  it("shows the stored UTC start in the user's time zone", () => {
+    setUserPreferredTimeZone("Asia/Colombo");
+    renderDialog({ plannedStartOn: "2026-03-01 10:00:00", plannedEndOn: "2026-03-01 12:00:00" });
+    // 10:00 UTC is 15:30 (03:30 PM) in Colombo.
+    const start = screen.getByRole("group", { name: /planned start/i });
+    expect(start).toHaveTextContent("03/01/2026 03:30 PM");
   });
 });
