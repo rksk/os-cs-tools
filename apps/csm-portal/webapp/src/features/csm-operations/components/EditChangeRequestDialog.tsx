@@ -49,6 +49,7 @@ import {
   zonedInputToBackendUtc,
 } from "@utils/dateTime";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { userLabel } from "@features/csm-operations/utils/incidentFormOptions";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -66,10 +67,6 @@ interface EditChangeRequestDialogProps {
   onClose: () => void;
   /** Submit only the changed fields (`PATCH /change-requests/{id}`). */
   onSave: (patch: BePatchChangeRequestPayload) => void;
-}
-
-function userLabel(u: BeUser): string {
-  return [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || u.id || "";
 }
 
 /** One long-form plan field, edited as rich text. */

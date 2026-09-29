@@ -43,6 +43,7 @@ import { isBlankHtml } from "@utils/sanitizeHtml";
 import { isPastDateTime, zonedInputToBackendUtc } from "@utils/dateTime";
 import { usePostChangeRequest } from "@features/csm-operations/api/usePostChangeRequest";
 import { usePatchChangeRequest } from "@features/csm-operations/api/usePatchChangeRequest";
+import { userLabel } from "@features/csm-operations/utils/incidentFormOptions";
 import { useGetUsersMe } from "@features/settings/api/useGetUsersMe";
 import { useSearchGroups } from "@api/useSearchGroups";
 import { useSearchInternalUsersByName } from "@api/useSearchUsersByName";
@@ -117,15 +118,6 @@ const PRIORITY_OPTIONS: Array<{ value: BeChangeRequestPriority; label: string }>
 const CREATE_STATE_VALUES: BeChangeRequestState[] = ["new", "assess", "authorize"];
 const STATE_OPTIONS: Array<{ value: BeChangeRequestState; label: string }> =
   CREATE_STATE_VALUES.map((s) => ({ value: s, label: changeRequestStateLabel(s) }));
-
-// Option labels for this form's pickers. Each falls back down to the record id
-// rather than rendering blank, so an option is always selectable even when the
-// backing record carries none of the friendlier fields.
-
-/** Display label for a user option: full name, else email, else id. */
-function userLabel(u: BeUser): string {
-  return [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || u.id || "";
-}
 
 /** "YYYY-MM-DDTHH:MM" (the wire format this form's state still uses) to a
  * local Date, avoiding the UTC-parse day/hour shift a plain `new Date(value)`
