@@ -726,6 +726,42 @@ func TestSearchCaseComments(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
+	t.Run("rejects non-object JSON bodies", func(t *testing.T) {
+		for _, body := range []string{`[]`, `"s"`, `1`} {
+			h := NewCaseHandler(&mockEntityCaseClient{})
+			r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments/search", strings.NewReader(body)))
+			r.SetPathValue("id", "case-1")
+			w := httptest.NewRecorder()
+			h.SearchCaseComments(w, r)
+			assertStatus(t, w, http.StatusBadRequest)
+			assertErrorMessage(t, w, ErrMsgBadRequest)
+		}
+	})
+
+	t.Run("treats a null body as an empty object", func(t *testing.T) {
+		var capturedBody []byte
+		client := &mockEntityCaseClient{
+			searchCommentsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				capturedBody = body
+				return []byte(`{"comments":[],"total":0,"limit":20,"offset":0,"hasMore":false}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-42/comments/search", strings.NewReader(" null \n")))
+		r.SetPathValue("id", "case-42")
+		w := httptest.NewRecorder()
+		h.SearchCaseComments(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		var sent map[string]any
+		if err := json.Unmarshal(capturedBody, &sent); err != nil {
+			t.Fatalf("forwarded body is not JSON: %v", err)
+		}
+		if sent["referenceId"] != "case-42" || sent["referenceType"] != "case" {
+			t.Fatalf("reference fields not injected: %s", capturedBody)
+		}
+	})
+
 	t.Run("injects referenceId and referenceType into SearchComments payload", func(t *testing.T) {
 		var capturedBody []byte
 		client := &mockEntityCaseClient{
