@@ -17,9 +17,9 @@
 import { jwtDecode } from "jwt-decode";
 
 import { getAccessTokenFromBridge, getToken } from "@components/microapp-bridge";
-import { LocalStorageKeys } from "@utils/constants";
 import { Logger } from "@utils/logger";
 import { useUserStore, type User } from "../store/user";
+import { queryClient } from "./queryClient";
 
 // Token Payload
 interface TokenPayload {
@@ -34,11 +34,41 @@ interface TokenPayload {
   profile?: string;
 }
 
-// These would be your actual token storage functions
-export const getAccessToken = (): string | null => localStorage.getItem(LocalStorageKeys.accessToken);
-export const setAccessToken = (token: string): void => localStorage.setItem(LocalStorageKeys.accessToken, token);
-export const getIdToken = (): string | null => localStorage.getItem(LocalStorageKeys.idToken);
-export const setIdToken = (token: string): void => localStorage.setItem(LocalStorageKeys.idToken, token);
+// Tokens are held in memory only: the host hands them over on request, so they are never
+// persisted to web storage and a new WebView session always starts with none.
+let accessToken: string | null = null;
+let idToken: string | null = null;
+
+export const getAccessToken = (): string | null => accessToken;
+export const setAccessToken = (token: string): void => {
+  accessToken = token;
+};
+export const getIdToken = (): string | null => idToken;
+export const setIdToken = (token: string): void => {
+  idToken = token;
+};
+
+// Earlier builds cached tokens in web storage under per-environment keys. Remove any such
+// leftovers once at start-up so they do not outlive the upgrade.
+const LEGACY_TOKEN_KEY = /^csm_portal_(accessToken|idToken)(_|$)|^(accessToken|idToken)$/;
+try {
+  Object.keys(localStorage)
+    .filter((key) => LEGACY_TOKEN_KEY.test(key))
+    .forEach((key) => localStorage.removeItem(key));
+} catch {
+  // Storage may be unavailable in some WebView configurations; nothing to clean up then.
+}
+
+/**
+ * Ends the local session: drops the in-memory tokens, the signed-in user and every cached query.
+ * The host calls this (via `window.csmMicroApp.clearSession()`) when the user signs out.
+ */
+export const clearSession = (): void => {
+  accessToken = null;
+  idToken = null;
+  useUserStore.getState().clearUser();
+  queryClient.clear();
+};
 
 // Refresh early rather than right at expiry, to cover in-flight request latency.
 const TOKEN_EXPIRY_BUFFER_MS = 60_000;
