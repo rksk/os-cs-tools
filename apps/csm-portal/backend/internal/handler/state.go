@@ -154,6 +154,11 @@ func injectNextStates(data []byte) ([]byte, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
+	if m == nil {
+		// A JSON `null` decodes to a nil map; writing nextStates into it
+		// would panic.
+		m = map[string]json.RawMessage{}
+	}
 	var state string
 	if raw, ok := m["state"]; ok {
 		if err := json.Unmarshal(raw, &state); err != nil {

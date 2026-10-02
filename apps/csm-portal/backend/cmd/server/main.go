@@ -692,11 +692,16 @@ func main() {
 		// directly). CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
 		// unset allows any origin (see middleware.CORS on why that's safe
 		// here).
+		// Recover sits directly inside SecurityHeaders so a panic anywhere
+		// further down still yields a logged 500 with the standard envelope
+		// (and the security headers) instead of a dropped connection.
 		Handler: middleware.SecurityHeaders(
-			middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
-				middleware.CorrelationID(
-					authMiddleware(
-						middleware.Logger(mux),
+			middleware.Recover(
+				middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
+					middleware.CorrelationID(
+						authMiddleware(
+							middleware.Logger(mux),
+						),
 					),
 				),
 			),
