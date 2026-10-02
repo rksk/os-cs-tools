@@ -58,6 +58,9 @@ declare global {
       resolveMicroAppVersion: (version: string) => void;
       rejectMicroAppVersion: (error: string) => void;
     };
+    csmMicroApp?: {
+      clearSession: () => void;
+    };
     ReactNativeWebView?: {
       postMessage: (message: string) => void;
     };
