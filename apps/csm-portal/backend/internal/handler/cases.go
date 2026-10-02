@@ -617,17 +617,11 @@ func (h *CaseHandler) SearchCaseComments(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
-	payload["referenceId"] = caseID
-	payload["referenceType"] = "case"
-
-	newBody, err := json.Marshal(payload)
+	// injectReferenceFields is nil-safe: a JSON `null` body decodes to a nil
+	// map, which a direct key assignment would panic on.
+	newBody, err := injectReferenceFields(body, caseID, "case")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
