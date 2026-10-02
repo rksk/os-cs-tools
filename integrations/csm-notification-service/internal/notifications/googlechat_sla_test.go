@@ -30,14 +30,14 @@ func TestSLAStateLabel(t *testing.T) {
 		name, in, want string
 	}{
 		{"empty", "", ""},
-		{"only separators", "__ _", ""},
-		{"single word enum", "OPEN", "Open"},
-		{"multi word enum", "WORK_IN_PROGRESS", "Work In Progress"},
-		{"two word enum", "AWAITING_INFO", "Awaiting Info"},
-		{"already readable", "Open", "Open"},
-		{"already readable multi word", "Work In Progress", "Work In Progress"},
-		{"lower case with underscores", "waiting_on_customer", "Waiting On Customer"},
-		{"extra whitespace and underscores", "  AWAITING__INFO ", "Awaiting Info"},
+		{"open", "OPEN", "Open"},
+		{"work in progress", "WORK_IN_PROGRESS", "Work In Progress"},
+		{"awaiting info", "AWAITING_INFO", "Awaiting Info"},
+		{"waiting on wso2", "WAITING_ON_WSO2", "Waiting on WSO2"},
+		{"solution proposed", "SOLUTION_PROPOSED", "Solution Proposed"},
+		{"reopened", "REOPENED", "Reopened"},
+		{"closed", "CLOSED", "Closed"},
+		{"unmapped state falls back to raw", "SOMETHING_NEW", "SOMETHING_NEW"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
