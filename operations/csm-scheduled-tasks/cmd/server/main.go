@@ -446,8 +446,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The exit status is the one signal the scheduler's own run history can
+	// see. A tick in which any handler failed, any ledger call failed, or
+	// the run was interrupted exits non-zero; "not due" and "claim denied"
+	// are ordinary outcomes and exit 0. See engine.Engine.Tick.
 	start := time.Now()
-	eng.Tick(ctx, start)
+	if err := eng.Tick(ctx, start); err != nil {
+		slog.Error("tick finished with failures; exiting non-zero so the scheduler records a failed run",
+			"elapsed", time.Since(start).String(), "err", err)
+		stop()
+		os.Exit(1)
+	}
 	slog.Info("tick complete", "elapsed", time.Since(start).String())
 }
 
