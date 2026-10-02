@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // slaSeverityDisplay/slaSeverityLabelAndColor duplicate internal/dispatch's
@@ -67,6 +68,21 @@ func slaClockTypeLabel(clockType string) string {
 		return label
 	}
 	return clockType
+}
+
+// slaStateLabel turns the raw case state carried on the SLA clock record
+// ("WORK_IN_PROGRESS") into a readable label ("Work In Progress"). It splits
+// on underscores and whitespace and capitalises each word, so no state list
+// has to be kept in sync here and an already-readable value ("Open") passes
+// through unchanged.
+func slaStateLabel(state string) string {
+	words := strings.FieldsFunc(state, func(r rune) bool { return r == '_' || unicode.IsSpace(r) })
+	for i, w := range words {
+		r := []rune(strings.ToLower(w))
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
+	}
+	return strings.Join(words, " ")
 }
 
 // maxSLACardTitleLength/truncateSLACardTitle mirror dispatch's own
@@ -168,7 +184,7 @@ func (c *GoogleChatClient) SendSLABreachAlert(ctx context.Context, audience, clo
 	}
 	lines = append(lines, caseAlertLine(`<b>Priority :</b> <font color="%s">%s</font>`, severityColor, severityLabel))
 	if state != "" {
-		lines = append(lines, caseAlertLine(`<b>State :</b> %s`, state))
+		lines = append(lines, caseAlertLine(`<b>State :</b> %s`, slaStateLabel(state)))
 	}
 	if openedAt != "" {
 		lines = append(lines, caseAlertLine(`<b>Opened At :</b> %s`, openedAt))
