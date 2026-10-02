@@ -34,6 +34,13 @@
 # own directory (so COPY/ADD inside the Dockerfile resolve unchanged) and
 # points `build.dockerfile` back at docker/local/ with a relative `../`
 # path.
+#
+# Every published port binds to 127.0.0.1 on the host: nothing in this stack
+# (the mock OIDC token endpoint, the SASL Kafka listener, the seeded database)
+# is meant to be reachable from the developer's LAN. The mock OIDC provider
+# additionally refuses to start unless MOCK_OIDC_LOCAL_DEV=1 is set in its
+# environment (it is, below), so copying its service block into any other
+# compose file does not silently stand up a token mint.
 
 name: csm-platform
 
@@ -172,7 +179,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       CLUSTER_ID: csm-local-dev-cluster-1
     ports:
-      - "19094:9094"
+      - "127.0.0.1:19094:9094"
     healthcheck:
       # Each probe starts a whole JVM (kafka-broker-api-versions.sh), which on a
       # laptop-sized Docker VM pins several cores while it JIT-compiles. So probe
@@ -209,10 +216,17 @@ services:
     build:
       context: ./scripts/csm-compose/mock-oidc
     environment:
+      # Explicit acknowledgement the provider requires before it will start
+      # (see the fence at the top of its main()).
+      MOCK_OIDC_LOCAL_DEV: "1"
+      # The binary binds loopback by default; inside the compose network the
+      # other services reach it as mock-oidc:9100, so it must listen on the
+      # container's interfaces here. The host publish below stays loopback.
+      MOCK_OIDC_BIND_ADDR: 0.0.0.0
       MOCK_OIDC_ISSUER: http://localhost:9100
       PORT: "9100"
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9100/oauth2/jwks"]
       interval: 3s
