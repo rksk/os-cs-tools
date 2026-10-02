@@ -24,6 +24,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -86,12 +87,69 @@ func New(tasks []registry.Task, ledgerClient LedgerClient, emailClient EmailSend
 	return &Engine{Tasks: tasks, Ledger: ledgerClient, Email: emailClient, DriverInterval: driverInterval, AlertRecipients: alertRecipients, AlertsEnabled: alertsEnabled}
 }
 
+// Stage names which step of one task's attempt a TaskError came from.
+type Stage string
+
+// The stages an attempt moves through, in order. "schedule" and "claim"
+// happen before the handler runs; "complete"/"fail" are the ledger
+// report-back; "alert" is the failure email.
+const (
+	StageSchedule Stage = "schedule"
+	StageClaim    Stage = "claim"
+	StageHandler  Stage = "handler"
+	StageComplete Stage = "complete"
+	StageFail     Stage = "fail"
+	StageAlert    Stage = "alert"
+)
+
+// TaskError is one task's failure within a Tick: which task, at which
+// stage, and the underlying error. Tick joins every TaskError it collects
+// into the single error it returns, so a caller (cmd/server/main.go) can
+// decide the process exit status from "did anything at all go wrong,"
+// while a log reader or test can still errors.As its way to the specifics.
+type TaskError struct {
+	Task  string
+	Stage Stage
+	Err   error
+}
+
+func (e *TaskError) Error() string {
+	return fmt.Sprintf("%s: %s: %v", e.Task, e.Stage, e.Err)
+}
+
+// Unwrap exposes the underlying error to errors.Is/errors.As.
+func (e *TaskError) Unwrap() error { return e.Err }
+
+// ErrInterrupted is joined into Tick's returned error when ctx was
+// cancelled (SIGTERM, a Choreo timeout, a manual stop) before every
+// registered task had been evaluated. The tasks not reached were neither
+// claimed nor run; they are simply picked up by the next invocation.
+var ErrInterrupted = errors.New("tick interrupted before every task was evaluated")
+
 // Tick evaluates every registered task once against now. Call this exactly
 // once per driver invocation — see cmd/server/main.go.
-func (e *Engine) Tick(ctx context.Context, now time.Time) {
+//
+// The returned error is nil only when every task either ran and was
+// recorded cleanly, or was legitimately not due (a denied claim is a normal
+// outcome, not a failure). Anything else — a handler error, a ledger call
+// that failed at any stage, an alert that could not be sent, or an
+// interruption part-way through — is joined into the result as one
+// *TaskError per task (plus ErrInterrupted), so the process can exit
+// non-zero and the scheduler's run history shows a failed run rather than
+// an unbroken row of green over a silent outage.
+func (e *Engine) Tick(ctx context.Context, now time.Time) error {
+	var errs []error
 	for _, task := range e.Tasks {
-		e.attempt(ctx, task, now)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			slog.ErrorContext(ctx, "csm-scheduled-tasks: tick interrupted; remaining tasks not evaluated", "nextTask", task.Name, "err", ctxErr)
+			errs = append(errs, fmt.Errorf("%w (next task: %s): %v", ErrInterrupted, task.Name, ctxErr))
+			break
+		}
+		if err := e.attempt(ctx, task, now); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // staleClaimMargin is how many missed ticks a claim is allowed to go
@@ -100,44 +158,57 @@ func (e *Engine) Tick(ctx context.Context, now time.Time) {
 // in progress.
 const staleClaimMargin = 2
 
-func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time) {
+// attempt runs one task's claim → handler → report-back cycle and returns
+// nil, or a *TaskError naming the stage that went wrong. A denied claim
+// returns nil.
+func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time) error {
 	period, err := schedule.PeriodKey(task.Schedule, now)
 	if err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: invalid schedule, skipping this tick", "task", task.Name, "schedule", task.Schedule, "err", err)
-		return
+		return &TaskError{Task: task.Name, Stage: StageSchedule, Err: err}
 	}
 
 	claim, err := e.Ledger.Attempt(ctx, task.Name, period, staleClaimMargin*e.DriverInterval)
 	if err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: claim attempt failed", "task", task.Name, "period", period, "err", err)
-		return
+		return &TaskError{Task: task.Name, Stage: StageClaim, Err: err}
 	}
 	if !claim.Allowed {
 		slog.InfoContext(ctx, "csm-scheduled-tasks: not due, skipping", "task", task.Name, "period", period)
-		return
+		return nil
 	}
 
 	slog.InfoContext(ctx, "csm-scheduled-tasks: running", "task", task.Name, "period", period, "attempt", claim.Run.AttemptCount)
 	if handlerErr := task.Handler(ctx); handlerErr != nil {
-		e.recordFailure(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount, handlerErr, now)
-		return
+		return e.recordFailure(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount, handlerErr, now)
 	}
-	e.recordSuccess(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount)
+	return e.recordSuccess(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount)
 }
 
-// recordSuccess only updates the ledger — there is no success email yet;
-// see registry.Task.To's own doc comment. attemptCount is the claim being
+// recordSuccess only updates the ledger — there is no success email; see
+// registry.Task.To's own doc comment. attemptCount is the claim being
 // completed — see LedgerClient.Complete's own doc comment for why that
-// binding matters.
-func (e *Engine) recordSuccess(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int) {
+// binding matters. Returns a *TaskError if the ledger could not record the
+// success: the handler's work is done, but the row is left open and will
+// be reclaimed as orphaned, so the caller must not report a clean run.
+func (e *Engine) recordSuccess(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int) error {
 	slog.InfoContext(ctx, "csm-scheduled-tasks: succeeded", "task", task.Name, "period", period)
 	if err := e.Ledger.Complete(ctx, runID, attemptCount); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record success in ledger", "task", task.Name, "runId", runID, "err", err)
+		return &TaskError{Task: task.Name, Stage: StageComplete, Err: err}
 	}
+	return nil
 }
 
-func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int, handlerErr error, now time.Time) {
+// recordFailure records the failed attempt in the ledger and sends the
+// failure alert. It always returns a non-nil error — at minimum the
+// handler's own, as a StageHandler *TaskError — joined with a further
+// *TaskError for each bookkeeping step (ledger Fail, alert email) that
+// also failed, so none of those secondary failures is lost in the exit
+// status.
+func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int, handlerErr error, now time.Time) error {
 	slog.ErrorContext(ctx, "csm-scheduled-tasks: failed", "task", task.Name, "period", period, "err", handlerErr)
+	errs := []error{&TaskError{Task: task.Name, Stage: StageHandler, Err: handlerErr}}
 
 	backoff := task.RetryBackoff
 	if backoff <= 0 {
@@ -146,10 +217,11 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 	nextRetry := now.Add(backoff)
 	if err := e.Ledger.Fail(ctx, runID, attemptCount, handlerErr.Error(), nextRetry); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record failure in ledger", "task", task.Name, "runId", runID, "err", err)
+		errs = append(errs, &TaskError{Task: task.Name, Stage: StageFail, Err: err})
 	}
 
 	if !e.AlertsEnabled {
-		return
+		return errors.Join(errs...)
 	}
 
 	// AlertRecipients (the standing ops audience) always gets included
@@ -159,7 +231,7 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 	to = append(to, task.To...)
 	to = append(to, e.AlertRecipients...)
 	if len(to) == 0 {
-		return
+		return errors.Join(errs...)
 	}
 	// Plain ASCII only — this is a mail Subject header, not HTML, so
 	// there's no entity-reference escape hatch the way alert.html's body
@@ -176,5 +248,7 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 	})
 	if err := e.Email.SendEmail(ctx, to, task.Cc, subject, body); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to send alert email", "task", task.Name, "err", err)
+		errs = append(errs, &TaskError{Task: task.Name, Stage: StageAlert, Err: err})
 	}
+	return errors.Join(errs...)
 }
