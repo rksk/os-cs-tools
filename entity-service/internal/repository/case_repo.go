@@ -1705,15 +1705,17 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 		result := make([]domain.CaseComment, 0, req.Pagination.Limit)
 		for rows.Next() {
 			var c domain.CaseComment
-			var typeRaw, authorEmail string
-			var authorID, authorName *string
+			var authorEmail string
+			// comment.type and comment.content are both nullable.
+			var typeRaw, content, authorID, authorName *string
 			if err := rows.Scan(
-				&c.ID, &c.CaseID, &typeRaw, &c.Content, &authorEmail, &c.CreatedOn,
+				&c.ID, &c.CaseID, &typeRaw, &content, &authorEmail, &c.CreatedOn,
 				&authorID, &authorName,
 			); err != nil {
 				return fmt.Errorf("scan case comment: %w", err)
 			}
-			c.Type = caseCommentEnumType[typeRaw]
+			c.Type = caseCommentEnumType[stringOrEmpty(typeRaw)]
+			c.Content = stringOrEmpty(content)
 			if authorID != nil {
 				name := ""
 				if authorName != nil {
@@ -1961,11 +1963,9 @@ func scanUpdatedCase(row pgx.Row) (domain.Case, error) {
 	// against for internalID/severity/etc, confirmed live the first time
 	// this path could actually return NULL here.
 	var deploymentID, deployedProductID *string
-	// projectID/description: work_item.project_id and .description are both
-	// nullable, and synced data has NULLs in each (8,414 and 510 case-like
-	// rows on the staging copy checked) -- scanned straight into
-	// domain.Case's plain strings, every update to such a row failed with
-	// "cannot scan NULL into *string" after the write had already happened.
+	// projectID/description: both nullable on work_item (project_id is ON
+	// DELETE SET NULL, description has no NOT NULL), so they are read the same
+	// way and come back as "" when absent.
 	var projectID, description *string
 	var severity, issueType, state, workStateRaw *string
 	if err := row.Scan(
@@ -3700,7 +3700,8 @@ func caseActivityFieldChangeLabel(fieldName string) string {
 // the query's three UNION ALL branches are discriminated.
 func scanCaseActivity(row interface{ Scan(...any) error }) (domain.CaseActivity, error) {
 	var (
-		id, kind, content                string
+		id, kind                         string
+		content                          *string // a comment's content is nullable
 		createdOn                        time.Time
 		email, firstName, lastName, name *string
 		commentTypeRaw                   *string
@@ -3713,7 +3714,7 @@ func scanCaseActivity(row interface{ Scan(...any) error }) (domain.CaseActivity,
 	}
 	a := domain.CaseActivity{
 		ID:                 id,
-		Content:            content,
+		Content:            stringOrEmpty(content),
 		CreatedOn:          createdOn,
 		CreatedByFirstName: stringOrEmpty(firstName),
 		CreatedByLastName:  stringOrEmpty(lastName),

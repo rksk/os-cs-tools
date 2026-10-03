@@ -36,11 +36,6 @@ func TestUpdateCase_ClosureTimestamps(t *testing.T) {
 	repo := repository.NewCaseRepository(scoped)
 	ctx := rsInternal()
 	caseID := rsWorkItems[1] // AWAITING_INFO on project A, no child cases
-	// UpdateCase reads the description back into a string; the shared fixture
-	// leaves it NULL.
-	if _, err := scoped.Exec(ctx, `UPDATE work_item SET description = 'closure test' WHERE id = $1`, caseID); err != nil {
-		t.Fatalf("seed description: %v", err)
-	}
 
 	setState := func(t *testing.T, st domain.CaseState) {
 		t.Helper()
