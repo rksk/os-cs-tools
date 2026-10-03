@@ -247,7 +247,7 @@ export interface AuthGuardProps {
  * instead of `AppLayout`.
  *
  * This gate is not optional for `bare` routes: skipping it (an earlier
- * version of this file did, rendering `<Outlet />` the instant Asgardeo
+ * version of this file did, rendering `<Outlet />` the instant identity provider
  * sign-in succeeded) let anyone with a valid WSO2 identity reach the routed
  * page — and the widgets it mounts, which fire their own authenticated API
  * calls immediately — before `/users/me` had confirmed they were actually
@@ -322,7 +322,7 @@ export interface AuthGuardProps {
  * when not signed in and auth check is complete.
  *
  * Preserves the intended URL across the IdP sign-in redirect so that
- * deep-links (e.g. ServiceNow case links) land on the correct page after auth.
+ * deep-links (e.g. backing-system case links) land on the correct page after auth.
  *
  * Note: the customer-portal behaviour of auto-redirecting `/` to the last
  * visited project's dashboard is intentionally NOT replicated here. CSM is
@@ -374,7 +374,7 @@ export default function AuthGuard({ bare = false }: AuthGuardProps): JSX.Element
     return () => window.removeEventListener("app:signing-out", handleSigningOut);
   }, []);
 
-  // After login, restore the saved deep link so it survives the Asgardeo SDK
+  // After login, restore the saved deep link so it survives the identity provider SDK
   // reloading the page to `afterSignInUrl` ("/") after the callback (which would
   // otherwise drop us on the default landing). The key is consumed by
   // PostLoginRedirectConsumer once we arrive at the target — that consumer runs
