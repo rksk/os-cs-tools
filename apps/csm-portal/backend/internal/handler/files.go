@@ -74,7 +74,7 @@ func (h *FilesHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	files, err := h.drive.ListFiles(r.Context(), folderID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "googledrive ListFiles failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "googledrive ListFiles failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to list files.")
 		return
 	}
@@ -105,7 +105,7 @@ func (h *FilesHandler) SearchFolder(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}
-		slog.ErrorContext(r.Context(), "googledrive SearchFolder failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "googledrive SearchFolder failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search folder.")
 		return
 	}

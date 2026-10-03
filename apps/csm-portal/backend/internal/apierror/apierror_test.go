@@ -14,19 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package apierror defines a typed error returned by upstream service clients
-// when a non-2xx response is received, allowing handlers to map upstream status
-// codes to appropriate HTTP responses — mirroring the Ballerina getStatusCode pattern.
 package apierror
 
-import "fmt"
+import (
+	"strings"
+	"testing"
+)
 
-// Error is returned when an upstream service responds with a non-2xx status.
-type Error struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *Error) Error() string {
-	return fmt.Sprintf("upstream returned %d", e.StatusCode)
+// TestErrorOmitsBody: the error string ends up in logs, so it carries the
+// status only; the body stays available on the field for response mapping.
+func TestErrorOmitsBody(t *testing.T) {
+	e := &Error{StatusCode: 400, Body: `{"message":"jane.doe@example.com is invalid"}`}
+	if got := e.Error(); got != "upstream returned 400" {
+		t.Fatalf("Error() = %q", got)
+	}
+	if strings.Contains(e.Error(), "jane.doe") {
+		t.Fatal("body leaked into Error()")
+	}
 }

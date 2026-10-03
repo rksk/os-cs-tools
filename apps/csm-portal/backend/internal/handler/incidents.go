@@ -403,7 +403,7 @@ func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request
 
 	result, err := h.entity.SearchIncidents(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchIncidents failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchIncidents failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search incidents.")
 		return
 	}
@@ -444,7 +444,7 @@ func (h *IncidentHandler) AggregateIncidents(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.entity.AggregateIncidents(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity AggregateIncidents failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity AggregateIncidents failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to aggregate incidents.")
 		return
 	}
@@ -484,7 +484,7 @@ func (h *IncidentHandler) CreateIncident(w http.ResponseWriter, r *http.Request)
 
 	result, err := h.entity.CreateIncident(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateIncident failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateIncident failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to create incident.")
 		return
 	}
@@ -508,7 +508,7 @@ func (h *IncidentHandler) GetIncident(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.entity.GetIncident(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetIncident failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetIncident failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve incident.")
 		return
 	}
@@ -554,7 +554,7 @@ func (h *IncidentHandler) PatchIncident(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.entity.PatchIncident(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity PatchIncident failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity PatchIncident failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to update incident.")
 		return
 	}
@@ -596,7 +596,7 @@ func (h *IncidentHandler) CreateIncidentComment(w http.ResponseWriter, r *http.R
 	}
 
 	if _, err := h.entity.GetIncident(r.Context(), id); err != nil {
-		slog.ErrorContext(r.Context(), "entity GetIncident failed during comment guard", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetIncident failed during comment guard", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to create incident comment.")
 		return
 	}
@@ -609,7 +609,7 @@ func (h *IncidentHandler) CreateIncidentComment(w http.ResponseWriter, r *http.R
 
 	result, err := h.entity.CreateComment(r.Context(), newBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateComment failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateComment failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to create incident comment.")
 		return
 	}
@@ -653,7 +653,7 @@ func (h *IncidentHandler) SearchIncidentActivities(w http.ResponseWriter, r *htt
 
 	result, err := h.entity.SearchIncidentActivities(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchIncidentActivities failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchIncidentActivities failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search incident activities.")
 		return
 	}
@@ -702,7 +702,7 @@ func (h *IncidentHandler) SearchIncidentComments(w http.ResponseWriter, r *http.
 
 	result, err := h.entity.SearchComments(r.Context(), newBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search incident comments.")
 		return
 	}
@@ -765,14 +765,14 @@ func (h *IncidentHandler) HandOffIncidentToSpecialist(w http.ResponseWriter, r *
 
 	result, err := h.entity.HandOffIncidentToSpecialist(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity HandOffIncidentToSpecialist failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity HandOffIncidentToSpecialist failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to hand off incident to specialist group.")
 		return
 	}
 
 	var envelope handOffIncidentResponseEnvelope
 	if err := json.Unmarshal(result, &envelope); err != nil {
-		slog.WarnContext(r.Context(), "entity HandOffIncidentToSpecialist: decode response for githubIssueError check failed", "userID", user.UserID, "incidentID", id, "err", err)
+		slog.WarnContext(r.Context(), "entity HandOffIncidentToSpecialist: decode response for githubIssueError check failed", "userID", user.UserID, "incidentID", id, "err", summarizeErr(err))
 	} else if envelope.Handoff.GithubIssueError != nil {
 		slog.WarnContext(r.Context(), "incident handed off to specialist group but internal issue creation failed",
 			"userID", user.UserID, "incidentID", id, "githubIssueError", *envelope.Handoff.GithubIssueError)

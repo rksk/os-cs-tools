@@ -102,7 +102,7 @@ type entityUserIdentity struct {
 func (h *UsersHandler) withExternalAccountStatus(ctx context.Context, raw []byte, callerID string) []byte {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		slog.WarnContext(ctx, "scim SearchExternalUser: decode user profile failed", "userID", callerID, "err", err)
+		slog.WarnContext(ctx, "scim SearchExternalUser: decode user profile failed", "userID", callerID, "err", summarizeErr(err))
 		return raw
 	}
 
@@ -120,7 +120,7 @@ func (h *UsersHandler) withExternalAccountStatus(ctx context.Context, raw []byte
 
 	info, err := h.scim.SearchExternalUser(ctx, identity.Email)
 	if err != nil {
-		slog.WarnContext(ctx, "scim SearchExternalUser failed", "userID", callerID, "err", err)
+		slog.WarnContext(ctx, "scim SearchExternalUser failed", "userID", callerID, "err", summarizeErr(err))
 		return raw
 	}
 	if info == nil {
@@ -130,14 +130,14 @@ func (h *UsersHandler) withExternalAccountStatus(ctx context.Context, raw []byte
 
 	encoded, err := json.Marshal(externalAccountStatus{Exists: info.Exists, Locked: info.Locked})
 	if err != nil {
-		slog.WarnContext(ctx, "scim SearchExternalUser: encode status failed", "userID", callerID, "err", err)
+		slog.WarnContext(ctx, "scim SearchExternalUser: encode status failed", "userID", callerID, "err", summarizeErr(err))
 		return raw
 	}
 	envelope["externalAccount"] = encoded
 
 	out, err := json.Marshal(envelope)
 	if err != nil {
-		slog.WarnContext(ctx, "scim SearchExternalUser: encode user profile failed", "userID", callerID, "err", err)
+		slog.WarnContext(ctx, "scim SearchExternalUser: encode user profile failed", "userID", callerID, "err", summarizeErr(err))
 		return raw
 	}
 	return out
