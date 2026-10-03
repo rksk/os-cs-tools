@@ -105,8 +105,12 @@ func main() {
 		activityHub = stream.NewBroadcastHub()
 	}
 
-	// SSE handler — depends on entity client + optional hub.
-	streamHandler := handler.NewStreamHandler(customerEntityClient, activityHub)
+	// SSE handler — depends on entity client + optional hub. Stream lifetime
+	// bounds: see handler.StreamHandler's doc comment.
+	streamHandler := handler.NewStreamHandler(customerEntityClient, activityHub,
+		handler.WithMaxLifetime(envDuration("STREAM_MAX_LIFETIME", handler.DefaultMaxStreamLifetime)),
+		handler.WithReauthInterval(envDuration("STREAM_REAUTH_INTERVAL", handler.DefaultReauthInterval)),
+	)
 
 	// Health check listener (:8080) — simple REST endpoint for Choreo liveness probe.
 	healthMux := http.NewServeMux()
@@ -294,6 +298,22 @@ func newReplicaID() string {
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// envDuration returns the value of the given environment variable parsed as
+// a time.Duration ("30m", "1h30m"), or def if unset. Exits the process on an
+// unparseable or non-positive value rather than silently falling back.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		slog.Error("environment variable must be a positive duration (e.g. \"30m\")", "key", key, "value", v)
+		os.Exit(1)
+	}
+	return d
 }
 
 // mustPort returns the value of the given environment variable (or def if

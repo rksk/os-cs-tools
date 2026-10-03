@@ -25,6 +25,8 @@ The SSE endpoint validates `x-jwt-assertion` (and optional `x-user-id-token`) on
 
 The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call (upstream ACL check) so a caller can only subscribe to a case they're authorized to read.
 
+A stream is bounded by the credential that opened it: it is closed at `min(token exp, connect + STREAM_MAX_LIFETIME)` and the case-access check is repeated every `STREAM_REAUTH_INTERVAL`. A server-side close is announced with a terminal `event: stream_closed` (`data: {"reason": "token_expired" | "max_lifetime" | "access_revoked"}`) so the client can reconnect with a fresh token.
+
 ## Middleware chain
 
 `SecurityHeaders → CORS → CorrelationID → Auth → Logger → Mux`
@@ -46,6 +48,8 @@ The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call
 | `EVENT_HUB_TOPIC` | Required once `EVENT_HUB_BROKER` is set | Event Hub name = Kafka topic (`case-events`) |
 | `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-portal-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
 | `STREAM_PORT` | No (default 9092) | Port the SSE listener binds to |
+| `STREAM_MAX_LIFETIME` | No (default `1h`) | Maximum lifetime of one SSE connection. A stream is closed at `min(token exp, connect + STREAM_MAX_LIFETIME)` with a terminal `stream_closed` event; the client reconnects with a fresh token |
+| `STREAM_REAUTH_INTERVAL` | No (default `10m`) | How often an open stream repeats the connect-time case-access check (entity-service `GetCase`). A definitive 401/403/404 closes the stream (`stream_closed`, reason `access_revoked`); transient upstream errors are logged and the stream kept open |
 | `STREAM_CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the SSE endpoint; fail-closed |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the health listener (:8080); fail-closed |
 | `AUTH_JWKS_ENDPOINT` | Yes | JWKS URL for JWT validation |

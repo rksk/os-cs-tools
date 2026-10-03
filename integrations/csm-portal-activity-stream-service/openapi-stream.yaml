@@ -27,6 +27,15 @@ paths:
         comment-only `: ping` heartbeat every 15s otherwise. Returns 503
         when Event Hub isn't configured on the service, since there would
         be nothing to broadcast.
+
+        The stream is bounded by the credential that opened it: the server
+        closes it at the token's `exp` or after a configured maximum
+        lifetime (default 1h), whichever comes first, and periodically
+        re-checks that the caller may still read the case. A server-side
+        close is announced with a terminal `event: stream_closed` whose
+        data is `{"reason": "token_expired" | "max_lifetime" |
+        "access_revoked"}`; clients should reconnect with a fresh token
+        (and expect 401/403 if access really is gone).
       operationId: getCasesIdActivitiesStream
       parameters:
         - name: id
