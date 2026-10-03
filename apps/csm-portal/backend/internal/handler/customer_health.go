@@ -294,7 +294,7 @@ type initHealthTrackingRequest struct {
 // InitHealthTracking handles POST
 // /customer-health/accounts/{accountSysId}/init-health-tracking.
 func (h *CustomerHealthHandler) InitHealthTracking(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}
@@ -344,7 +344,7 @@ func (h *CustomerHealthHandler) GetAccountDetail(w http.ResponseWriter, r *http.
 
 // OpenRisk handles POST /customer-health/projects/{projectSysId}/risk.
 func (h *CustomerHealthHandler) OpenRisk(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}
@@ -370,7 +370,7 @@ func (h *CustomerHealthHandler) OpenRisk(w http.ResponseWriter, r *http.Request)
 
 // CloseRisk handles PUT /customer-health/risks/{riskId}/close.
 func (h *CustomerHealthHandler) CloseRisk(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}
@@ -401,7 +401,7 @@ func (h *CustomerHealthHandler) CloseRisk(w http.ResponseWriter, r *http.Request
 // MarkHealthy handles POST
 // /customer-health/projects/{projectSysId}/mark-healthy.
 func (h *CustomerHealthHandler) MarkHealthy(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}
@@ -428,7 +428,7 @@ func (h *CustomerHealthHandler) MarkHealthy(w http.ResponseWriter, r *http.Reque
 // RevertReview handles POST
 // /customer-health/projects/{projectSysId}/revert-review.
 func (h *CustomerHealthHandler) RevertReview(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}

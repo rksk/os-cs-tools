@@ -101,6 +101,11 @@ type UserScanRequest struct {
 	Email           string `json:"email"`
 	SubscriptionKey string `json:"subscriptionKey"`
 	IsPartner       bool   `json:"isPartner"`
+	// ResendInvitation opts in to re-sending a locked-out contact's project
+	// invitation. Without it the scan is read-only and only reports the
+	// locked-out state, so repeating a diagnostic does not e-mail the contact
+	// each time.
+	ResendInvitation bool `json:"resendInvitation,omitempty"`
 }
 
 // SplScanInformation is additional detail attached to a ScanResult —
@@ -231,7 +236,7 @@ func NewSplUserScanHandler(sales salesEntityClient, entityClient entityScanClien
 // `post scan\-user` resource function. See that function for the
 // authoritative behavior; comments below reference its structure.
 func (h *SplUserScanHandler) ScanUser(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
+	user, ok := requireViewerWriteAccess(w, r, h.accessGuard)
 	if !ok {
 		return
 	}
@@ -382,17 +387,18 @@ func (h *SplUserScanHandler) ScanUser(w http.ResponseWriter, r *http.Request) {
 		if entityUser == nil {
 			userStateResult.Information = infoUserNotFound
 		} else if entityUser.LockedOut {
-			// Resending here is a deliberate side effect, not just a status
-			// read: re-running this diagnostic for the same still-locked-out
-			// user re-sends their invitation email every time, rather than
-			// showing a (no-longer-available, see entityScanClient's own doc
-			// comment) existing invitation link the way this handler used
-			// to.
+			// Resending is a side effect (an e-mail to the contact), so it
+			// only happens when the caller asks for it with
+			// resendInvitation; a plain scan only reports the state. There
+			// is no existing invitation link to show instead (see
+			// entityScanClient's own doc comment).
 			info := SplScanInformation{
 				Issue:         "The user didn't accept the invitation.",
 				Documentation: infoUserLockedOutDocumentation,
 			}
-			if _, err := h.entity.ResendProjectContactInvitation(ctx, projectID, payload.Email); err != nil {
+			if !payload.ResendInvitation {
+				info.Solution = "Resend the invitation from the project's Contacts tab, or run the scan again with the invitation resend option."
+			} else if _, err := h.entity.ResendProjectContactInvitation(ctx, projectID, payload.Email); err != nil {
 				slog.WarnContext(ctx, "entity ResendProjectContactInvitation failed", "userID", user.UserID, "memberEmail", payload.Email, "err", err)
 				info.Solution = "Could not resend the invitation automatically. Resend it manually from the project's Contacts tab."
 			} else {
