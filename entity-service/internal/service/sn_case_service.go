@@ -2571,7 +2571,7 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 			// Left nil for an empty or unparseable value: a zero time would render as
 			// "0001-01-01T00:00:00Z" and read as a genuine timestamp.
 			if ia.CreatedOn != "" {
-				if parsed, err := time.Parse(snCreatedOnLayout, ia.CreatedOn); err == nil {
+				if parsed, err := parseSNDateTime(ctx, "sn_case_service", "createdOn", ia.CreatedOn); err == nil {
 					entry.CreatedOn = &parsed
 				}
 			}
@@ -3945,7 +3945,7 @@ func (s *snCaseService) CreateCaseAttachment(ctx context.Context, req domain.Cre
 		return domain.CreateAttachmentResponse{}, fmt.Errorf("sn create attachment: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.Attachment.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn_case_service", "createdOn", snResp.Attachment.CreatedOn)
 	if err != nil {
 		return domain.CreateAttachmentResponse{}, fmt.Errorf("sn create attachment: parse createdOn %q: %w", snResp.Attachment.CreatedOn, err)
 	}
@@ -4042,7 +4042,7 @@ func (s *snCaseService) SearchCaseAttachments(ctx context.Context, req domain.Se
 
 	attachments := make([]domain.Attachment, 0, len(snResp.Attachments))
 	for _, a := range snResp.Attachments {
-		createdOn, err := time.Parse(snCreatedOnLayout, a.CreatedOn)
+		createdOn, err := parseSNDateTime(ctx, "sn_case_service", "createdOn", a.CreatedOn)
 		if err != nil {
 			return domain.SearchAttachmentsResponse{}, fmt.Errorf("sn search attachments: parse createdOn %q: %w", a.CreatedOn, err)
 		}
@@ -4111,10 +4111,10 @@ type snSearchActivitiesResponse struct {
 // mapSNActivitiesToDomain converts a raw ServiceNow activity list into the domain
 // representation shared by the case and incident activity feeds -- an activity entry
 // (comment, attachment, or field change) is not inherently case-specific.
-func mapSNActivitiesToDomain(raw []snActivity) ([]domain.CaseActivity, error) {
+func mapSNActivitiesToDomain(ctx context.Context, raw []snActivity) ([]domain.CaseActivity, error) {
 	activities := make([]domain.CaseActivity, 0, len(raw))
 	for _, a := range raw {
-		createdOn, err := time.Parse(snCreatedOnLayout, a.CreatedOn)
+		createdOn, err := parseSNDateTime(ctx, "sn_case_service", "createdOn", a.CreatedOn)
 		if err != nil {
 			return nil, fmt.Errorf("parse createdOn %q: %w", a.CreatedOn, err)
 		}
@@ -4191,7 +4191,7 @@ func (s *snCaseService) SearchCaseActivities(ctx context.Context, req domain.Sea
 		return domain.SearchCaseActivitiesResponse{}, fmt.Errorf("sn search activities: parse response: %w", err)
 	}
 
-	activities, err := mapSNActivitiesToDomain(snResp.Activity)
+	activities, err := mapSNActivitiesToDomain(ctx, snResp.Activity)
 	if err != nil {
 		return domain.SearchCaseActivitiesResponse{}, fmt.Errorf("sn search activities: %w", err)
 	}
@@ -4274,7 +4274,7 @@ func (s *snCaseService) GetAttachmentByID(ctx context.Context, id string) (domai
 		return domain.AttachmentDetails{}, fmt.Errorf("sn get attachment: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn_case_service", "createdOn", snResp.CreatedOn)
 	if err != nil {
 		return domain.AttachmentDetails{}, fmt.Errorf("sn get attachment: parse createdOn %q: %w", snResp.CreatedOn, err)
 	}
@@ -4396,7 +4396,7 @@ func (s *snCaseService) UpdateAttachment(ctx context.Context, req domain.UpdateA
 		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse response: %w", err)
 	}
 
-	updatedOn, err := time.Parse(snCreatedOnLayout, snResp.Attachment.UpdatedOn)
+	updatedOn, err := parseSNDateTime(ctx, "sn_case_service", "updatedOn", snResp.Attachment.UpdatedOn)
 	if err != nil {
 		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse updatedOn %q: %w", snResp.Attachment.UpdatedOn, err)
 	}
