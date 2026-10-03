@@ -190,8 +190,10 @@ func TestPostGoogleChatAlert_RateLimitedPerCaller(t *testing.T) {
 func TestAlertRateLimiterWindow(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l := newAlertRateLimiter(2, time.Minute, func() time.Time { return now })
-	if !l.allow("a") || !l.allow("a") {
-		t.Fatal("first two events must be allowed")
+	for i := 0; i < 2; i++ {
+		if !l.allow("a") {
+			t.Fatalf("event %d must be allowed", i+1)
+		}
 	}
 	if l.allow("a") {
 		t.Fatal("third event inside the window must be refused")
