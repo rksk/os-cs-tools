@@ -38,7 +38,7 @@ const (
 	TypeSeverityChanged  Type = "case.severity_changed"
 	TypeIncidentCreated  Type = "incident.created"
 	// TypeCaseBillableStatusChanged is Postgres-data-source-only (unlike
-	// every other type here, which is ServiceNow-only) — see
+	// every other type here, which is backing-system-only) — see
 	// CaseBillableStatusChangedPayload's own doc comment for what it's for
 	// and why the two data sources aren't symmetric here.
 	//
@@ -52,7 +52,7 @@ const (
 	// reaction (bulk-flip every time card on the case to match
 	// Payload.IsBillable) needs a time_cards table/repo/service on this
 	// data source first (it has none today; time cards are
-	// ServiceNow-only, see internal/service/sn_time_card_service.go).
+	// backing-system-only, see internal/service/sn_time_card_service.go).
 	// Publishing this event is therefore still commented out at its one
 	// call site (case_service.go's UpdateCase) — the detection logic is
 	// real and live, only the actual Publish call is inert, so there's
@@ -92,14 +92,14 @@ type Envelope struct {
 // publishable: csm-notification-service would reject it outright. Name is
 // the comment author's resolved display name (see
 // snCaseService.publishCommentAdded's own doc comment for how this service
-// obtains it, since ServiceNow's create-comment response doesn't carry
+// obtains it, since the backing system's create-comment response doesn't carry
 // one), not the case reporter.
 type CommentAddedPayload struct {
 	Name       string `json:"name"`
 	ProjectID  string `json:"projectId"`
 	CaseID     string `json:"caseId"`
 	CaseNumber string `json:"caseNumber,omitempty"`
-	// WSO2CaseID is ServiceNow's u_wso2_case_id custom field (domain.CaseView.
+	// WSO2CaseID is the backing system's own internal case id field (domain.CaseView.
 	// InternalID) — the CSM portal's own case identifier (e.g. "WSO2-1000"),
 	// distinct from CaseNumber ("CS..."). Mirrors csm-notification-service's
 	// own WSO2CaseID field, used in its subjectLine.
@@ -208,7 +208,7 @@ type SeverityChangedPayload struct {
 // that type's own TODO) when a case's severity crosses into or out of LOW
 // on the Postgres data source. Type is always "case" and fixed forever for
 // a Postgres-backed case (see case_service.go's UpdateCase, which rejects
-// changing Type at all on this data source), so unlike the ServiceNow data
+// changing Type at all on this data source), so unlike the backing data
 // source — where Type can transfer between case/engagement/service_request
 // and severity is only ever meaningful for Type=="case" — the "does this
 // case count as S4 (WSO2's own support-policy tier for LOW severity, see
@@ -257,7 +257,7 @@ type CaseCreatedPayload struct {
 	// — cv.AccountDetails.CreTeam.Name, "" when the case has no account or
 	// the account has no CRE team assigned. Displayed in
 	// csm-notification-service's Chat cards — purely a display value there,
-	// no routing role (unlike Product). Depends on ServiceNow's
+	// no routing role (unlike Product). Depends on the backing system's
 	// case-embedded account object actually carrying creTeam/sreTeam — see
 	// caseTeamName's own doc comment for the current caveat around that.
 	Team        string   `json:"team,omitempty"`

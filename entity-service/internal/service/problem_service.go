@@ -311,7 +311,7 @@ func (s *problemService) UpdateProblem(ctx context.Context, req domain.UpdatePro
 		return domain.UpdateProblemResponse{}, err
 	}
 	if req.Transition != nil || req.AssignmentGroupID != nil {
-		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "transition and assignmentGroupId are only supported for the ServiceNow data source"}
+		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "transition and assignmentGroupId are not supported by this data source"}
 	}
 	if req.AssignedToID == nil && req.CauseNotes == nil && req.FixNotes == nil &&
 		req.Workaround == nil && req.TargetResolutionDate == nil {

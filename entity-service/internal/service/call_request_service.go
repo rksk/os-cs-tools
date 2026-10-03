@@ -181,7 +181,7 @@ func (s *callRequestService) SearchAllCallRequests(ctx context.Context, req doma
 	// filter cannot be honored. Reject it rather than silently ignore it: an
 	// ignored filter would widen the result set.
 	if len(req.Filters.AssignmentTeamIDs) > 0 {
-		return domain.SearchCallRequestsResponse{}, &apierror.ValidationError{Msg: "filters.assignmentTeamIds is only supported for the ServiceNow data source"}
+		return domain.SearchCallRequestsResponse{}, &apierror.ValidationError{Msg: "filters.assignmentTeamIds is not supported by this data source"}
 	}
 	for _, st := range req.Filters.States {
 		if _, ok := validCallRequestStates[st]; !ok {
