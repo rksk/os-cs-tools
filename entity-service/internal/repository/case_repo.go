@@ -2319,6 +2319,24 @@ func buildCaseSearchWhere(req domain.SearchCasesRequest, scope SearchScope) (str
 	return where, filterArgs, argIdx, nil
 }
 
+// caseSearchOrder turns the requested sort into the ORDER BY column and
+// direction SearchCases interpolates. Both come from fixed lists here, never
+// from the request text: an unknown field falls back to wi.created_on and
+// anything but "asc" to DESC (the service's own defaults), so a caller that
+// skips CaseService's validation can neither inject SQL nor produce an
+// "ORDER BY  NULLS LAST" syntax error.
+func caseSearchOrder(sort domain.CaseSort) (column, direction string) {
+	column, ok := pgSortColMap[sort.Field]
+	if !ok {
+		column = pgSortColMap[domain.CaseSortFieldCreatedOn]
+	}
+	direction = "DESC"
+	if strings.EqualFold(string(sort.Order), string(domain.CaseSortOrderAsc)) {
+		direction = "ASC"
+	}
+	return column, direction
+}
+
 // SearchCases implements CaseRepository.
 func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesRequest, scope SearchScope) ([]domain.SearchCaseView, int, error) {
 	// WithCallerIdentity from the explicit scope parameter -- see
@@ -2330,8 +2348,7 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 		return nil, 0, err
 	}
 
-	sortCol := pgSortColMap[req.SortBy.Field]
-	sortDir := string(req.SortBy.Order)
+	sortCol, sortDir := caseSearchOrder(req.SortBy)
 
 	// Deployment/deployed-product/product are LEFT joins here (unlike
 	// GetCaseByID's INNER joins): SearchCases can return non-case work_item
