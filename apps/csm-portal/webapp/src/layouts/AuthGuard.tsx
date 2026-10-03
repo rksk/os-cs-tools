@@ -30,6 +30,7 @@ import {
 import { getPortalAccess } from "@context/current-user/portalAccess";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import NoPortalAccessPage from "@components/error/NoPortalAccessPage";
+import ProfileLoadErrorState from "@components/error/ProfileLoadErrorState";
 import { useLogger } from "@hooks/useLogger";
 import { trySilentSignInOnce } from "@hooks/silentSignIn";
 import { isForbiddenError, isUnauthorizedError } from "@utils/ApiError";
@@ -144,7 +145,9 @@ function SignInRedirect({ bare = false }: { bare?: boolean }): JSX.Element {
  * chain — that chain already retries/silently refreshes/gives up (see
  * `useGetUsersMe.ts`'s `skipSignInRedirect`) on a recoverable 401, so an
  * error still reaching here means the caller is genuinely not entitled to
- * use this portal, not just a transient expired token.
+ * use this portal, not just a transient expired token. Any other failure (a
+ * 5xx or network error that outlived the query's bounded retries) shows an
+ * error state with a retry rather than a shell with every permission false.
  *
  * The routed page is suppressed (same `children` vs. bare `<AppLayout />`
  * mechanic `AuthPendingShell` above uses, for the same reason) for as long
@@ -169,7 +172,7 @@ function SignInRedirect({ bare = false }: { bare?: boolean }): JSX.Element {
  * page, or the "not authorized" page in its content area.
  */
 function AuthorizedAppShell(): JSX.Element {
-  const { user, isLoading, isError, error } = useCurrentUser();
+  const { user, isLoading, isError, error, refetch } = useCurrentUser();
   // `GET /users/me` deliberately succeeds for a signed-in user who holds no
   // portal role (so this page can be shown rather than an error), while every
   // other endpoint 403s them. `roles` absent means an older backend or a
@@ -203,6 +206,19 @@ function AuthorizedAppShell(): JSX.Element {
     return (
       <AppLayout minimalHeader>
         <NoPortalAccessPage />
+      </AppLayout>
+    );
+  }
+
+  // `/users/me` failed for a reason other than a confirmed 401/403 (a 5xx or
+  // network failure that outlived the query's own bounded retries). With no
+  // profile, every role-derived flag reads false, so rendering the routed
+  // page would mislead (hidden nav, redirected deep links). Show an explicit
+  // error with a retry instead.
+  if (isError) {
+    return (
+      <AppLayout minimalHeader>
+        <ProfileLoadErrorState onRetry={refetch} />
       </AppLayout>
     );
   }
