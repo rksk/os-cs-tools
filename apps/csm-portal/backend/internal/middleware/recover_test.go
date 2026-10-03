@@ -48,8 +48,7 @@ func TestRecover(t *testing.T) {
 		// CorrelationID sits inside Recover in the real chain; the same order here
 		// proves Recover can still report the id it set on the response header.
 		h := Recover(CorrelationID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var m map[string]string
-			m["boom"] = "nil map write" // panics
+			panic("assignment to entry in nil map")
 		})))
 		r := httptest.NewRequest(http.MethodPost, "/cases/x/comments/search", strings.NewReader("null"))
 		r.Header.Set(correlationIDHeader, "11111111-2222-4333-8444-555555555555")
