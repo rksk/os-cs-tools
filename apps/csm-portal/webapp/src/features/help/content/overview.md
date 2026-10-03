@@ -74,6 +74,17 @@ shift or leave. Changes are marked on the roster until you select **Done
 editing**, and **Recent changes** lists what has changed on your teams' rota
 and leave.
 
+## Signing in and staying signed in
+
+If your profile can't be loaded after you sign in, the portal shows an error
+with a **Try again** button rather than leaving you on a loading screen; select
+it to retry the load.
+
+For your security the portal signs you out automatically after a period of
+inactivity. A warning appears first; if you don't respond to it, you are
+signed out and need to sign in again. Anything you hadn't saved is lost, so
+save work before stepping away.
+
 ## Jumping to a person's profile
 
 Wherever a person's name appears (a case's creator or assignee, a comment's author, and
