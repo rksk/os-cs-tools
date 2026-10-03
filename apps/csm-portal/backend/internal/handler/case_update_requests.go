@@ -138,7 +138,7 @@ func (h *CaseHandler) RequestCaseUpdate(w http.ResponseWriter, r *http.Request) 
 
 	current, err := h.entity.GetCase(r.Context(), caseID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetCase failed during request-update guard", "userID", user.UserID, "caseID", caseID, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetCase failed during request-update guard", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to request an update.")
 		return
 	}
@@ -185,7 +185,7 @@ func (h *CaseHandler) RequestCaseUpdate(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.entity.CreateCaseComment(r.Context(), caseID, commentBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateCaseComment failed during request-update", "userID", user.UserID, "caseID", caseID, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateCaseComment failed during request-update", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to request an update.")
 		return
 	}

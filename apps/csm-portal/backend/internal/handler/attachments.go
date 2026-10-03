@@ -83,14 +83,14 @@ func (h *AttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
-		slog.ErrorContext(r.Context(), "servicenow RequireCaseAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow RequireCaseAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachment content.")
 		return
 	}
 
 	content, contentType, _, err := h.servicenow.DownloadAttachment(r.Context(), attachmentID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow DownloadAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow DownloadAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachment content.")
 		return
 	}

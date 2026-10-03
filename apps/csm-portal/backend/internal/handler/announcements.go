@@ -151,7 +151,7 @@ func (h *AnnouncementHandler) SearchCustomerAnnouncementAudience(w http.Response
 
 	result, err := h.entity.SearchProjects(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchProjects failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchProjects failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to resolve the announcement audience.")
 		return
 	}

@@ -197,7 +197,7 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 
 	entityRaw, err := h.entity.GetUserMe(r.Context())
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUserMe failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetUserMe failed", "userID", user.UserID, "err", summarizeErr(err))
 		// A caller cannot distinguish "no roles/team" from "upstream identity
 		// resolution failed" if this falls through to a 200 with zeroed
 		// fields, so the failure must surface as an error response.
@@ -218,7 +218,7 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 
 	scimInfo, err := h.scim.SearchUser(r.Context(), user.Email)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "scim SearchUser failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "scim SearchUser failed", "userID", user.UserID, "err", summarizeErr(err))
 	} else if scimInfo == nil {
 		slog.WarnContext(r.Context(), "no SCIM user found", "userID", user.UserID)
 	} else {
@@ -269,7 +269,7 @@ func (h *UsersHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 	if payload.PhoneNumber != nil {
 		updatedPhone, err := h.scim.UpdateUserPhone(r.Context(), user.UserID, *payload.PhoneNumber)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "scim UpdateUserPhone failed", "userID", user.UserID, "err", err)
+			slog.ErrorContext(r.Context(), "scim UpdateUserPhone failed", "userID", user.UserID, "err", summarizeErr(err))
 			mapUpstreamError(w, err, "Failed to update phone number.")
 			return
 		}
@@ -341,7 +341,7 @@ func (h *UsersHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.entity.SearchUsers(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchUsers failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchUsers failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search users.")
 		return
 	}
@@ -369,7 +369,7 @@ func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.entity.GetUser(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUser failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetUser failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to fetch the user.")
 		return
 	}
@@ -394,7 +394,7 @@ func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		// is user-management detail; other callers get the profile without it.
 		enriched, err = withoutExternalAccessDetail(enriched)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "GetUser: could not decode user profile", "userID", user.UserID, "err", err)
+			slog.ErrorContext(r.Context(), "GetUser: could not decode user profile", "userID", user.UserID, "err", summarizeErr(err))
 			writeError(w, http.StatusInternalServerError, "Failed to fetch the user.")
 			return
 		}
@@ -556,7 +556,7 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.entity.CreateUser(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateUser failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateUser failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to create the user.")
 		return
 	}
@@ -600,7 +600,7 @@ func (h *UsersHandler) GetTimeCardApprovers(w http.ResponseWriter, r *http.Reque
 
 	members, err := h.scim.GetRole(r.Context(), h.timecardApproverRoleID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "scim GetRole (time card approvers) failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "scim GetRole (time card approvers) failed", "userID", user.UserID, "err", summarizeErr(err))
 		// A 401/403 here means this backend's own SCIM client credentials lack
 		// the scope to read Asgardeo roles (see ASGARDEO_ROLE_IDS's own doc
 		// comment) -- a deployment/configuration problem, not anything about
@@ -641,7 +641,7 @@ func (h *UsersHandler) ListSavedFilterViews(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.entity.ListSavedFilterViews(r.Context(), listKey)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity ListSavedFilterViews failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity ListSavedFilterViews failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to list saved filter views.")
 		return
 	}
@@ -664,7 +664,7 @@ func (h *UsersHandler) SaveSavedFilterView(w http.ResponseWriter, r *http.Reques
 
 	result, err := h.entity.SaveSavedFilterView(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SaveSavedFilterView failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SaveSavedFilterView failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to save the filter view.")
 		return
 	}
@@ -690,7 +690,7 @@ func (h *UsersHandler) DeleteSavedFilterView(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.entity.DeleteSavedFilterView(r.Context(), listKey, name)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity DeleteSavedFilterView failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity DeleteSavedFilterView failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to delete the filter view.")
 		return
 	}
@@ -713,7 +713,7 @@ func (h *UsersHandler) ReorderSavedFilterView(w http.ResponseWriter, r *http.Req
 
 	result, err := h.entity.ReorderSavedFilterView(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity ReorderSavedFilterView failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity ReorderSavedFilterView failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to reorder saved filter views.")
 		return
 	}

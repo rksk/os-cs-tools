@@ -67,7 +67,7 @@ func (h *ReportsHandler) GenerateSLAReport(w http.ResponseWriter, r *http.Reques
 
 	report, err := h.servicenow.GetSLAReport(r.Context(), projectSysID, from, to)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetSLAReport failed", "userID", user.UserID, "projectSysId", projectSysID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetSLAReport failed", "userID", user.UserID, "projectSysId", projectSysID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to generate SLA report.")
 		return
 	}
@@ -95,7 +95,7 @@ func (h *ReportsHandler) GetReportDetails(w http.ResponseWriter, r *http.Request
 
 	report, err := h.servicenow.GetProjectReportDetails(r.Context(), projectSysID, from, to)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetProjectReportDetails failed", "userID", user.UserID, "projectSysId", projectSysID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetProjectReportDetails failed", "userID", user.UserID, "projectSysId", projectSysID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve report details.")
 		return
 	}
@@ -126,7 +126,7 @@ func (h *ReportsHandler) GenerateTimelogsBreakdownReport(w http.ResponseWriter, 
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}
-		slog.ErrorContext(r.Context(), "servicenow GetTimeLogBreakdown failed", "userID", user.UserID, "projectId", projectID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetTimeLogBreakdown failed", "userID", user.UserID, "projectId", projectID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to generate timelogs breakdown report.")
 		return
 	}

@@ -105,7 +105,7 @@ func (h *TeamHandler) GetTeamMembers(w http.ResponseWriter, r *http.Request) {
 
 	raw, err := h.entity.GetTeamMembers(ctx, normalizeToUUID(teamID))
 	if err != nil {
-		slog.ErrorContext(ctx, "entity GetTeamMembers failed", "userID", user.UserID, "teamID", teamID, "err", err)
+		slog.ErrorContext(ctx, "entity GetTeamMembers failed", "userID", user.UserID, "teamID", teamID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve team members.")
 		return
 	}

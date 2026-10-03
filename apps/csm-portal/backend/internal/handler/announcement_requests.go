@@ -158,7 +158,7 @@ func (h *AnnouncementRequestHandler) CreateAnnouncementRequest(w http.ResponseWr
 
 	result, err := h.entity.CreateAnnouncementRequest(r.Context(), upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateAnnouncementRequest failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateAnnouncementRequest failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to create the announcement request.")
 		return
 	}
@@ -181,7 +181,7 @@ func (h *AnnouncementRequestHandler) GetAnnouncementRequest(w http.ResponseWrite
 
 	result, err := h.entity.GetAnnouncementRequest(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve the announcement request.")
 		return
 	}
@@ -204,7 +204,7 @@ func (h *AnnouncementRequestHandler) SearchAnnouncementRequests(w http.ResponseW
 
 	result, err := h.entity.SearchAnnouncementRequests(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchAnnouncementRequests failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchAnnouncementRequests failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search announcement requests.")
 		return
 	}
@@ -265,7 +265,7 @@ func (h *AnnouncementRequestHandler) UpdateAnnouncementRequest(w http.ResponseWr
 
 	result, err := h.entity.UpdateAnnouncementRequest(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity UpdateAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity UpdateAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to update the announcement request.")
 		return
 	}
@@ -317,7 +317,7 @@ func (h *AnnouncementRequestHandler) RecordAnnouncementRequestDryRun(w http.Resp
 
 	result, err := h.entity.RecordAnnouncementRequestDryRun(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity RecordAnnouncementRequestDryRun failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity RecordAnnouncementRequestDryRun failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to record the dry run.")
 		return
 	}
@@ -382,7 +382,7 @@ func (h *AnnouncementRequestHandler) ScheduleAnnouncementRequest(w http.Response
 
 	result, err := h.entity.ScheduleAnnouncementRequest(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity ScheduleAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity ScheduleAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to schedule the announcement request.")
 		return
 	}
@@ -439,7 +439,7 @@ func (h *AnnouncementRequestHandler) PublishAnnouncementRequest(w http.ResponseW
 
 	result, err := h.entity.PublishAnnouncementRequest(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity PublishAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity PublishAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to publish the announcement request.")
 		return
 	}
@@ -494,7 +494,7 @@ func (h *AnnouncementRequestHandler) CreateAnnouncementRequestUpdate(w http.Resp
 
 	result, err := h.entity.CreateAnnouncementRequestUpdate(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity CreateAnnouncementRequestUpdate failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity CreateAnnouncementRequestUpdate failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to post the update.")
 		return
 	}
@@ -519,7 +519,7 @@ func (h *AnnouncementRequestHandler) ListAnnouncementRequestUpdates(w http.Respo
 
 	result, err := h.entity.ListAnnouncementRequestUpdates(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity ListAnnouncementRequestUpdates failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity ListAnnouncementRequestUpdates failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to list updates for the announcement request.")
 		return
 	}
@@ -589,7 +589,7 @@ func (h *AnnouncementRequestHandler) RecordAnnouncementRequestDeliveries(w http.
 
 	result, err := h.entity.RecordAnnouncementRequestDeliveries(r.Context(), id, upstreamBody)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity RecordAnnouncementRequestDeliveries failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity RecordAnnouncementRequestDeliveries failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to record the delivery status.")
 		return
 	}
@@ -614,7 +614,7 @@ func (h *AnnouncementRequestHandler) ListAnnouncementRequestDeliveries(w http.Re
 
 	result, err := h.entity.ListAnnouncementRequestDeliveries(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity ListAnnouncementRequestDeliveries failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity ListAnnouncementRequestDeliveries failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to list deliveries for the announcement request.")
 		return
 	}
@@ -651,7 +651,7 @@ func (h *AnnouncementRequestHandler) actorOnlyTransition(
 
 	result, err := call(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity announcement request "+action+" failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity announcement request "+action+" failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, fallbackMsg)
 		return
 	}
@@ -836,7 +836,7 @@ func (h *AnnouncementRequestHandler) SubmitAnnouncementRequest(w http.ResponseWr
 
 	currentRaw, err := h.entity.GetAnnouncementRequest(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to load the announcement request.")
 		return
 	}
@@ -862,7 +862,7 @@ func (h *AnnouncementRequestHandler) SubmitAnnouncementRequest(w http.ResponseWr
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "resolve announcement request audience failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "resolve announcement request audience failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		// An *apierror.Error means SearchProjects/SearchProjectsByProductVersion
 		// itself failed (a real upstream problem — could be transient, e.g. a
 		// 503) — map it through the normal upstream-error path instead of
@@ -897,7 +897,7 @@ func (h *AnnouncementRequestHandler) SubmitAnnouncementRequest(w http.ResponseWr
 
 	result, err := h.entity.SubmitAnnouncementRequest(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SubmitAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity SubmitAnnouncementRequest failed", "userID", user.UserID, "id", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to submit the announcement request for approval.")
 		return
 	}
