@@ -123,10 +123,33 @@ func buildOptionalRef(id, name *string) *domain.ReferenceTableItem {
 	return &domain.ReferenceTableItem{ID: *id, Name: n}
 }
 
-// instanceIDFilterClause builds the WHERE fragment and args for the
-// mutually-exclusive project/deployment/deployed-product ID filters shared
-// by every instance query. argIdx is the next free placeholder index.
-func instanceIDFilterClause(projectIDs, deploymentIDs, deployedProductIDs []string, argIdx int) (string, []any) {
+// instanceIDFilterClause builds the WHERE fragment and args shared by every
+// instance query: the request's mutually-exclusive project/deployment/
+// deployed-product ID filters, then the caller's project scope. argIdx is the
+// next free placeholder index.
+//
+// The scope is applied whatever the request asks for. deployment_node and the
+// usage tables carry no row-level security, project has none either, and
+// deployment is only LEFT-joined (its policy blanks columns, it removes no
+// rows), so this predicate is the only thing keeping a non-internal caller to
+// the projects they belong to. A caller with no identity on ctx gets the zero
+// scope (not Unrestricted, no projects) and so matches nothing.
+func instanceIDFilterClause(scope SearchScope, projectIDs, deploymentIDs, deployedProductIDs []string, argIdx int) (string, []any) {
+	clause, args := instanceRequestIDFilter(projectIDs, deploymentIDs, deployedProductIDs, argIdx)
+	if !scope.Unrestricted {
+		ids := scope.ProjectIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		clause += " AND " + scopePredicate("proj.id", argIdx+len(args))
+		args = append(args, ids)
+	}
+	return clause, args
+}
+
+// instanceRequestIDFilter is the request-supplied half of
+// instanceIDFilterClause.
+func instanceRequestIDFilter(projectIDs, deploymentIDs, deployedProductIDs []string, argIdx int) (string, []any) {
 	switch {
 	case len(projectIDs) > 0:
 		return fmt.Sprintf(" AND proj.id = ANY($%d::uuid[])", argIdx), []any{projectIDs}
@@ -156,11 +179,16 @@ func (r *instanceRepo) SearchInstances(ctx context.Context, req domain.SearchIns
 			args = append(args, *req.Filters.EndDate)
 			argIdx++
 		}
-		clause, clauseArgs := instanceIDFilterClause(req.Filters.ProjectIDs, req.Filters.DeploymentIDs, req.Filters.DeployedProductIDs, argIdx)
-		where += clause
-		args = append(args, clauseArgs...)
-		argIdx += len(clauseArgs)
 	}
+	var projectIDs, deploymentIDs, deployedProductIDs []string
+	if req.Filters != nil {
+		projectIDs, deploymentIDs, deployedProductIDs = req.Filters.ProjectIDs, req.Filters.DeploymentIDs, req.Filters.DeployedProductIDs
+	}
+	scope, _ := CallerIdentityFromContext(ctx)
+	clause, clauseArgs := instanceIDFilterClause(scope, projectIDs, deploymentIDs, deployedProductIDs, argIdx)
+	where += clause
+	args = append(args, clauseArgs...)
+	argIdx += len(clauseArgs)
 
 	var total int
 	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM deployment_node dn "+instanceRefJoins+" "+where, args...).Scan(&total); err != nil {
@@ -285,7 +313,8 @@ func (r *instanceRepo) latestDeploymentInformation(ctx context.Context, nodeIDs 
 func (r *instanceRepo) SearchInstanceMetrics(ctx context.Context, filters domain.InstanceDateRangeFilters) ([]domain.InstanceMetric, int, error) {
 	where := "WHERE di.payload_updated_on::date BETWEEN $1::date AND $2::date"
 	args := []any{filters.StartDate, filters.EndDate}
-	clause, clauseArgs := instanceIDFilterClause(filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
+	scope, _ := CallerIdentityFromContext(ctx)
+	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
 	where += clause
 	args = append(args, clauseArgs...)
 
@@ -365,7 +394,8 @@ func (r *instanceRepo) SearchInstanceMetrics(ctx context.Context, filters domain
 func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.InstanceDateRangeFilters) ([]domain.InstanceUsageEntry, int, error) {
 	where := "WHERE uc.counted_on::date BETWEEN $1::date AND $2::date"
 	args := []any{filters.StartDate, filters.EndDate}
-	clause, clauseArgs := instanceIDFilterClause(filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
+	scope, _ := CallerIdentityFromContext(ctx)
+	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
 	where += clause
 	args = append(args, clauseArgs...)
 
@@ -460,7 +490,8 @@ func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.I
 func (r *instanceRepo) SearchInstanceMetricsStats(ctx context.Context, filters domain.InstanceDateRangeFilters) (domain.InstanceMetricsStatsResponse, error) {
 	where := "WHERE di.payload_updated_on::date BETWEEN $1::date AND $2::date"
 	args := []any{filters.StartDate, filters.EndDate}
-	clause, clauseArgs := instanceIDFilterClause(filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
+	scope, _ := CallerIdentityFromContext(ctx)
+	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
 	where += clause
 	args = append(args, clauseArgs...)
 
@@ -539,7 +570,8 @@ func (r *instanceRepo) SearchInstanceMetricsStats(ctx context.Context, filters d
 func (r *instanceRepo) SearchInstanceUsageStats(ctx context.Context, filters domain.InstanceDateRangeFilters, dataSource *string) (domain.InstanceUsageStatsResponse, error) {
 	where := "WHERE dus.summary_date BETWEEN $1::date AND $2::date"
 	args := []any{filters.StartDate, filters.EndDate}
-	clause, clauseArgs := instanceIDFilterClause(filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
+	scope, _ := CallerIdentityFromContext(ctx)
+	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
 	where += clause
 	args = append(args, clauseArgs...)
 	if dataSource != nil {
