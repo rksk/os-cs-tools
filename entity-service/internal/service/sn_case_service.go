@@ -1297,8 +1297,8 @@ func publishCaseCreatedEvent(
 
 	payload, err := json.Marshal(events.CaseCreatedPayload{
 		ReporterName: reporterName,
-		ProjectName:  cv.ProjectDetails.Name,
-		ProjectID:    cv.ProjectDetails.ID,
+		ProjectName:  caseProjectName(cv),
+		ProjectID:    caseProjectID(cv),
 		CaseID:       caseID,
 		CaseNumber:   cv.Number,
 		WSO2CaseID:   cv.InternalID,
@@ -1461,7 +1461,7 @@ func publishCommentAddedEvent(ctx context.Context, publisher EventPublisherServi
 
 	payload, err := json.Marshal(events.CommentAddedPayload{
 		Name:           authorName,
-		ProjectID:      cv.ProjectDetails.ID,
+		ProjectID:      caseProjectID(cv),
 		CaseID:         req.CaseID,
 		CaseNumber:     cv.Number,
 		WSO2CaseID:     cv.InternalID,
@@ -1749,7 +1749,7 @@ func publishStatusChangedEvent(ctx context.Context, publisher EventPublisherServ
 	}
 
 	payload, err := json.Marshal(events.StatusChangedPayload{
-		ProjectID:  before.ProjectDetails.ID,
+		ProjectID:  caseProjectID(before),
 		CaseID:     caseID,
 		CaseNumber: before.Number,
 		WSO2CaseID: before.InternalID,
@@ -1891,7 +1891,7 @@ func (s *snCaseService) publishCaseAssigned(ctx context.Context, caseID, assigne
 	payload, err := json.Marshal(events.CaseAssignedPayload{
 		AssigneeName:  assigneeName,
 		AssigneeEmail: assigneeEmail,
-		ProjectID:     before.ProjectDetails.ID,
+		ProjectID:     caseProjectID(before),
 		CaseID:        caseID,
 		CaseNumber:    before.Number,
 		WSO2CaseID:    before.InternalID,
@@ -5566,4 +5566,22 @@ func (s *snCaseService) SearchTags(ctx context.Context, req domain.SearchTagsReq
 		})
 	}
 	return tags, nil
+}
+
+// caseProjectID and caseProjectName read the case's project without assuming
+// it has one: ProjectDetails is nil for a case with no project linked, a
+// valid state on the Postgres data source, and every publish helper here is
+// shared with that data source.
+func caseProjectID(cv domain.CaseView) string {
+	if cv.ProjectDetails == nil {
+		return ""
+	}
+	return cv.ProjectDetails.ID
+}
+
+func caseProjectName(cv domain.CaseView) string {
+	if cv.ProjectDetails == nil {
+		return ""
+	}
+	return cv.ProjectDetails.Name
 }
