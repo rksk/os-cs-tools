@@ -69,7 +69,7 @@ func main() {
 	//   - starts a Consumer in its own per-replica consumer group (LatestOffset)
 	//   - runs the caseevents.Handler to fan case.comment_added / status_changed
 	//     to the BroadcastHub
-	var caseEventsConsumer *eventbus.Consumer
+	var consumerSupervisor *eventbus.Supervisor
 	var activityHub *stream.BroadcastHub
 
 	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
@@ -101,8 +101,16 @@ func main() {
 		// call to delete a consumer group it's done with.
 		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-activity-stream-service")
 		consumerGroup := fmt.Sprintf("%s-replica-%s", consumerGroupBase, newReplicaID())
-		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup, eventbus.LatestOffset)
 		activityHub = stream.NewBroadcastHub()
+		// The supervisor owns the consumer: it builds a fresh one (same
+		// group, so a restart resumes from the committed offset) whenever
+		// the current one exits while the process is still running.
+		consumerSupervisor = eventbus.NewSupervisor(
+			func() *eventbus.Consumer {
+				return eventbus.NewConsumer(eventBusCfg, consumerGroup, eventbus.LatestOffset)
+			},
+			caseevents.NewHandler(activityHub).Handle,
+		)
 	}
 
 	// SSE handler — depends on entity client + optional hub. Stream lifetime
@@ -116,13 +124,16 @@ func main() {
 		),
 	)
 
-	// Health check listener (:8080) — simple REST endpoint for Choreo liveness probe.
+	// Health check listener (:8080) — REST endpoint for Choreo's liveness
+	// probe. Reports 503 while the event consumer is configured but not
+	// running, so a replica that can no longer deliver events is not kept in
+	// rotation silently.
+	var consumerRunning func() bool
+	if consumerSupervisor != nil {
+		consumerRunning = consumerSupervisor.Running
+	}
 	healthMux := http.NewServeMux()
-	healthMux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	healthMux.HandleFunc("GET /health", healthHandler(consumerRunning))
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -224,10 +235,17 @@ func main() {
 		}()
 		slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
 
-		if caseEventsConsumer != nil {
-			go caseEventsConsumer.Run(ctx, caseevents.NewHandler(activityHub).Handle)
-			slog.Info("case-events consumer started")
-		}
+	}
+
+	consumerDone := make(chan struct{})
+	if consumerSupervisor != nil {
+		go func() {
+			defer close(consumerDone)
+			consumerSupervisor.Run(ctx)
+		}()
+		slog.Info("case-events consumer started")
+	} else {
+		close(consumerDone)
 	}
 
 	<-ctx.Done()
@@ -256,11 +274,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	if caseEventsConsumer != nil {
-		caseEventsConsumer.Close()
+	// The supervisor stops on ctx (already canceled) and closes its consumer
+	// on the way out; wait for that within the same grace period.
+	select {
+	case <-consumerDone:
+	case <-shutdownCtx.Done():
+		slog.Error("case-events consumer did not stop within the shutdown grace period")
 	}
 
 	slog.Info("CSM Activity Stream Service stopped")
+}
+
+// healthHandler serves GET /health. consumerRunning is nil when Event Hub is
+// not configured: the service is then in its documented degraded mode (the
+// stream endpoint answers 503) and health stays 200. Otherwise health is 503
+// whenever no consumer is running — before it starts, during a restart
+// backoff, or after it has stopped.
+func healthHandler(consumerRunning func() bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if consumerRunning != nil && !consumerRunning() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"unavailable"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}
 }
 
 func mustEnv(key string) string {
