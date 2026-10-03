@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/chataudience"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
@@ -291,7 +292,7 @@ func (e *Engine) processStatus(ctx context.Context, s SLAStatus) error {
 		}
 		if err := e.alertTier(ctx, s, tier); err != nil {
 			if releaseErr := e.store.ReleaseTier(ctx, s.CaseID, s.ClockType, tier); releaseErr != nil {
-				slog.ErrorContext(ctx, "slaengine: failed to release tier claim after a failed alert, tier may be stuck until it expires", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "err", releaseErr)
+				slog.ErrorContext(ctx, "slaengine: failed to release tier claim after a failed alert, tier may be stuck until it expires", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "err", apierror.Summary(releaseErr))
 			}
 			return fmt.Errorf("alert tier %d: %w", tier, err)
 		}
@@ -417,7 +418,7 @@ func (e *Engine) sendBreachEmails(ctx context.Context, s SLAStatus, tier int) {
 	}
 	claimed, err := e.store.ClaimEmail(ctx, s.CaseID, s.ClockType, tier)
 	if err != nil {
-		slog.ErrorContext(ctx, "slaengine: failed to claim sla breach email, skipping to avoid a duplicate send", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "err", err)
+		slog.ErrorContext(ctx, "slaengine: failed to claim sla breach email, skipping to avoid a duplicate send", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "err", apierror.Summary(err))
 		return
 	}
 	if !claimed {
@@ -480,7 +481,7 @@ func (e *Engine) sendBreachEmails(ctx context.Context, s SLAStatus, tier int) {
 			}
 			body := render(unresolvedLabel + " (no email on file)")
 			if err := e.email.SendEmail(ctx, e.emailDebugRecipients, nil, nil, nil, subject, body, nil); err != nil {
-				slog.ErrorContext(ctx, "slaengine: failed to send sla breach email", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole, "err", err)
+				slog.ErrorContext(ctx, "slaengine: failed to send sla breach email", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole, "err", apierror.Summary(err))
 				return
 			}
 			slog.InfoContext(ctx, "slaengine: sla breach email sent", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole, "unresolvedLabel", unresolvedLabel)
@@ -499,7 +500,7 @@ func (e *Engine) sendBreachEmails(ctx context.Context, s SLAStatus, tier int) {
 		}
 		body := render(intendedFor)
 		if err := e.email.SendEmail(ctx, to, nil, nil, nil, subject, body, nil); err != nil {
-			slog.ErrorContext(ctx, "slaengine: failed to send sla breach email", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole, "err", err)
+			slog.ErrorContext(ctx, "slaengine: failed to send sla breach email", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole, "err", apierror.Summary(err))
 			return
 		}
 		slog.InfoContext(ctx, "slaengine: sla breach email sent", "caseId", s.CaseID, "clockType", s.ClockType, "tier", tier, "recipient", recipientRole)
@@ -529,7 +530,7 @@ func (e *Engine) RunTicker(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := e.Tick(ctx); err != nil {
-				slog.ErrorContext(ctx, "slaengine: tick failed", "err", err)
+				slog.ErrorContext(ctx, "slaengine: tick failed", "err", apierror.Summary(err))
 			}
 		}
 	}
