@@ -164,6 +164,10 @@ func TestAuth_UserInfoInjection(t *testing.T) {
 
 // ----- security headers -----
 
+// Security headers are owned by the SecurityHeaders middleware, which wraps
+// Auth in both production chains (cmd/server/main.go); Auth no longer sets
+// them a second time. This asserts the composed chain still puts them on
+// every response Auth produces — success, 401 and the /health bypass.
 func TestAuth_SecurityHeaders(t *testing.T) {
 	wantHeaders := map[string]string{
 		"X-Content-Type-Options":    "nosniff",
@@ -186,7 +190,8 @@ func TestAuth_SecurityHeaders(t *testing.T) {
 				r = httptest.NewRequest(http.MethodGet, "/health", nil)
 			}
 			tc.setup(r)
-			w := serve(r)
+			w := httptest.NewRecorder()
+			middleware.SecurityHeaders(middleware.Auth(testConfig())(noopHandler)).ServeHTTP(w, r)
 			for name, want := range wantHeaders {
 				if got := w.Header().Get(name); got != want {
 					t.Errorf("header %s = %q, want %q", name, got, want)
