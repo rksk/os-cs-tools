@@ -84,6 +84,12 @@ type Engine struct {
 	// its email isn't sent through this struct at all — see that package's
 	// own SendReport doc comment. Defaults to true.
 	AlertsEnabled bool
+	// BookkeepingTimeout bounds each ledger record-back (Complete/Fail) and
+	// alert e-mail made after a handler has returned. Those calls run on a
+	// context detached from the tick's own cancellation — see
+	// bookkeepingContext — so this is the only thing limiting them. Zero
+	// means defaultBookkeepingTimeout.
+	BookkeepingTimeout time.Duration
 }
 
 // New constructs an Engine.
@@ -251,7 +257,9 @@ func (e *Engine) alertLedgerFailures(ctx context.Context, now time.Time, failure
 	}
 	// Plain ASCII subject — see recordFailure for why.
 	subject := fmt.Sprintf("[csm-scheduled-tasks] LEDGER ERROR: %d task(s) - %s", len(failures), now.Format(time.RFC3339))
-	if err := e.Email.SendEmail(ctx, to, cc, subject, notify.RenderLedgerAlertEmail(data)); err != nil {
+	bctx, cancel := e.bookkeepingContext(ctx)
+	defer cancel()
+	if err := e.Email.SendEmail(bctx, to, cc, subject, notify.RenderLedgerAlertEmail(data)); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to send ledger error alert", "failures", len(failures), "err", err)
 		return &TaskError{Task: ledgerAlertTaskName, Stage: StageAlert, Err: err}
 	}
@@ -332,6 +340,31 @@ func collapse(s string) string {
 // in progress.
 const staleClaimMargin = 2
 
+// defaultBookkeepingTimeout is Engine.BookkeepingTimeout when unset: long
+// enough for one entity-service PATCH or one e-mail service POST on a
+// healthy network, short enough that a hung ledger cannot hold a
+// terminating process open past Choreo's grace period.
+const defaultBookkeepingTimeout = 10 * time.Second
+
+// bookkeepingContext derives the context every post-handler call — the
+// ledger Complete/Fail and the alert e-mails — runs on. It is detached
+// from ctx's cancellation on purpose: on SIGTERM (a Choreo timeout, a
+// redeploy, a manual stop) the in-flight handler returns context.Canceled,
+// and if the record-back then used that same cancelled ctx it would fail
+// before dialling — the row would stay claimed with no retry time (so it
+// is only reclaimable after the orphan window), and the alert would never
+// be sent. Exactly the moment the bookkeeping matters most is the moment
+// the original ctx is unusable. The timeout still bounds it. The handler
+// itself keeps the real ctx and aborts promptly; only the bookkeeping is
+// allowed to finish.
+func (e *Engine) bookkeepingContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := e.BookkeepingTimeout
+	if timeout <= 0 {
+		timeout = defaultBookkeepingTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
 // attempt runs one task's claim → handler → report-back cycle and returns
 // nil, or a *TaskError naming the stage that went wrong. A denied claim
 // returns nil.
@@ -367,7 +400,9 @@ func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time)
 // be reclaimed as orphaned, so the caller must not report a clean run.
 func (e *Engine) recordSuccess(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int) error {
 	slog.InfoContext(ctx, "csm-scheduled-tasks: succeeded", "task", task.Name, "period", period)
-	if err := e.Ledger.Complete(ctx, runID, attemptCount); err != nil {
+	bctx, cancel := e.bookkeepingContext(ctx)
+	defer cancel()
+	if err := e.Ledger.Complete(bctx, runID, attemptCount); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record success in ledger", "task", task.Name, "runId", runID, "err", err)
 		return &TaskError{Task: task.Name, Stage: StageComplete, Err: err}
 	}
@@ -389,7 +424,9 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 		backoff = e.DriverInterval
 	}
 	nextRetry := now.Add(backoff)
-	if err := e.Ledger.Fail(ctx, runID, attemptCount, handlerErr.Error(), nextRetry); err != nil {
+	bctx, cancel := e.bookkeepingContext(ctx)
+	defer cancel()
+	if err := e.Ledger.Fail(bctx, runID, attemptCount, handlerErr.Error(), nextRetry); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record failure in ledger", "task", task.Name, "runId", runID, "err", err)
 		errs = append(errs, &TaskError{Task: task.Name, Stage: StageFail, Err: err})
 	}
@@ -420,7 +457,7 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 		NextRetry:    nextRetry.Format(time.RFC3339),
 		Error:        handlerErr.Error(),
 	})
-	if err := e.Email.SendEmail(ctx, to, task.Cc, subject, body); err != nil {
+	if err := e.Email.SendEmail(bctx, to, task.Cc, subject, body); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to send alert email", "task", task.Name, "err", err)
 		errs = append(errs, &TaskError{Task: task.Name, Stage: StageAlert, Err: err})
 	}
