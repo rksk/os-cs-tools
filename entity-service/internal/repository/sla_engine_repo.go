@@ -377,9 +377,32 @@ func registerClockExec(ctx context.Context, exec sqlExecutor, workItemID string,
 	return tag.RowsAffected() > 0, nil
 }
 
-// RegisterClock implements SLAEngineRepository.
+// lockWorkItemClocks serializes clock registration and revision for one work
+// item for the rest of tx. slaEngineRegisterClockQuery's INSERT ... WHERE NOT
+// EXISTS is not atomic under READ COMMITTED, and there is no unique index to
+// back it up (target lives on sla_policy, not sla), so two registrations for
+// the same (work item, target) racing each other -- or one racing a
+// ReviseClocks -- could both see no open clock and both insert, leaving two
+// active clocks that every SLA read and breach alert then double-counts.
+// Holding this lock, each statement that follows sees the other side's
+// committed rows. Same transaction-scoped pattern as case_repo.go's
+// one-ongoing-case lock.
+func lockWorkItemClocks(ctx context.Context, tx pgx.Tx, workItemID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('sla-clock:' || $1::text, 0))`, workItemID); err != nil {
+		return fmt.Errorf("lock csm sla clocks: %w", err)
+	}
+	return nil
+}
+
+// RegisterClock implements SLAEngineRepository. Runs in its own short
+// transaction so it can take lockWorkItemClocks.
 func (r *slaEngineRepo) RegisterClock(ctx context.Context, workItemID string, policy SLAPolicyRef) (bool, error) {
-	return registerClockExec(ctx, r.db, workItemID, policy)
+	return InTxReturning(ctx, r.db, func(tx pgx.Tx) (bool, error) {
+		if err := lockWorkItemClocks(ctx, tx, workItemID); err != nil {
+			return false, err
+		}
+		return registerClockExec(ctx, tx, workItemID, policy)
+	})
 }
 
 // CompleteClock implements SLAEngineRepository.
@@ -564,6 +587,9 @@ func (r *slaEngineRepo) ReviseClocks(ctx context.Context, workItemID string, pol
 
 	var cancelled int
 	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
+		if err := lockWorkItemClocks(ctx, tx, workItemID); err != nil {
+			return fmt.Errorf("revise csm sla clocks: %w", err)
+		}
 		tag, err := tx.Exec(ctx, cancelQuery, workItemID, sqlActorLiteral)
 		if err != nil {
 			return fmt.Errorf("revise csm sla clocks: cancel active: %w", err)
