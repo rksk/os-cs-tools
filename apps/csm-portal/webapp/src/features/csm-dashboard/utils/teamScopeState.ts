@@ -26,14 +26,17 @@ export type TeamScopeState =
   /** The selected team is unknown or has no group id for this dashboard's discipline. */
   | "missing";
 
-interface TeamScopeInput {
+export interface TeamScopeInput {
   isTeamBased: boolean;
   selectedTeamId: string | undefined;
   /** `dashboard.type` — `cre` needs a CRE group id, `sre` an SRE group id. */
   dashboardType: string | undefined;
   teamsPending: boolean;
   teamsError: boolean;
-  selectedTeam: { creGroupId?: string; sreGroupId?: string } | undefined;
+  /** Whether the selected id matches a team in the loaded list. */
+  selectedTeamFound: boolean;
+  selectedTeamHasCreGroup: boolean;
+  selectedTeamHasSreGroup: boolean;
 }
 
 /**
@@ -49,16 +52,18 @@ export function resolveTeamScopeState({
   dashboardType,
   teamsPending,
   teamsError,
-  selectedTeam,
+  selectedTeamFound,
+  selectedTeamHasCreGroup,
+  selectedTeamHasSreGroup,
 }: TeamScopeInput): TeamScopeState {
   if (!isTeamBased || !selectedTeamId || selectedTeamId === ALL_TEAMS_SENTINEL) {
     return "ready";
   }
   if (teamsPending) return "loading";
   if (teamsError) return "error";
-  if (!selectedTeam) return "missing";
-  const hasCre = Boolean(selectedTeam.creGroupId);
-  const hasSre = Boolean(selectedTeam.sreGroupId);
+  if (!selectedTeamFound) return "missing";
+  const hasCre = selectedTeamHasCreGroup;
+  const hasSre = selectedTeamHasSreGroup;
   if (dashboardType === "cre") return hasCre ? "ready" : "missing";
   if (dashboardType === "sre") return hasSre ? "ready" : "missing";
   return hasCre || hasSre ? "ready" : "missing";

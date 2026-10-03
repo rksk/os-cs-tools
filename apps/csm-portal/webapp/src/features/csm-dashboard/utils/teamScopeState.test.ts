@@ -23,9 +23,9 @@ const base = {
   dashboardType: "cre" as string | undefined,
   teamsPending: false,
   teamsError: false,
-  selectedTeam: { creGroupId: "c-1", sreGroupId: undefined } as
-    | { creGroupId?: string; sreGroupId?: string }
-    | undefined,
+  selectedTeamFound: true,
+  selectedTeamHasCreGroup: true,
+  selectedTeamHasSreGroup: false,
 };
 
 describe("resolveTeamScopeState", () => {
@@ -42,20 +42,20 @@ describe("resolveTeamScopeState", () => {
 
   it("holds while the teams list is loading, so no org-wide query fires", () => {
     expect(
-      resolveTeamScopeState({ ...base, teamsPending: true, selectedTeam: undefined }),
+      resolveTeamScopeState({ ...base, teamsPending: true, selectedTeamFound: false }),
     ).toBe("loading");
   });
 
   it("reports an error when the teams list failed", () => {
     expect(
-      resolveTeamScopeState({ ...base, teamsError: true, selectedTeam: undefined }),
+      resolveTeamScopeState({ ...base, teamsError: true, selectedTeamFound: false }),
     ).toBe("error");
   });
 
   it("reports missing for an unknown team or one with no group for the discipline", () => {
-    expect(resolveTeamScopeState({ ...base, selectedTeam: undefined })).toBe("missing");
+    expect(resolveTeamScopeState({ ...base, selectedTeamFound: false })).toBe("missing");
     expect(resolveTeamScopeState({ ...base, dashboardType: "sre" })).toBe("missing");
-    expect(resolveTeamScopeState({ ...base, selectedTeam: {} })).toBe("missing");
+    expect(resolveTeamScopeState({ ...base, selectedTeamHasCreGroup: false })).toBe("missing");
   });
 
   it("is ready once the team has the discipline's group id", () => {
@@ -64,7 +64,8 @@ describe("resolveTeamScopeState", () => {
       resolveTeamScopeState({
         ...base,
         dashboardType: undefined,
-        selectedTeam: { sreGroupId: "s-1" },
+        selectedTeamHasCreGroup: false,
+        selectedTeamHasSreGroup: true,
       }),
     ).toBe("ready");
   });
