@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/middleware"
 )
 
 func TestLogger_CallsNextAndPreservesResponse(t *testing.T) {

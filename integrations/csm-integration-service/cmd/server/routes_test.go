@@ -24,8 +24,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/middleware"
 )
 
 const testUUID = "11111111-1111-1111-1111-111111111111"
