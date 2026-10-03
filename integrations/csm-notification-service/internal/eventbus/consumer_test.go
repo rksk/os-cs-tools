@@ -552,3 +552,94 @@ func TestConsumer_Status_ReflectsActivityAndCounters(t *testing.T) {
 		t.Errorf("Name = %q, want test", after.Name)
 	}
 }
+
+// TestDrainContext_OutlivesStopByTheGracePeriod: the work context ignores
+// the stop signal itself and is cancelled only once the grace period has
+// passed after it.
+func TestDrainContext_OutlivesStopByTheGracePeriod(t *testing.T) {
+	stop, cancelStop := context.WithCancel(context.Background())
+	work, cancelWork := drainContext(stop, 40*time.Millisecond)
+	defer cancelWork()
+
+	cancelStop()
+	time.Sleep(10 * time.Millisecond)
+	if err := work.Err(); err != nil {
+		t.Fatalf("work context cancelled %v after stop, want it alive during the grace period", err)
+	}
+	select {
+	case <-work.Done():
+	case <-time.After(time.Second):
+		t.Fatal("work context still alive a second after stop, want it cancelled after the 40ms grace")
+	}
+}
+
+func TestDrainContext_NoDeadlineWithoutStop(t *testing.T) {
+	work, cancelWork := drainContext(context.Background(), time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
+	if work.Err() != nil {
+		t.Fatal("work context cancelled with no stop signal, want no per-record deadline in normal operation")
+	}
+	cancelWork()
+	if work.Err() == nil {
+		t.Fatal("cancel func did not cancel the work context")
+	}
+}
+
+// TestProcessRecordUntil_InFlightAttemptFinishesOnShutdown: a stop signal
+// arriving while handle is running does not cancel the context handle runs
+// under, and a successful attempt is still reported committable.
+func TestProcessRecordUntil_InFlightAttemptFinishesOnShutdown(t *testing.T) {
+	stop, cancelStop := context.WithCancel(context.Background())
+	work, cancelWork := drainContext(stop, time.Second)
+	defer cancelWork()
+	handle := func(ctx context.Context, r Record) error {
+		cancelStop()
+		time.Sleep(20 * time.Millisecond)
+		return ctx.Err()
+	}
+	c := testConsumer(testPolicy, nil)
+	if ok := c.processRecordUntil(stop, work, Record{}, handle, nil); !ok {
+		t.Fatal("processRecordUntil() = false, want true: the in-flight attempt succeeded and must be committed")
+	}
+	if got := c.Stats().Handled.Load(); got != 1 {
+		t.Errorf("Handled = %d, want 1", got)
+	}
+}
+
+// TestProcessRecordUntil_ShutdownStopsFurtherAttempts: after a failed
+// attempt, a stop signal ends the backoff wait and no further attempt
+// starts; the record is left uncommitted for redelivery.
+func TestProcessRecordUntil_ShutdownStopsFurtherAttempts(t *testing.T) {
+	stop, cancelStop := context.WithCancel(context.Background())
+	work, cancelWork := drainContext(stop, time.Second)
+	defer cancelWork()
+	calls := 0
+	handle := func(ctx context.Context, r Record) error {
+		calls++
+		cancelStop()
+		return errors.New("upstream down")
+	}
+	c := testConsumer(RetryPolicy{MaxAttempts: 3, BaseDelay: time.Hour, MaxDelay: time.Hour}, nil)
+	if ok := c.processRecordUntil(stop, work, Record{}, handle, nil); ok {
+		t.Fatal("processRecordUntil() = true, want false (not finished, must not be committed)")
+	}
+	if calls != 1 {
+		t.Errorf("handle called %d times, want 1", calls)
+	}
+}
+
+func TestConsumer_DoneClosesWhenRunReturns(t *testing.T) {
+	c := NewConsumer(Config{Broker: "127.0.0.1:1", ConnectionString: "x", Topic: "t"}, "g", WithDrainTimeout(10*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.Run(ctx, func(context.Context, Record) error { return nil }, nil)
+	cancel()
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done not closed after Run was stopped")
+	}
+	if st := c.Status(); st.State != "exited" {
+		t.Errorf("State = %q after Run returned, want exited", st.State)
+	}
+	c.Close()
+}

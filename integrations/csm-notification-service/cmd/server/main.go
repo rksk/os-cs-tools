@@ -336,8 +336,12 @@ func main() {
 
 	// Every consumer parks the same way; only the retry schedule differs
 	// between a first tier and a dead-letter tier.
-	firstTier := []eventbus.Option{eventbus.WithRetryPolicy(mainRetry), eventbus.WithParking(park)}
-	deadLetterTier := []eventbus.Option{eventbus.WithRetryPolicy(dlqRetry), eventbus.WithParking(park)}
+	// SHUTDOWN_DRAIN_TIMEOUT: how long an in-flight record may keep running
+	// after SIGTERM (see eventbus.Consumer.Run). Keep it, plus the reader
+	// close, inside the platform's termination grace period.
+	drainTimeout := envDuration("SHUTDOWN_DRAIN_TIMEOUT", eventbus.DefaultDrainTimeout)
+	firstTier := []eventbus.Option{eventbus.WithRetryPolicy(mainRetry), eventbus.WithParking(park), eventbus.WithDrainTimeout(drainTimeout)}
+	deadLetterTier := []eventbus.Option{eventbus.WithRetryPolicy(dlqRetry), eventbus.WithParking(park), eventbus.WithDrainTimeout(drainTimeout)}
 
 	// /health reflects the consumers, not just the HTTP server: 503 once
 	// any consumer's Run has exited or has made no progress for
@@ -386,18 +390,18 @@ func main() {
 		}
 	}()
 
-	mainConsumers := consumers.add(startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter, firstTier...))
-	dlqConsumers := consumers.add(startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
+	consumers.add(startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter, firstTier...))
+	consumers.add(startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 	// Same dispatcher as the case consumers: it already routes on the
 	// envelope's Type, and these two only ever receive change_request.* since
 	// that is all their topic carries.
-	crConsumers := consumers.add(startConsumers(ctx, "cr", crCfg, crConsumerGroup, crConsumerCount, dispatcher.Handle, crToDeadLetter, firstTier...))
-	crDLQConsumers := consumers.add(startConsumers(ctx, "cr-dlq", crDLQCfg, crDLQConsumerGroup, crDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
+	consumers.add(startConsumers(ctx, "cr", crCfg, crConsumerGroup, crConsumerCount, dispatcher.Handle, crToDeadLetter, firstTier...))
+	consumers.add(startConsumers(ctx, "cr-dlq", crDLQCfg, crDLQConsumerGroup, crDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 	// And the same for project_contact.invited: the one dispatcher routes
 	// on the envelope's Type already, and these two only ever receive the
 	// onboarding events since that is all their topic carries.
-	projectConsumers := consumers.add(startConsumers(ctx, "project", projectCfg, projectConsumerGroup, projectConsumerCount, dispatcher.Handle, projectToDeadLetter, firstTier...))
-	projectDLQConsumers := consumers.add(startConsumers(ctx, "project-dlq", projectDLQCfg, projectDLQConsumerGroup, projectDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
+	consumers.add(startConsumers(ctx, "project", projectCfg, projectConsumerGroup, projectConsumerCount, dispatcher.Handle, projectToDeadLetter, firstTier...))
+	consumers.add(startConsumers(ctx, "project-dlq", projectDLQCfg, projectDLQConsumerGroup, projectDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 
 	// The SLA breach-alerting engine is optional per deployment, gated on
 	// REDIS_ADDR or REDIS_URL being set — unset means this engine never
@@ -500,24 +504,12 @@ func main() {
 	<-ctx.Done()
 	stop()
 
-	for _, c := range mainConsumers {
-		c.Close()
-	}
-	for _, c := range dlqConsumers {
-		c.Close()
-	}
-	for _, c := range crConsumers {
-		c.Close()
-	}
-	for _, c := range crDLQConsumers {
-		c.Close()
-	}
-	for _, c := range projectConsumers {
-		c.Close()
-	}
-	for _, c := range projectDLQConsumers {
-		c.Close()
-	}
+	// Drain before closing: every consumer stops fetching on the signal,
+	// lets its in-flight record finish (bounded by drainTimeout) and
+	// commits it; only then are the readers closed. Closing first would
+	// abort the commit of a record whose notification has already gone
+	// out, and the redelivery after restart would send it again.
+	consumers.drainAndClose(drainTimeout + 5*time.Second)
 	if slaProducer != nil {
 		slaProducer.Close()
 	}

@@ -44,6 +44,31 @@ func (r *consumerRegistry) add(consumers []*eventbus.Consumer) []*eventbus.Consu
 	return consumers
 }
 
+// drainAndClose waits, up to wait in total, for every registered
+// consumer's Run to return (each drains its in-flight record first — see
+// eventbus.Consumer.Run), then closes them all. A consumer still busy when
+// wait runs out is closed anyway and logged: shutdown must finish inside
+// the platform's termination grace period.
+func (r *consumerRegistry) drainAndClose(wait time.Duration) {
+	r.mu.RLock()
+	consumers := append([]*eventbus.Consumer(nil), r.consumers...)
+	r.mu.RUnlock()
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	for _, c := range consumers {
+		select {
+		case <-c.Done():
+		case <-deadline.C:
+			slog.Warn("shutdown: consumer did not finish draining in time; closing it anyway", "consumer", c.Name())
+			deadline.Reset(0)
+		}
+	}
+	for _, c := range consumers {
+		c.Close()
+	}
+	slog.Info("shutdown: consumers drained and closed", "count", len(consumers))
+}
+
 // statuses snapshots every registered consumer.
 func (r *consumerRegistry) statuses() []eventbus.ConsumerStatus {
 	r.mu.RLock()
