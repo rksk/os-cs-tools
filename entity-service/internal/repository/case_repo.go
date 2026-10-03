@@ -3222,13 +3222,53 @@ func recomputeTimeCardsBillable(ctx context.Context, q txQuerier, caseID string,
 	return tag.RowsAffected(), nil
 }
 
+// caseParentCycleQuery reports whether $2 (the case being re-parented) is $1
+// (the proposed parent) or one of $1's ancestors, i.e. whether the new link
+// would close a loop. The depth cap only stops the walk on a loop that
+// already exists in the data.
+const caseParentCycleQuery = `
+	WITH RECURSIVE ancestor(id, depth) AS (
+		SELECT $1::uuid, 0
+		UNION ALL
+		SELECT wi.parent_id, a.depth + 1
+		FROM work_item wi
+		JOIN ancestor a ON wi.id = a.id
+		WHERE wi.parent_id IS NOT NULL AND a.depth < 1000
+	)
+	SELECT EXISTS (SELECT 1 FROM ancestor WHERE id = $2::uuid)`
+
 // UpdateCaseParent implements CaseRepository.
+//
+// A case cannot be its own parent, nor a descendant of itself: with a loop
+// in parent_id, UpdateCase's "cannot close while a child case is open" guard
+// makes every case on the loop impossible to close. The ancestor walk and
+// the update run in one transaction behind a transaction-scoped advisory
+// lock, so two concurrent re-parents (A under B, B under A) cannot each pass
+// the check before the other commits.
 func (r *caseRepo) UpdateCaseParent(ctx context.Context, caseID, parentID, callerEmail string) (time.Time, error) {
+	if strings.EqualFold(caseID, parentID) {
+		return time.Time{}, &apierror.ValidationError{Msg: "parentId: a case cannot be its own parent"}
+	}
 	var updatedOn time.Time
-	err := r.db.QueryRow(ctx,
-		`UPDATE work_item SET parent_id = $2::uuid, updated_on = NOW(), updated_by = $3 WHERE id = $1 RETURNING updated_on`,
-		caseID, parentID, callerEmail,
-	).Scan(&updatedOn)
+	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('work-item-parent', 0))`); err != nil {
+			return fmt.Errorf("lock: %w", err)
+		}
+		var cycle bool
+		if err := tx.QueryRow(ctx, caseParentCycleQuery, parentID, caseID).Scan(&cycle); err != nil {
+			return fmt.Errorf("check parent cycle: %w", err)
+		}
+		if cycle {
+			return &apierror.ValidationError{Msg: "parentId: the selected case is already a child of this case"}
+		}
+		return tx.QueryRow(ctx,
+			`UPDATE work_item SET parent_id = $2::uuid, updated_on = NOW(), updated_by = $3 WHERE id = $1 RETURNING updated_on`,
+			caseID, parentID, callerEmail,
+		).Scan(&updatedOn)
+	})
+	if ve := (*apierror.ValidationError)(nil); errors.As(err, &ve) {
+		return time.Time{}, ve
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, &apierror.NotFoundError{Msg: "case not found"}
 	}
