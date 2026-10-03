@@ -14,11 +14,11 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Local-dev image for scripts/csm-compose/seed-generator -- see that
-# package's doc comment and apps/csm-portal/README.md. LOCAL DEVELOPMENT
-# ONLY: this generates randomized dummy CSM data into entity-service's
-# Postgres database and is never built or deployed anywhere other than this
-# docker-compose stack.
+# LOCAL DEV ONLY -- builds the mock OIDC provider (scripts/csm-compose/
+# mock-oidc) used by the docker-compose stack in apps/csm-portal/README.md
+# so contributors can run the CSM platform without access to a real
+# identity provider. The binary refuses to start unless
+# MOCK_OIDC_LOCAL_DEV=1 is set; docker-compose.yml sets it.
 
 # Pinned to the patch level the go.mod directive asks for, with toolchain
 # downloads disabled, so the build is hermetic.
@@ -28,20 +28,22 @@ ENV GOTOOLCHAIN=local GOFLAGS=-mod=readonly CGO_ENABLED=0
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
+COPY go.mod ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags="-s -w" -o /out/seed-generator .
+    go build -trimpath -ldflags="-s -w" -o /out/mock-oidc .
 
 FROM alpine:3.20
 
+RUN apk add --no-cache ca-certificates
+
 WORKDIR /app
 
-COPY --from=builder /out/seed-generator ./seed-generator
+COPY --from=builder /out/mock-oidc ./mock-oidc
 
 RUN adduser \
     --disabled-password \
@@ -49,9 +51,9 @@ RUN adduser \
     --home "/nonexistent" \
     --shell "/sbin/nologin" \
     --no-create-home \
-    --uid 10112 \
+    --uid 10109 \
     "csmdev"
 
-USER 10112
+USER 10109
 
-ENTRYPOINT ["./seed-generator"]
+ENTRYPOINT ["./mock-oidc"]
