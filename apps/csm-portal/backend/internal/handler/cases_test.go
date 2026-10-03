@@ -1113,9 +1113,11 @@ func TestSearchCases(t *testing.T) {
 				return []byte(`{"cases":[],"total":0}`), nil
 			},
 		}
-		h := NewCaseHandler(client)
+		// A PermViewSecurityCenter holder's body is forwarded verbatim; see
+		// cases_security_center_test.go for the scoping applied to everyone else.
+		h := NewCaseHandler(client).WithAccessGuard(NewAccessGuard(testAccessConfig()))
 		const reqBody = `{"filters":{"parentId":"44444444-4444-4444-4444-444444444444"}}`
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
+		r := withCsEngineerUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
 
@@ -3371,9 +3373,9 @@ func TestSearchCasesForwardsTagsFilter(t *testing.T) {
 			return []byte(`{"cases":[],"total":0}`), nil
 		},
 	}
-	h := NewCaseHandler(client)
+	h := NewCaseHandler(client).WithAccessGuard(NewAccessGuard(testAccessConfig()))
 	const reqBody = `{"filters":{"tags":["micro-gw","ws-policy"]}}`
-	r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
+	r := withCsEngineerUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
 	w := httptest.NewRecorder()
 	h.SearchCases(w, r)
 
@@ -4022,8 +4024,8 @@ func TestAggregateCases(t *testing.T) {
 				return []byte(`{"groups":[{"key":"open","label":"Open","count":3}],"othersCount":1,"totalRecords":4}`), nil
 			},
 		}
-		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/aggregate", strings.NewReader(reqPayload)))
+		h := NewCaseHandler(client).WithAccessGuard(NewAccessGuard(testAccessConfig()))
+		r := withCsEngineerUser(httptest.NewRequest(http.MethodPost, "/cases/aggregate", strings.NewReader(reqPayload)))
 		w := httptest.NewRecorder()
 		h.AggregateCases(w, r)
 

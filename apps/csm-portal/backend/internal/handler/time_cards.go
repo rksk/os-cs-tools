@@ -147,7 +147,7 @@ func (h *TimeCardHandler) CreateTimeCard(w http.ResponseWriter, r *http.Request)
 // state transition (`state: "approved"`/`"rejected"`) on this same PATCH
 // route, so the two can only be told apart by inspecting the body itself,
 // the same best-effort JSON-inspection approach
-// caseSearchTargetsSecurityReports uses for its own shared-route problem. A
+// scopeCaseSearchBody uses for its own shared-route problem. A
 // body this can't make sense of is treated as not a transition, since a
 // genuinely malformed request is rejected by entity-service's own validation
 // regardless of what this check decides.
