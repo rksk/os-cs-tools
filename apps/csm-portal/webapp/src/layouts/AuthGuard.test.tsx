@@ -15,7 +15,7 @@
 // under the License.
 
 import "@testing-library/jest-dom/vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { lazy, type JSX } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +98,8 @@ const currentUserState: {
   user: undefined,
 };
 
+const refetchUserMock = vi.fn();
+
 vi.mock("@context/current-user/CurrentUserContext", () => ({
   CurrentUserProvider: ({ children }: { children: React.ReactNode }) => children,
   useCurrentUser: () => ({
@@ -105,6 +107,7 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
     isLoading: currentUserState.isLoading,
     isError: currentUserState.isError,
     error: currentUserState.error,
+    refetch: refetchUserMock,
   }),
 }));
 
@@ -432,7 +435,7 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     });
   });
 
-  it("does not show the not-authorized page for an unrelated /users/me failure (e.g. 500)", async () => {
+  it("shows a retryable error state, not the routed page, for an unrelated /users/me failure (e.g. 500)", async () => {
     currentUserState.isError = true;
     currentUserState.error = new ApiError(500, "Internal Server Error");
     let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
@@ -452,9 +455,11 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
       screen.queryByText("You don't have access to this portal yet"),
     ).not.toBeInTheDocument();
     expect(appLayoutPropsMock).toHaveBeenCalledWith({
-      minimalHeader: false,
+      minimalHeader: true,
       showCaseTabs: true,
     });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetchUserMock).toHaveBeenCalledTimes(1);
   });
 });
 

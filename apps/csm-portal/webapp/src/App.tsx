@@ -36,6 +36,7 @@ import {
   firstEnabledDestination,
 } from "@config/featureFlags";
 import { usePortalAccess } from "@context/current-user/usePortalAccess";
+import { useProfileUnknown } from "@context/current-user/useProfileStatus";
 import { usePortalView } from "@context/current-user/usePortalView";
 import {
   POST_LOGIN_REDIRECT_KEY,
@@ -188,8 +189,13 @@ function FeatureRouteGuard(): JSX.Element {
   // Per-user: a page the user's roles don't unlock (e.g. Operations for a
   // view-only role) is hidden the same way a deployment-hidden page is.
   const state = featureStateForPath(pathname, access);
+  // With the profile still loading or failed, every role-derived flag reads
+  // false and would wrongly look "hidden": render the route instead of
+  // redirecting away from a deep link (the shell shows the error/retry state
+  // and the backend gates each request).
+  const profileUnknown = useProfileUnknown();
 
-  if (state === "hidden") {
+  if (state === "hidden" && !profileUnknown) {
     const fallback = firstEnabledDestination(access);
     const samePath = fallback !== undefined && fallback.split(/[?#]/)[0] === pathname;
     return <Navigate to={!fallback || samePath ? "/404" : fallback} replace />;
