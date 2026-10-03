@@ -19,6 +19,8 @@ customer-portal-backend ┘                                              (same t
 
 Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
 
+Each stream starts with `retry: 3000`, and each `case_updated` event carries an `id:`. A client reconnecting with `Last-Event-ID` is replayed the events it missed for that case, best-effort: the window is short (last 256 events, at most 2 minutes), in memory, and local to one replica, so clients must still refresh on every (re)connect.
+
 ## Auth
 
 The SSE endpoint validates `x-jwt-assertion` (and optional `x-user-id-token`) on every request via the same `middleware.Auth` chain as `csm-portal-backend`. There is no separate ticket/token-exchange step. The browser connects with these headers directly via an EventSource polyfill (`@sanity/eventsource`) — native `EventSource` cannot set custom headers.

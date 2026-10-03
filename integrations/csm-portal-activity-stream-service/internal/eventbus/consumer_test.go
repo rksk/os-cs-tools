@@ -173,3 +173,15 @@ func TestSupervisor_NotRunningBeforeStart(t *testing.T) {
 		t.Error("Running() = true before Run")
 	}
 }
+
+func TestNewConsumer_BatchesCommits(t *testing.T) {
+	c := NewConsumer(Config{Broker: "localhost:9093", Topic: "t"}, "g", LatestOffset)
+	defer c.Close()
+	r, ok := c.reader.(*kafka.Reader)
+	if !ok {
+		t.Fatalf("reader is %T, want *kafka.Reader", c.reader)
+	}
+	if got := r.Config().CommitInterval; got != commitInterval {
+		t.Errorf("CommitInterval = %v, want %v (batched, not per-record synchronous)", got, commitInterval)
+	}
+}
