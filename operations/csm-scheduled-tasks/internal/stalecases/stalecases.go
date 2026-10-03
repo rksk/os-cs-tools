@@ -18,7 +18,7 @@
 // every case that's been open for more than a configured threshold and
 // emails a report of them. This is the first sub-cron in this component to
 // send an email on success rather than only on failure — see this
-// component's own CLAUDE.md ("Future: per-task report emails") for why that
+// component's own CLAUDE.md ("Per-task report emails") for why that
 // wasn't built as a generic engine feature: the report itself is sent from
 // inside SendReport's returned handler, using recipients the caller supplies
 // directly, not through engine.Engine's failure-alert path at all.
