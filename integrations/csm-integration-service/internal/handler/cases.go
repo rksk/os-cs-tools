@@ -19,7 +19,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -77,19 +76,8 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -143,19 +131,8 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(raw) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	raw, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -197,19 +174,8 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 // by case number) and the response is returned as-is. No case-number lookup
 // or other special-casing lives here; mirrors SearchAccounts's shape.
 func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -252,19 +218,8 @@ func (h *CaseHandler) AddCaseTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(raw) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	raw, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 

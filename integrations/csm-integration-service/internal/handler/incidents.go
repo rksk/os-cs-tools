@@ -18,8 +18,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 )
@@ -54,19 +52,8 @@ func NewIncidentHandler(entity entityIncidentClient) *IncidentHandler {
 // succeeded with no 401, creating a real incident (INC0096966). See the
 // entity-client method's doc comment.
 func (h *IncidentHandler) CreateIncident(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -97,19 +84,8 @@ func (h *IncidentHandler) PatchIncident(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -131,19 +107,8 @@ func (h *IncidentHandler) PatchIncident(w http.ResponseWriter, r *http.Request) 
 // forwarded verbatim; the entity service enforces its own field validation
 // and 400s otherwise, so this handler does not re-validate that.
 func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 

@@ -18,8 +18,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 )
@@ -54,19 +52,8 @@ func NewITServiceHandler(entity entityITServiceClient) *ITServiceHandler {
 // enforces its own field validation and 400s otherwise, so this handler does
 // not re-validate that.
 func (h *ITServiceHandler) SearchITServices(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
