@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { useNavigate, useParams } from "react-router";
 import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardHeader";
@@ -32,6 +32,7 @@ import {
   writeStoredDashboardSelection,
 } from "@features/csm-dashboard/utils/dashboardSelectionStorage";
 import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveTeamScopeState } from "@features/csm-dashboard/utils/teamScopeState";
 
 /**
  * Top-level CSM dashboard. The dashboard list is BE-driven (`GET
@@ -278,6 +279,18 @@ export default function CsmDashboardPage(): JSX.Element {
   const selectedTeamLabel: string | undefined =
     selectedTeamId === ALL_TEAMS_SENTINEL ? "All ABTs" : selectedTeam?.name;
 
+  // A single selected team's widgets must not fetch until its group id is
+  // known: an unresolved `__current_team__` filter is dropped, which would
+  // show org-wide numbers under this team's label.
+  const teamScopeState = resolveTeamScopeState({
+    isTeamBased,
+    selectedTeamId,
+    dashboardType: currentEntry?.type,
+    teamsPending: teams.isPending === true,
+    teamsError: teams.isError === true,
+    selectedTeam,
+  });
+
   const writePath = useCallback(
     (nextDashboardId: string, nextTeamId: string | undefined) => {
       navigate(
@@ -363,12 +376,22 @@ export default function CsmDashboardPage(): JSX.Element {
         selectedTeamId={selectedTeamId}
         onTeamChange={handleTeamChange}
       />
-      <AgentsLandingPagePilot
-        dashboardId={dashboardKey}
-        selectedTeamCreGroupId={selectedTeamCreGroupId}
-        selectedTeamSreGroupId={selectedTeamSreGroupId}
-        selectedTeamLabel={selectedTeamLabel}
-      />
+      {teamScopeState === "ready" ? (
+        <AgentsLandingPagePilot
+          dashboardId={dashboardKey}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
+          selectedTeamLabel={selectedTeamLabel}
+        />
+      ) : teamScopeState === "loading" ? (
+        <Skeleton variant="rounded" height={200} />
+      ) : (
+        <Alert severity={teamScopeState === "error" ? "error" : "info"}>
+          {teamScopeState === "error"
+            ? "Could not load the team list, so this team's scope is unknown. Reload to try again."
+            : "No team scope: this team has no group configured for this dashboard, so team figures can't be shown. Pick another team, or choose All ABTs."}
+        </Alert>
+      )}
     </Box>
   );
 }
