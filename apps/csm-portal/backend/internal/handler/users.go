@@ -342,6 +342,20 @@ func (h *UsersHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only user management may list external users; every other caller's
+	// search is scoped to staff accounts here, whatever the client sent.
+	if !h.canManageUsers(user) {
+		body, err = scopeUserSearchToStaff(body)
+		if err != nil {
+			if errors.Is(err, errExternalUserSearch) {
+				writeError(w, http.StatusForbidden, ErrMsgForbidden)
+				return
+			}
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+	}
+
 	result, err := h.entity.SearchUsers(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchUsers failed", "userID", user.UserID, "err", err)
@@ -388,15 +402,126 @@ func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		enriched = result
 	}
 
-	// SCIM's "external" org existence/lock check is independent of the teams
-	// enrichment above, so a failure in either never blocks the other.
-	enriched = h.withExternalAccountStatus(r.Context(), enriched, user.UserID)
+	if h.canManageUsers(user) {
+		// SCIM's "external" org existence/lock check is independent of the
+		// teams enrichment above, so a failure in either never blocks the other.
+		enriched = h.withExternalAccountStatus(r.Context(), enriched, user.UserID)
+	} else {
+		// An external contact's per-project access (and account lock state)
+		// is user-management detail; other callers get the profile without it.
+		enriched, err = withoutExternalAccessDetail(enriched)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "GetUser: could not decode user profile", "userID", user.UserID, "err", err)
+			writeError(w, http.StatusInternalServerError, "Failed to fetch the user.")
+			return
+		}
+	}
 
 	// Independent of both enrichments above: replaces entity-service's own
 	// role vocabulary with the portal-role one, for an internal target only.
 	enriched = h.withPortalRoles(r.Context(), enriched, user.UserID)
 
 	writeJSON(w, http.StatusOK, enriched)
+}
+
+// staffSearchRoles are the role names a non-user-management caller may filter
+// POST /users/search by: the staff roles (the webapp's INTERNAL_USER_ROLES)
+// plus timecard_approver, which the time-card approver picker filters on and
+// which only staff hold. defaultStaffSearchRoles is what is injected when the
+// caller sent no roleIds at all.
+var (
+	staffSearchRoles        = map[string]bool{"internal": true, "agent": true, "admin": true, "timecard_approver": true}
+	defaultStaffSearchRoles = []string{"internal", "agent", "admin"}
+)
+
+// errExternalUserSearch is returned by scopeUserSearchToStaff when the caller
+// filtered by a role outside staffSearchRoles.
+var errExternalUserSearch = errors.New("user search names a non-staff role")
+
+// canManageUsers reports whether user may see external users in user
+// listings and profiles: the write permission, which the user-management
+// screens already require for every action on them. Fails closed without a
+// guard.
+func (h *UsersHandler) canManageUsers(user *middleware.UserInfo) bool {
+	return h.access != nil && h.access.Permits(PermWrite, user.Roles)
+}
+
+// scopeUserSearchToStaff forces a POST /users/search body onto staff accounts:
+// with no filters.roleIds it sets defaultStaffSearchRoles; with roleIds it
+// requires every value to be in staffSearchRoles (roleIds is OR semantics
+// upstream, so one external role would widen the result) and otherwise
+// returns errExternalUserSearch. Every other field is carried through as
+// json.RawMessage.
+func scopeUserSearchToStaff(body []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope == nil {
+		envelope = map[string]json.RawMessage{}
+	}
+	var filters map[string]json.RawMessage
+	if raw, ok := envelope["filters"]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &filters); err != nil {
+			return nil, err
+		}
+	}
+	if filters == nil {
+		filters = map[string]json.RawMessage{}
+	}
+	var roleIDs []string
+	if raw, ok := filters["roleIds"]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &roleIDs); err != nil {
+			return nil, err
+		}
+	}
+	if len(roleIDs) > 0 {
+		for _, role := range roleIDs {
+			if !staffSearchRoles[role] {
+				return nil, errExternalUserSearch
+			}
+		}
+		return body, nil
+	}
+	rolesJSON, err := json.Marshal(defaultStaffSearchRoles)
+	if err != nil {
+		return nil, err
+	}
+	filters["roleIds"] = rolesJSON
+	filtersJSON, err := json.Marshal(filters)
+	if err != nil {
+		return nil, err
+	}
+	envelope["filters"] = filtersJSON
+	return json.Marshal(envelope)
+}
+
+// withoutExternalAccessDetail removes projectAccess and externalAccount from a
+// GET /users/{id} profile whose userType is not "internal". An internal
+// profile is returned unchanged.
+func withoutExternalAccessDetail(raw []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope == nil {
+		return raw, nil
+	}
+	var userType string
+	if rawType, ok := envelope["userType"]; ok {
+		_ = json.Unmarshal(rawType, &userType)
+	}
+	if userType == "internal" {
+		return raw, nil
+	}
+	_, hadAccess := envelope["projectAccess"]
+	_, hadAccount := envelope["externalAccount"]
+	if !hadAccess && !hadAccount {
+		return raw, nil
+	}
+	delete(envelope, "projectAccess")
+	delete(envelope, "externalAccount")
+	return json.Marshal(envelope)
 }
 
 // createUserRequest is the POST /users request shape, parsed here only to
