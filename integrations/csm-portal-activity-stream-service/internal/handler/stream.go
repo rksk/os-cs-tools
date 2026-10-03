@@ -64,6 +64,12 @@ const (
 // is `{"reason": "<reason>"}`.
 const (
 	EventStreamClosed = "stream_closed"
+	// EventShutdown is written when this replica is shutting down. Its data
+	// is {"reason": "shutdown"}; the client should reconnect, which the
+	// load balancer routes to a replica that is still serving.
+	EventShutdown = "shutdown"
+	// ReasonShutdown is EventShutdown's reason.
+	ReasonShutdown = "shutdown"
 
 	// ReasonTokenExpired: the token that opened the stream reached its exp.
 	ReasonTokenExpired = "token_expired"
@@ -293,6 +299,11 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 			flusher.Flush()
 		case payload, ok := <-ch:
 			if !ok {
+				// Only BroadcastHub.CloseAll closes a channel while its
+				// subscriber is still reading (Unregister runs after this
+				// function returns), i.e. the server is shutting down.
+				writeTerminalEvent(w, flusher, EventShutdown, ReasonShutdown)
+				slog.InfoContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", ReasonShutdown)
 				return
 			}
 			// payload is always compact, single-line JSON built by

@@ -34,8 +34,9 @@ const subscriberBuffer = 4
 // BroadcastHub fans a payload out to every subscriber registered for a given
 // case ID. Safe for concurrent use.
 type BroadcastHub struct {
-	mu   sync.Mutex
-	subs map[string]map[chan string]bool
+	mu     sync.Mutex
+	subs   map[string]map[chan string]bool
+	closed bool
 }
 
 // NewBroadcastHub constructs an empty BroadcastHub.
@@ -46,11 +47,17 @@ func NewBroadcastHub() *BroadcastHub {
 // Register opens a new subscription for caseID and returns the channel to
 // read from. Call Unregister with the same caseID/channel when the caller is
 // done listening (e.g. the SSE request's context is done) — the channel is
-// closed there, not here.
+// closed there, not here. After CloseAll, Register returns an
+// already-closed channel, so a late subscriber sees the same shutdown signal
+// as every earlier one.
 func (h *BroadcastHub) Register(caseID string) chan string {
 	ch := make(chan string, subscriberBuffer)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		close(ch)
+		return ch
+	}
 	if h.subs[caseID] == nil {
 		h.subs[caseID] = make(map[chan string]bool)
 	}
@@ -87,5 +94,24 @@ func (h *BroadcastHub) Publish(caseID, payload string) {
 		case ch <- payload:
 		default:
 		}
+	}
+}
+
+// CloseAll closes every subscriber channel and refuses further
+// registrations. It is the hub's shutdown hook: a closed channel is how
+// StreamCaseActivities learns the process is going away, so it can send a
+// terminal event and return — which is what lets http.Server.Shutdown finish
+// instead of waiting out its deadline on connections that are never idle.
+// Safe to call more than once; a later Unregister of a channel closed here is
+// a no-op.
+func (h *BroadcastHub) CloseAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	for caseID, subs := range h.subs {
+		for ch := range subs {
+			close(ch)
+		}
+		delete(h.subs, caseID)
 	}
 }
