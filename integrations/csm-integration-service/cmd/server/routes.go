@@ -30,21 +30,21 @@ import (
 // operation groups it needs and nothing else, so adding a route here means
 // choosing (or introducing) its scope in both places.
 const (
-	scopeAccountsRead              = "accounts:read"
-	scopeContactsRead              = "contacts:read"
-	scopeProjectsRead              = "projects:read"
-	scopeProjectsWrite             = "projects:write"
-	scopeCasesRead                 = "cases:read"
-	scopeCasesWrite                = "cases:write"
-	scopeOpportunitiesRead         = "opportunities:read"
-	scopeInvoicesRead              = "invoices:read"
-	scopeVulnerabilitiesSync       = "vulnerabilities:sync"
-	scopeIncidentsRead             = "incidents:read"
-	scopeIncidentsWrite            = "incidents:write"
-	scopeServicesRead              = "services:read"
-	scopeAlertIncidentMappingsRead = "alert-incident-mappings:read"
+	scopeAccountsRead               = "accounts:read"
+	scopeContactsRead               = "contacts:read"
+	scopeProjectsRead               = "projects:read"
+	scopeProjectsWrite              = "projects:write"
+	scopeCasesRead                  = "cases:read"
+	scopeCasesWrite                 = "cases:write"
+	scopeOpportunitiesRead          = "opportunities:read"
+	scopeInvoicesRead               = "invoices:read"
+	scopeVulnerabilitiesSync        = "vulnerabilities:sync"
+	scopeIncidentsRead              = "incidents:read"
+	scopeIncidentsWrite             = "incidents:write"
+	scopeServicesRead               = "services:read"
+	scopeAlertIncidentMappingsRead  = "alert-incident-mappings:read"
 	scopeAlertIncidentMappingsWrite = "alert-incident-mappings:write"
-	scopeCloudStatusRead           = "cloud-status:read"
+	scopeCloudStatusRead            = "cloud-status:read"
 )
 
 // handlers groups the resource handlers the route table is built from.
