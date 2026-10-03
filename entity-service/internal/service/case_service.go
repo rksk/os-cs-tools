@@ -1229,7 +1229,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 ||
 		req.AddPublicComment != nil || req.Product != nil || req.PublicTicket != nil ||
 		req.AutocloseHoldUntil != nil {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "type, engagementType, engagementPaymentType, issueType, catalogId, catalogItemId, variables, addPublicComment, product, publicTicket, and autocloseHoldUntil are only supported for the ServiceNow data source"}
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "type, engagementType, engagementPaymentType, issueType, catalogId, catalogItemId, variables, addPublicComment, product, publicTicket, and autocloseHoldUntil are not supported by this data source"}
 	}
 
 	// The exclusive/combinable split below mirrors sn_case_service.go's own
@@ -2958,7 +2958,7 @@ func (s *caseService) DeleteCaseAttachment(ctx context.Context, req domain.Delet
 }
 
 func (s *caseService) GetAttachment(_ context.Context, _ string) (domain.Attachment, error) {
-	return domain.Attachment{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+	return domain.Attachment{}, &apierror.ServiceUnavailableError{Msg: "attachments are not supported by this data source"}
 }
 
 // AddCaseTag implements CaseService.
@@ -3155,11 +3155,11 @@ func (s *caseService) SearchTags(ctx context.Context, req domain.SearchTagsReque
 }
 
 func (s *caseService) GetCaseFeedback(_ context.Context, _ string) (domain.CaseEmojiFeedback, error) {
-	return domain.CaseEmojiFeedback{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
+	return domain.CaseEmojiFeedback{}, &apierror.ServiceUnavailableError{Msg: "case feedback is not supported by this data source"}
 }
 
 func (s *caseService) SubmitCaseFeedback(_ context.Context, _ string, _ domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error) {
-	return domain.SubmitCaseFeedbackResponse{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
+	return domain.SubmitCaseFeedbackResponse{}, &apierror.ServiceUnavailableError{Msg: "case feedback is not supported by this data source"}
 }
 
 // GetAttachmentByID implements CaseService for the CSM-native (Postgres) data
