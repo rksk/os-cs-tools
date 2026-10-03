@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -499,27 +498,6 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
-}
-
-// getBoolOrDefault parses a boolean env var, falling back to defaultVal when it
-// is unset or unparseable.
-//
-// The other boolean flags here compare against "true" directly, which is safe
-// for a flag that defaults to off: a typo leaves it off, as it already was.
-// This one exists for flags that default to ON — there, "TRUE" or "1" silently
-// turning the flag off is a real failure, so accept everything ParseBool does.
-func getBoolOrDefault(key string, defaultVal bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
-	}
-	parsed, err := strconv.ParseBool(strings.TrimSpace(v))
-	if err != nil {
-		slog.Warn("ignoring unparseable boolean configuration value",
-			"key", key, "value", v, "using", defaultVal)
-		return defaultVal
-	}
-	return parsed
 }
 
 // splitComma parses a comma-separated env var into a trimmed, non-empty
