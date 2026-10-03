@@ -180,6 +180,11 @@ func parseIncidentFieldFiltersPostgres(f domain.SearchIncidentsFilters, now time
 			}
 			// Accepted, validated, but never applied -- no confirmed
 			// product-name-to-service mapping on this data source.
+		default:
+			// A field the shared contract accepts but this data source cannot
+			// apply (incidentStateKeys today). Dropping it would answer 200
+			// with a wider result set than asked for, so it is refused.
+			return nil, nil, nil, nil, nil, nil, nil, nil, &apierror.ValidationError{Msg: "filters: field " + f.Field + " is not supported by this data source"}
 		}
 	}
 	return priorities, states, serviceIDs, assignedUserIDs, madeSla, slaViolated, createdStartDate, createdEndDate, nil
