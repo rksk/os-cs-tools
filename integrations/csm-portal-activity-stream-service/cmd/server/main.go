@@ -209,6 +209,13 @@ func main() {
 			IdleTimeout:       0,
 		}
 
+		// Shutdown waits for connections to go idle, which an open SSE
+		// response never does; closing the hub ends every stream (each
+		// with a terminal `shutdown` event so the client reconnects to
+		// another replica) and lets Shutdown complete within its grace
+		// period instead of timing out.
+		streamSrv.RegisterOnShutdown(activityHub.CloseAll)
+
 		go func() {
 			if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
 				slog.Error("stream server exited", "err", err)

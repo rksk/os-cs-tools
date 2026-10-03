@@ -125,3 +125,33 @@ func TestBroadcastHub_ConcurrentRegisterPublishUnregister(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestBroadcastHub_CloseAllClosesEverySubscriber(t *testing.T) {
+	h := NewBroadcastHub()
+	a := h.Register("case-1")
+	b := h.Register("case-1")
+	c := h.Register("case-2")
+	h.CloseAll()
+
+	for i, ch := range []chan string{a, b, c} {
+		if _, ok := <-ch; ok {
+			t.Fatalf("subscriber %d still open after CloseAll", i)
+		}
+	}
+	// Deferred Unregister calls from the handlers must not panic
+	// (double close), and Publish must be a no-op.
+	h.Unregister("case-1", a)
+	h.Unregister("case-2", c)
+	h.Publish("case-1", "x")
+	h.CloseAll() // idempotent
+}
+
+func TestBroadcastHub_RegisterAfterCloseAllReturnsClosedChannel(t *testing.T) {
+	h := NewBroadcastHub()
+	h.CloseAll()
+	ch := h.Register("case-1")
+	if _, ok := <-ch; ok {
+		t.Fatal("Register after CloseAll returned an open channel")
+	}
+	h.Unregister("case-1", ch) // must not panic
+}

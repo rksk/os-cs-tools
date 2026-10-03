@@ -35,7 +35,10 @@ paths:
         close is announced with a terminal `event: stream_closed` whose
         data is `{"reason": "token_expired" | "max_lifetime" |
         "access_revoked"}`; clients should reconnect with a fresh token
-        (and expect 401/403 if access really is gone).
+        (and expect 401/403 if access really is gone). When the serving
+        replica shuts down the stream ends with `event: shutdown`
+        (`{"reason": "shutdown"}`); reconnecting reaches a replica that
+        is still serving.
       operationId: getCasesIdActivitiesStream
       parameters:
         - name: id
