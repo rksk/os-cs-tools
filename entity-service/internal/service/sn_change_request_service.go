@@ -108,16 +108,6 @@ type snChangeRequestFilters struct {
 	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
 }
 
-// snCRTypeIDMap maps domain ChangeRequestType enums to SN numeric type IDs.
-var snCRTypeIDMap = map[domain.ChangeRequestType]int{
-	domain.ChangeRequestTypeStandard:           1,
-	domain.ChangeRequestTypeNormal:             2,
-	domain.ChangeRequestTypeEmergency:          3,
-	domain.ChangeRequestTypeModel:              4,
-	domain.ChangeRequestTypeSiteReliabilityOps: 100,
-	domain.ChangeRequestTypeAzure:              200,
-}
-
 // snCRStateIDMap maps domain ChangeRequestState enums to SN numeric state IDs.
 var snCRStateIDMap = map[domain.ChangeRequestState]int{
 	domain.ChangeRequestStateNew:              -5,
