@@ -33,6 +33,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmintegration"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmnotification"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
@@ -81,10 +83,10 @@ func main() {
 	// base URL and scopes differ per service.
 	oauth2ClientID := mustEnv("OAUTH2_CLIENT_ID")
 	oauth2ClientSecret := mustEnv("OAUTH2_CLIENT_SECRET")
-	oauth2TokenURL := mustEnv("OAUTH2_TOKEN_URL")
+	oauth2TokenURL := mustCredentialBaseURL("OAUTH2_TOKEN_URL", mustEnv("OAUTH2_TOKEN_URL"))
 
 	customerEntityCfg := entity.CustomerEntityConfig{
-		BaseURL:      mustEnv("CUSTOMER_ENTITY_BASE_URL"),
+		BaseURL:      mustCredentialBaseURL("CUSTOMER_ENTITY_BASE_URL", mustEnv("CUSTOMER_ENTITY_BASE_URL")),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -250,7 +252,7 @@ func main() {
 	}
 
 	updatesCfg := updates.Config{
-		BaseURL:      mustEnv("UPDATES_BASE_URL"),
+		BaseURL:      mustCredentialBaseURL("UPDATES_BASE_URL", mustEnv("UPDATES_BASE_URL")),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -260,7 +262,7 @@ func main() {
 	updatesHandler := handler.NewUpdatesHandler(updatesClient)
 
 	scimCfg := scim.Config{
-		BaseURL:      mustEnv("SCIM_BASE_URL"),
+		BaseURL:      mustCredentialBaseURL("SCIM_BASE_URL", mustEnv("SCIM_BASE_URL")),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -322,7 +324,7 @@ func main() {
 	changeRequestHandler = changeRequestHandler.WithAccessGuard(accessGuard)
 
 	authCfg := middleware.Config{
-		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
+		JWKSEndpoint:          mustCredentialBaseURL("AUTH_JWKS_ENDPOINT", mustEnv("AUTH_JWKS_ENDPOINT")),
 		Issuer:                mustEnv("AUTH_ISSUER"),
 		Audiences:             splitComma(mustEnv("AUTH_AUDIENCE")),
 		ClockSkew:             5 * time.Second,
@@ -1147,6 +1149,84 @@ func mustHTTPSBaseURL(key, value string) string {
 	return value
 }
 
+// mustCredentialBaseURL validates a base URL that OAuth2 client credentials,
+// tokens or token-signing keys travel over (OAUTH2_TOKEN_URL,
+// CUSTOMER_ENTITY_BASE_URL, UPDATES_BASE_URL, SCIM_BASE_URL,
+// AUTH_JWKS_ENDPOINT): validateCredentialBaseURL's rules, exiting on failure.
+func mustCredentialBaseURL(key, value string) string {
+	if err := validateCredentialBaseURL(value); err != nil {
+		slog.Error("invalid environment variable", "key", key, "err", err)
+		os.Exit(1)
+	}
+	return value
+}
+
+// validateCredentialBaseURL is validateHTTPSBaseURL, except that plain http
+// is accepted for a local host: a loopback address or "localhost", or a
+// single-label host name such as a container service name on a local compose
+// network ("entity-service", "mock-oidc"). Those never leave the machine or
+// the private container network; any dotted (routable) host must use https.
+func validateCredentialBaseURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Scheme == "http" && isLocalHost(parsed.Hostname()) {
+		https := *parsed
+		https.Scheme = "https"
+		return validateHTTPSBaseURL(https.String())
+	}
+	return validateHTTPSBaseURL(value)
+}
+
+// isLocalHost reports whether host is "localhost", a loopback IP, or a
+// single-label name (no dot, not an IP), the shape of a local container
+// service name.
+func isLocalHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return !strings.Contains(host, ".")
+}
+
+// mustRiskMySQLDSN reads SPL_RISK_MYSQL_DSN and exits unless it passes
+// validateRiskMySQLDSN. The DSN itself is never logged: it carries the
+// database password.
+func mustRiskMySQLDSN() string {
+	dsn := mustEnv("SPL_RISK_MYSQL_DSN")
+	if err := validateRiskMySQLDSN(dsn); err != nil {
+		slog.Error("invalid environment variable", "key", "SPL_RISK_MYSQL_DSN", "err", err)
+		os.Exit(1)
+	}
+	return dsn
+}
+
+// validateRiskMySQLDSN refuses a MySQL DSN that does not request TLS
+// (`tls=true`), unless it points at a local host (see isLocalHost).
+func validateRiskMySQLDSN(dsn string) error {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return errors.New("not a valid MySQL DSN")
+	}
+	if cfg.TLSConfig == "true" {
+		return nil
+	}
+	host := cfg.Addr
+	if h, _, splitErr := net.SplitHostPort(cfg.Addr); splitErr == nil {
+		host = h
+	}
+	if (cfg.Net == "tcp" || cfg.Net == "") && isLocalHost(host) {
+		return nil
+	}
+	if cfg.Net == "unix" {
+		return nil
+	}
+	return errors.New("must request TLS with tls=true unless the host is local")
+}
+
 func mustHTTPSURL(key, value string) string {
 	if err := validateHTTPSURL(value); err != nil {
 		// Deliberately omit the raw value from this log line: it may carry
@@ -1367,7 +1447,7 @@ func loadViewerConfig() (bool, viewerConfig) {
 		driveClientID:          mustEnv("GOOGLE_DRIVE_CLIENT_ID"),
 		driveClientSecret:      mustEnv("GOOGLE_DRIVE_CLIENT_SECRET"),
 		driveRefreshToken:      mustEnv("GOOGLE_DRIVE_REFRESH_TOKEN"),
-		riskMySQLDSN:           mustEnv("SPL_RISK_MYSQL_DSN"),
+		riskMySQLDSN:           mustRiskMySQLDSN(),
 		salesEntityBaseURL:     mustHTTPSBaseURL("SALES_ENTITY_BASE_URL", mustEnv("SALES_ENTITY_BASE_URL")),
 	}
 }
