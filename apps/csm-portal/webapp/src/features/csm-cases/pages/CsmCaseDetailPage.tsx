@@ -1015,7 +1015,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         assigneeName: data.assigneeName,
       },
     });
-  }, [data, recordView]);
+  }, [data, recordView, detailPath]);
 
   // Resolve the single-active-case rule once the engineer's other ongoing
   // cases are already known: mark THIS case ongoing if there are none, or
