@@ -2,7 +2,7 @@
 
 Go HTTP server (`net/http`, Go 1.26+) that serves the case-activity SSE endpoint (`GET /cases/{id}/activities/stream`). It consumes the `case-events` Azure Event Hub topic in its own consumer group and fans `case.comment_added` / `case.status_changed` events to any connected SSE clients via an in-process BroadcastHub.
 
-This service was extracted from `apps/csm-portal/backend/internal/stream` + `internal/caseevents` + the dedicated :9092 listener in `apps/csm-portal/backend/cmd/server/main.go`. That backend no longer serves the SSE stream; it only publishes events to the topic.
+This service was extracted from `apps/csm-portal/backend/internal/stream` + `internal/caseevents` + the dedicated :9092 listener in `apps/csm-portal/backend/cmd/server/main.go`. That backend no longer serves the SSE stream and no longer publishes to the topic; `entity-service` is the sole publisher of `case-events`.
 
 ## Why a separate service
 
@@ -13,11 +13,10 @@ This service was extracted from `apps/csm-portal/backend/internal/stream` + `int
 ## Event flow
 
 ```
-csm-portal-backend ──▶ Event Hub "case-events" ──▶ this service (consumer group per replica) ──▶ BroadcastHub ──▶ browser EventSource
-customer-portal-backend ┘                                              (same topic, own groups)
+entity-service ──▶ Event Hub "case-events" ──▶ this service (consumer group per replica, LatestOffset) ──▶ BroadcastHub ──▶ browser EventSource
 ```
 
-Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
+Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` (`timestamp` = the record's time on the topic) — no comment text or field values.
 
 Each stream starts with `retry: 3000`, and each `case_updated` event carries an `id:`. A client reconnecting with `Last-Event-ID` is replayed the events it missed for that case, best-effort: the window is short (last 256 events, at most 2 minutes), in memory, and local to one replica, so clients must still refresh on every (re)connect.
 
