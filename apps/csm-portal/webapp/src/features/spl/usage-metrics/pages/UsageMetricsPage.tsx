@@ -28,7 +28,7 @@ import {
   daysAgoLocalStr,
   todayLocalStr,
 } from "@features/spl/usage-metrics/utils/dateBounds";
-import { useEffect, useMemo, useRef, useState, type JSX, type SyntheticEvent, type UIEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type JSX, type SyntheticEvent, type UIEvent } from "react";
 import {
   Box,
   Typography,
@@ -153,10 +153,20 @@ export default function UsageMetricsPage(): JSX.Element {
     clearAll: clearProdInstances,
   } = useParallelPostApi<SnInstancesResponse>();
 
-  const { dataMap: prodMetricsStats, loading: prodMetricsStatsLoading, postAll: fetchProdMetricsStats } =
+  const {
+    dataMap: prodMetricsStats,
+    failedIds: prodMetricsFailed,
+    loading: prodMetricsStatsLoading,
+    postAll: fetchProdMetricsStats,
+  } =
     useParallelPostApi<SnDeployedProductMetricsResponse>();
 
-  const { dataMap: prodUsagesStats, loading: prodUsagesStatsLoading, postAll: fetchProdUsagesStats } =
+  const {
+    dataMap: prodUsagesStats,
+    failedIds: prodUsagesFailed,
+    loading: prodUsagesStatsLoading,
+    postAll: fetchProdUsagesStats,
+  } =
     useParallelPostApi<SnDeployedProductUsageCountsResponse>();
 
   useEffect(() => {
@@ -694,8 +704,13 @@ export default function UsageMetricsPage(): JSX.Element {
                 <Typography color="text.secondary">No product data available for this deployment.</Typography>
               ) : (
                 productBreakdown.map((p) => (
+                  <Fragment key={p.id}>
+                  {(prodMetricsFailed.has(p.id) || prodUsagesFailed.has(p.id)) && (
+                    <Alert severity="warning" sx={{ mb: 1, borderRadius: "8px" }}>
+                      Couldn&apos;t load usage metrics for {p.name}. Collapse and expand the row to retry.
+                    </Alert>
+                  )}
                   <ProductBreakdownRow
-                    key={p.id}
                     {...p}
                     deploymentId={activeDepId}
                     coreMetrics={prodMetricsStats.get(p.id)}
@@ -706,6 +721,7 @@ export default function UsageMetricsPage(): JSX.Element {
                     expanded={expandedProductIds.has(p.id)}
                     onToggle={() => handleProductToggle(p.id)}
                   />
+                  </Fragment>
                 ))
               )}
             </>
