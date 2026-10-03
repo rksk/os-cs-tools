@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
@@ -32,6 +33,10 @@ import (
 )
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// limitRetryAfter is the Retry-After hint on a 429/503 refused by the
+// connection limiter. Advisory: the browser polyfill applies its own backoff.
+const limitRetryAfter = 30 * time.Second
 
 // caseActivityStreamHeartbeat is how often StreamCaseActivities writes a
 // comment-only SSE ping to keep the connection alive through intermediate
@@ -99,20 +104,19 @@ const (
 // re-authorization (5xx, network) is logged and the stream kept open; only a
 // definitive 401/403/404 closes it — the lifetime cap bounds the worst case.
 //
-// Known limitation, not yet addressed: there is no per-user or per-replica
-// cap on how many of these a single caller can hold open concurrently, and
-// the dedicated :9092 listener runs with WriteTimeout/IdleTimeout disabled
-// (see cmd/server/main.go) to keep long-lived connections alive — nothing
-// here stops a buggy or malicious client from opening unbounded connections
-// and exhausting server resources (goroutines, file descriptors). Add
-// bounded admission control (e.g. a per-user semaphore rejecting beyond some
-// limit) or confirm and document an enforced platform-level limit before
-// relying on this in a hostile-client environment.
+// Admission. The dedicated :9092 listener runs with WriteTimeout/IdleTimeout
+// disabled (see cmd/server/main.go) to keep long-lived connections alive, so
+// every open stream holds a goroutine, a file descriptor and a hub
+// subscription until the client leaves or the lifetime bound fires. A
+// connLimiter caps that per user (429 Too Many Requests) and per replica
+// (503 Service Unavailable), both with Retry-After, before the upstream
+// authorization call is made — see WithConnectionLimits for the defaults.
 type StreamHandler struct {
 	entityClient   entityCaseClient
 	hub            *stream.BroadcastHub
 	maxLifetime    time.Duration
 	reauthInterval time.Duration
+	limiter        *connLimiter
 }
 
 // entityCaseClient is the minimal interface StreamHandler needs from the
@@ -144,6 +148,22 @@ func WithReauthInterval(d time.Duration) Option {
 	}
 }
 
+// WithConnectionLimits overrides DefaultMaxStreamsPerUser and
+// DefaultMaxStreamsTotal: the maximum number of concurrently open streams per
+// authenticated user and per replica. 0 disables that dimension; negative
+// values are ignored.
+func WithConnectionLimits(perUser, total int) Option {
+	return func(h *StreamHandler) {
+		if perUser < 0 {
+			perUser = h.limiter.maxPerUser
+		}
+		if total < 0 {
+			total = h.limiter.maxTotal
+		}
+		h.limiter = newConnLimiter(perUser, total)
+	}
+}
+
 // NewStreamHandler constructs a StreamHandler. hub may be nil —
 // StreamCaseActivities checks for that before registering.
 func NewStreamHandler(entityClient entityCaseClient, hub *stream.BroadcastHub, opts ...Option) *StreamHandler {
@@ -152,6 +172,7 @@ func NewStreamHandler(entityClient entityCaseClient, hub *stream.BroadcastHub, o
 		hub:            hub,
 		maxLifetime:    DefaultMaxStreamLifetime,
 		reauthInterval: DefaultReauthInterval,
+		limiter:        newConnLimiter(DefaultMaxStreamsPerUser, DefaultMaxStreamsTotal),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -175,6 +196,23 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 
 	if h.hub == nil {
 		writeError(w, http.StatusServiceUnavailable, "Live updates are not available right now.")
+		return
+	}
+
+	// Admission control runs before the upstream authorization call so a
+	// refused connection costs no entity-service round-trip.
+	release, outcome := h.limiter.acquire(user.UserID)
+	defer release()
+	switch outcome {
+	case userLimitReached:
+		w.Header().Set("Retry-After", strconv.Itoa(int(limitRetryAfter/time.Second)))
+		slog.WarnContext(r.Context(), "case activity stream refused: per-user connection limit reached", "caseID", caseID, "limit", h.limiter.maxPerUser)
+		writeError(w, http.StatusTooManyRequests, ErrMsgTooManyStreams)
+		return
+	case replicaLimitReached:
+		w.Header().Set("Retry-After", strconv.Itoa(int(limitRetryAfter/time.Second)))
+		slog.WarnContext(r.Context(), "case activity stream refused: replica connection limit reached", "caseID", caseID, "limit", h.limiter.maxTotal)
+		writeError(w, http.StatusServiceUnavailable, ErrMsgStreamCapacity)
 		return
 	}
 
