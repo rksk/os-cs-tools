@@ -80,10 +80,6 @@ export const ATTACHMENTS_ENDPOINT = "/attachments";
 export const ATTACHMENTS_SEARCH_ENDPOINT = "/attachments/search";
 export const ATTACHMENT_CONTENT_ENDPOINT = (id: string) => `/attachments/${id}/content`;
 
-// react-pdf's worker script — mirrors the customer-portal microapp's own PDF_JS_DIST_CDN
-// (config/endpoints.ts), which points at the pdfjs-dist version react-pdf was built against.
-export const PDF_JS_DIST_CDN = (version: string) => `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-
 export const TIME_CARDS_ENDPOINT = "/time-cards";
 export const TIME_CARDS_SEARCH_ENDPOINT = "/time-cards/search";
 export const TIME_CARD_ENDPOINT = (id: string) => `/time-cards/${id}`;
