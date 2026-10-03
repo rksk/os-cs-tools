@@ -223,9 +223,20 @@ func (s *userService) GetUser(ctx context.Context, id string) (domain.UserDetail
 	if err := validateUUIDs("id", []string{id}); err != nil {
 		return domain.UserDetail{}, err
 	}
+	// The directory is read with the caller's resolved scope. Only an
+	// internal caller may look up any user; any other caller may only see
+	// internal users, and a non-internal user is reported as not found rather
+	// than confirming it exists.
+	scope, err := resolveCallerScope(ctx, nil)
+	if err != nil {
+		return domain.UserDetail{}, err
+	}
 	u, err := s.repo.GetUserDetail(ctx, id)
 	if err != nil {
 		return domain.UserDetail{}, err
+	}
+	if !scope.Unrestricted && u.UserType != domain.UserTypeInternal {
+		return domain.UserDetail{}, &apierror.NotFoundError{Msg: "user not found"}
 	}
 	if u.Roles, err = s.repo.GetUserRoles(ctx, id); err != nil {
 		return domain.UserDetail{}, err
@@ -275,9 +286,26 @@ func (s *userService) SearchUsers(ctx context.Context, req domain.SearchUsersReq
 		return domain.SearchUsersResponse{}, &apierror.ValidationError{Msg: "roleIds cannot contain more than 50 values"}
 	}
 
+	scope, err := resolveCallerScope(ctx, nil)
+	if err != nil {
+		return domain.SearchUsersResponse{}, err
+	}
+
 	users, total, err := s.repo.SearchUsers(ctx, req)
 	if err != nil {
 		return domain.SearchUsersResponse{}, err
+	}
+	// A caller that is not internal may only list internal users. The
+	// repository has no user-type predicate, so this filters the page;
+	// total still counts the unfiltered match set.
+	if !scope.Unrestricted {
+		internal := users[:0]
+		for _, u := range users {
+			if u.UserType == domain.UserTypeInternal {
+				internal = append(internal, u)
+			}
+		}
+		users = internal
 	}
 
 	return domain.SearchUsersResponse{
@@ -352,13 +380,19 @@ func (s *userService) GetMe(ctx context.Context) (domain.GetUserMeResponse, erro
 
 // CreateUser implements UserService.
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.User{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	actor, err := emailFromJWT(token)
+	// Creating users (and granting their roles) is user management: internal
+	// callers only. The platform has no finer user-management permission
+	// yet, so any internal caller passes.
+	scope, err := resolveCallerScope(ctx, nil)
 	if err != nil {
-		return domain.User{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.User{}, err
+	}
+	if !scope.Unrestricted {
+		return domain.User{}, &apierror.ForbiddenError{Msg: "only internal users may create users"}
+	}
+	actor, err := callerEmail(ctx)
+	if err != nil {
+		return domain.User{}, err
 	}
 
 	if err := validateEmail(req.Email); err != nil {
