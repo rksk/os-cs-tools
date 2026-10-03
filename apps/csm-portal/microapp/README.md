@@ -18,6 +18,10 @@ the bridge (`requestToken` / `requestIdToken`) and receives them through `resolv
 `resolveIdToken`.
 
 - Tokens are held **in memory only** (`src/services/auth.ts`); nothing is written to web storage.
+- Every token refresh (launch, API requests, the case activity stream) shares one in-flight
+  promise owned by `auth.ts`, and the bridge keeps one pending request per topic with a list of
+  waiters, so overlapping callers never overwrite each other's resolver. A bridge request that
+  is not answered within about 10 seconds is rejected.
 - The API client (`src/services/apiClient.ts`) attaches the tokens to each request and retries
   once after a 401 with a forced refresh.
 
