@@ -107,8 +107,52 @@ func TestAnonymousRoutesMatchTheContract(t *testing.T) {
 	}
 }
 
+// TestOperationalRoutesAreInternalOnly pins the route-level authorization
+// wiring for the resources that have no row-level security and no per-project
+// scope: each listed operation must be registered through internalOnly (or
+// projectMemberOnly where noted), so that a resolvable but non-internal caller
+// -- a customer with a valid user token -- is refused on the route itself,
+// independent of which service or repository backs the handler.
+func TestOperationalRoutesAreInternalOnly(t *testing.T) {
+	guarded := guardedRoutes(t)
+	if len(guarded) == 0 {
+		t.Fatal("parsed no guarded routes; the parser is broken, not the routes")
+	}
+
+	required := []string{
+		"POST /salesforce/events",
+		"POST /event-publish-failures", "POST /event-publish-failures/search", "POST /event-publish-failures/{id}/resolve",
+		"POST /scheduled-tasks/attempts", "PATCH /scheduled-tasks/attempts/{id}", "GET /scheduled-tasks/attempts", "DELETE /scheduled-tasks/attempts",
+		"POST /alert-incident-mappings", "POST /alert-incident-mappings/lookup",
+		"GET /teams/{id}/members", "GET /products/github-repo",
+		"POST /internal/cloud-status/sweep", "GET /internal/cloud-status/pending", "POST /internal/cloud-status/{id}/delivery",
+		"GET /accounts/{id}", "POST /accounts/search", "POST /accounts/{id}/contacts/search",
+		"POST /time-cards", "PATCH /time-cards/{id}", "DELETE /time-cards/{id}",
+		"POST /incidents", "POST /problems", "POST /incident-tasks/search",
+	}
+	plg := registeredRoutesIn(t, "plg_routes.go")
+	if len(plg) == 0 {
+		t.Fatal("parsed no routes from plg_routes.go; the parser is broken, not the routes")
+	}
+	required = append(required, plg...)
+
+	for _, pattern := range required {
+		method, path, _ := strings.Cut(pattern, " ")
+		if guard := guarded[normalizeRoute(method, path)]; guard != "internalOnly" {
+			t.Errorf("%s is registered with guard %q, want internalOnly", pattern, guard)
+		}
+	}
+	for _, pattern := range []string{"POST /projects/{id}/contacts/search", "GET /projects/{id}/contacts/{contactId}"} {
+		method, path, _ := strings.Cut(pattern, " ")
+		if guard := guarded[normalizeRoute(method, path)]; guard != "projectMemberOnly" {
+			t.Errorf("%s is registered with guard %q, want projectMemberOnly", pattern, guard)
+		}
+	}
+}
+
 var (
 	handleFuncRE = regexp.MustCompile(`mux\.HandleFunc\("([A-Z]+) (/[^"]*)"`)
+	guardedRE    = regexp.MustCompile(`mux\.HandleFunc\("([A-Z]+) (/[^"]*)",\s*(internalOnly|projectMemberOnly)\(`)
 	pathParamRE  = regexp.MustCompile(`\{[^}]*\}`)
 )
 
@@ -118,16 +162,40 @@ func normalizeRoute(method, path string) string {
 	return strings.ToUpper(method) + " " + pathParamRE.ReplaceAllString(strings.TrimSuffix(path, "/"), "{}")
 }
 
+// guardedRoutes maps every route registered through a route-level guard, in
+// routes.go and plg_routes.go, to the guard's name. The outage writes, whose
+// guard is chosen at wiring time by data source, are not literal and so are
+// not reported here.
+func guardedRoutes(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, file := range []string{"routes.go", "plg_routes.go"} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, m := range guardedRE.FindAllStringSubmatch(string(src), -1) {
+			out[normalizeRoute(m[1], m[2])] = m[3]
+		}
+	}
+	return out
+}
+
 // registeredRoutes extracts every route literal registered in routes.go.
 // Reading the source rather than the built mux avoids having to construct the
 // full handler dependency graph, and every registration in this package is a
 // string literal (a non-literal pattern would simply not be seen, which the
 // empty-result guard in the test catches if it ever becomes the norm).
 func registeredRoutes(t *testing.T) []string {
+	return registeredRoutesIn(t, "routes.go")
+}
+
+// registeredRoutesIn is registeredRoutes over one named source file.
+func registeredRoutesIn(t *testing.T, file string) []string {
 	t.Helper()
-	src, err := os.ReadFile("routes.go")
+	src, err := os.ReadFile(file)
 	if err != nil {
-		t.Fatalf("read routes.go: %v", err)
+		t.Fatalf("read %s: %v", file, err)
 	}
 	seen := map[string]bool{}
 	var out []string
