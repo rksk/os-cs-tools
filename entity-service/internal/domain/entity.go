@@ -396,7 +396,7 @@ type SearchAccountsFilters struct {
 // SearchAccountsRequest is the input for an account search operation.
 type SearchAccountsRequest struct {
 	Pagination Pagination            `json:"pagination"`
-	Filters    SearchAccountsFilters `json:"filters,omitempty"`
+	Filters    SearchAccountsFilters `json:"filters"`
 }
 
 // AccountView is the unified account search-result shape returned for all data
