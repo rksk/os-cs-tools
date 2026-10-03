@@ -53,6 +53,11 @@ type UserInfo struct {
 	Email  string
 	UserID string
 	Groups []string
+	// ExpiresAt is the token's exp claim. Zero when the token carries none
+	// (only possible with TokenValidatorEnabled=false, since validation
+	// requires exp). Long-lived handlers use it to bound their own lifetime
+	// to the credential that opened them — see handler.StreamCaseActivities.
+	ExpiresAt time.Time
 }
 
 // Config holds JWT validation configuration.
@@ -244,11 +249,15 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		return nil, fmt.Errorf("token missing userid claim")
 	}
 
-	return &UserInfo{
+	info := &UserInfo{
 		Email:  c.Email,
 		UserID: c.UserID,
 		Groups: c.Groups,
-	}, nil
+	}
+	if c.ExpiresAt != nil {
+		info.ExpiresAt = c.ExpiresAt.Time
+	}
+	return info, nil
 }
 
 func hasAnyAudience(tokenAuds jwt.ClaimStrings, expected []string) bool {

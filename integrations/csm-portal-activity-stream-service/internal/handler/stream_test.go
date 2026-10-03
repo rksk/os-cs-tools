@@ -125,10 +125,11 @@ func TestStreamCaseActivities_UnauthorizedCase(t *testing.T) {
 // blocks for the life of the connection) trips the race detector make test
 // runs under.
 type syncRecorder struct {
-	mu     sync.Mutex
-	header http.Header
-	status int
-	body   bytes.Buffer
+	mu          sync.Mutex
+	header      http.Header
+	status      int
+	wroteHeader bool
+	body        bytes.Buffer
 }
 
 func newSyncRecorder() *syncRecorder {
@@ -141,6 +142,16 @@ func (r *syncRecorder) WriteHeader(status int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.status = status
+	r.wroteHeader = true
+}
+
+// started reports whether the handler has committed the response headers.
+// Tests wait on this (rather than reading Header() concurrently, which races
+// with the handler's own Set calls) before acting on an open stream.
+func (r *syncRecorder) started() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.wroteHeader
 }
 
 func (r *syncRecorder) Write(p []byte) (int, error) {
@@ -230,5 +241,168 @@ func assertStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if w.Code != want {
 		t.Errorf("status = %d, want %d; body: %s", w.Code, want, w.Body.String())
+	}
+}
+
+// ---- stream lifetime (token expiry, max lifetime, re-authorization) ----
+
+// startStream runs StreamCaseActivities for user on a cancellable request
+// context and returns the recorder, a channel closed when the handler
+// returns, and the cancel func. Callers must call cancel.
+func startStream(t *testing.T, h *StreamHandler, user *middleware.UserInfo) (*syncRecorder, <-chan struct{}, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = middleware.WithUserInfo(ctx, user)
+	req := httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil).WithContext(ctx)
+	req.SetPathValue("id", streamTestCaseID)
+	w := newSyncRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.StreamCaseActivities(w, req)
+		close(done)
+	}()
+	return w, done, cancel
+}
+
+func waitDone(t *testing.T, done <-chan struct{}, within time.Duration) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(within):
+		t.Fatal("handler did not return within " + within.String())
+	}
+}
+
+func assertTerminalEvent(t *testing.T, w *syncRecorder, reason string) {
+	t.Helper()
+	body := w.String()
+	want := "event: " + EventStreamClosed + "\ndata: {\"reason\":\"" + reason + "\"}\n\n"
+	if !strings.HasSuffix(body, want) {
+		t.Errorf("stream body does not end with terminal event %q; body: %q", want, body)
+	}
+}
+
+func TestStreamCaseActivities_ClosesAtTokenExpiry(t *testing.T) {
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub())
+	user := &middleware.UserInfo{Email: testUser.Email, UserID: testUser.UserID, ExpiresAt: time.Now().Add(150 * time.Millisecond)}
+	w, done, cancel := startStream(t, h, user)
+	defer cancel()
+
+	waitDone(t, done, 3*time.Second)
+	if w.Status() != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Status())
+	}
+	assertTerminalEvent(t, w, ReasonTokenExpired)
+}
+
+func TestStreamCaseActivities_ClosesAtMaxLifetime(t *testing.T) {
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub(), WithMaxLifetime(100*time.Millisecond))
+	// No ExpiresAt (local-dev style token): only the lifetime cap applies.
+	w, done, cancel := startStream(t, h, testUser)
+	defer cancel()
+
+	waitDone(t, done, 3*time.Second)
+	assertTerminalEvent(t, w, ReasonMaxLifetime)
+}
+
+func TestStreamCaseActivities_TokenExpiryWinsOverLongerLifetime(t *testing.T) {
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub(), WithMaxLifetime(time.Hour))
+	user := &middleware.UserInfo{Email: testUser.Email, UserID: testUser.UserID, ExpiresAt: time.Now().Add(100 * time.Millisecond)}
+	w, done, cancel := startStream(t, h, user)
+	defer cancel()
+
+	waitDone(t, done, 3*time.Second)
+	assertTerminalEvent(t, w, ReasonTokenExpired)
+}
+
+// countingCaseClient answers the first GetCase (the connect-time check) with
+// success and every later one (the periodic re-authorization) with after.
+type countingCaseClient struct {
+	mu    sync.Mutex
+	calls int
+	after error
+}
+
+func (c *countingCaseClient) GetCase(ctx context.Context, caseID string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	if c.calls == 1 {
+		return []byte(`{}`), nil
+	}
+	return nil, c.after
+}
+
+func (c *countingCaseClient) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func TestStreamCaseActivities_ClosesWhenReauthorizationDenied(t *testing.T) {
+	client := &countingCaseClient{after: &apierror.Error{StatusCode: http.StatusForbidden}}
+	h := NewStreamHandler(client, stream.NewBroadcastHub(), WithReauthInterval(20*time.Millisecond))
+	w, done, cancel := startStream(t, h, testUser)
+	defer cancel()
+
+	waitDone(t, done, 3*time.Second)
+	assertTerminalEvent(t, w, ReasonAccessRevoked)
+	if client.count() < 2 {
+		t.Errorf("GetCase called %d times, want the connect check plus at least one re-authorization", client.count())
+	}
+}
+
+func TestStreamCaseActivities_TransientReauthorizationErrorKeepsStreamOpen(t *testing.T) {
+	client := &countingCaseClient{after: &apierror.Error{StatusCode: http.StatusServiceUnavailable}}
+	hub := stream.NewBroadcastHub()
+	h := NewStreamHandler(client, hub, WithReauthInterval(10*time.Millisecond))
+	w, done, cancel := startStream(t, h, testUser)
+	defer cancel()
+
+	// Let several re-authorization attempts fail transiently...
+	deadline := time.Now().Add(2 * time.Second)
+	for client.count() < 4 {
+		if time.Now().After(deadline) {
+			t.Fatal("re-authorization never ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-done:
+		t.Fatalf("stream closed on a transient upstream error; body: %q", w.String())
+	default:
+	}
+
+	// ...and prove the stream is still live by delivering an event through it.
+	const payload = `{"caseId":"` + streamTestCaseID + `","type":"case.status_changed"}`
+	deadline = time.Now().Add(2 * time.Second)
+	for !strings.Contains(w.String(), payload) {
+		if time.Now().After(deadline) {
+			t.Fatalf("event not delivered after transient re-authorization errors; body: %q", w.String())
+		}
+		hub.Publish(streamTestCaseID, payload)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if strings.Contains(w.String(), "event: "+EventStreamClosed) {
+		t.Errorf("unexpected terminal event in body: %q", w.String())
+	}
+}
+
+func TestStreamCaseActivities_ClientDisconnect_NoTerminalEvent(t *testing.T) {
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub())
+	w, done, cancel := startStream(t, h, testUser)
+
+	// Wait for the headers to be written, then simulate the client leaving.
+	deadline := time.Now().Add(2 * time.Second)
+	for !w.started() {
+		if time.Now().After(deadline) {
+			t.Fatal("stream never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	waitDone(t, done, 3*time.Second)
+	if strings.Contains(w.String(), "event: "+EventStreamClosed) {
+		t.Errorf("terminal event written to a client that already disconnected: %q", w.String())
 	}
 }
