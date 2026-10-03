@@ -16,7 +16,7 @@ Extracted from `apps/csm-portal/backend` (internal/stream, internal/caseevents, 
 entity-service ──▶ Event Hub "case-events" ──▶ this service (consumer group per replica) ──▶ BroadcastHub ──▶ browser EventSource
 ```
 
-Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
+Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` (`timestamp` = the record's time on the topic, RFC 3339 UTC, omitted if unknown) — no comment text or field values.
 
 SSE framing: each stream starts with `retry: 3000`; each `case_updated` carries `id: <hub-epoch>-<seq>`. On reconnect with `Last-Event-ID` the handler replays this case's missed events from the hub's in-memory ring (`stream.ReplayCapacity` = 256 events across all cases, `stream.ReplayWindow` = 2 min). Best-effort only: IDs are local to one process, so a reconnect to another replica, after a restart, or past the window gets no replay — clients still refresh on (re)connect. Consumer offsets are committed in 1 s batches (`CommitInterval`), not one synchronous commit per record.
 
@@ -87,7 +87,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 ## Packages
 
 - `internal/apierror` — typed upstream error (mirrors csm-portal-backend/internal/apierror)
-- `internal/events` — `Envelope` + event types (hand-synced copy; keep in sync with csm-notification-service's and entity-service's own copies)
+- `internal/events` — `Envelope` + event type constants only (hand-synced copy; keep in sync with csm-notification-service's and entity-service's own copies). Payload structs are deliberately not copied — this service never reads payloads
 - `internal/eventbus` — `Consumer` (simple: no retry/DLQ; commit after Handle; `LatestOffset`; per-replica group suffix; `Run` returns an error, logged at Error, when its reader stops — `io.EOF` included) and `Supervisor` (replaces an exited consumer with exponential backoff, 1s doubling to 30s; `Running()` drives `/health`, which answers 503 `{"status":"unavailable"}` while the configured consumer is not running and stays 200 when Event Hub is not configured)
 - `internal/stream` — `BroadcastHub` (in-process pub-sub per case ID; `subscriberBuffer=4`; non-blocking publish; `CloseAll` is registered as the stream server's `RegisterOnShutdown` hook so SIGTERM ends every stream with a terminal `event: shutdown` and `Server.Shutdown` completes within its grace period)
 - `internal/caseevents` — `Handler` (consumes events, fans to BroadcastHub for the two SSE types)
@@ -99,7 +99,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 
 - The concurrent-stream caps (`STREAM_MAX_CONNECTIONS_PER_USER`, `STREAM_MAX_CONNECTIONS`) are per replica and in-memory; there is no cluster-wide count, so a user's effective cap is the per-user cap multiplied by the replica count.
 - `Envelope` is hand-synced across three Go modules — changes must be propagated manually to csm-notification-service's and entity-service's own `internal/events`.
-- A redeploy (new pod/hostname) causes one-time replay of retained events (accepted tradeoff).
+- A redeploy (new pod/hostname) creates a new consumer group that starts at `LatestOffset`, so events published while no consumer was running are not broadcast (no replay of retained history); clients refresh on reconnect.
 - Consumer groups accumulate forever on the broker (no API to delete).
 
 ## Adding a new event type to SSE

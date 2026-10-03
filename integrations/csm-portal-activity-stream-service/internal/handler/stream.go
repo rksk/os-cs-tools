@@ -100,8 +100,8 @@ const (
 // polyfill (native EventSource cannot set custom headers).
 //
 // The broadcast payload is a minimal {caseId, type, timestamp} — never
-// comment text or field values (see events.CommentAddedPayload/StatusChangedPayload)
-// — but even that is per-case, so a caller must be authorized to read the
+// comment text or field values (see internal/caseevents.Handler) — but even
+// that is per-case, so a caller must be authorized to read the
 // requested case before subscribing, not merely hold a valid token: see the
 // GetCase call below, which registers the subscription only once the same
 // upstream ACL check every other case-reading endpoint relies on has passed.

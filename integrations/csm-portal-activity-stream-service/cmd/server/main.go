@@ -180,62 +180,62 @@ func main() {
 	}()
 	slog.Info("health server started", "addr", healthLn.Addr().String())
 
-	// Stream server (:9092) — only if Event Hub is configured (activityHub != nil).
-	// The SSE connection must stay open indefinitely, so WriteTimeout/IdleTimeout
-	// are disabled; mirror of csm-portal-backend's original stream listener.
-	var streamSrv *http.Server
-	var streamLn net.Listener
-	if activityHub != nil {
-		streamMux := http.NewServeMux()
-		streamMux.HandleFunc("GET /cases/{id}/activities/stream", streamHandler.StreamCaseActivities)
+	// Stream server (:9092) always binds and serves the route, whether or not
+	// Event Hub is configured: StreamCaseActivities itself returns the
+	// documented 503 when activityHub is nil. Binding only conditionally
+	// would refuse the connection before any handler runs, since Choreo's
+	// component config always exposes this port. Only the hub/consumer
+	// machinery above is conditional. The SSE connection must stay open
+	// indefinitely, so WriteTimeout/IdleTimeout are disabled.
+	streamMux := http.NewServeMux()
+	streamMux.HandleFunc("GET /cases/{id}/activities/stream", streamHandler.StreamCaseActivities)
 
-		streamAddr := ":" + mustPort("STREAM_PORT", "9092")
-		streamLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
-		if err != nil {
-			slog.Error("failed to bind stream listener", "addr", streamAddr, "err", err)
-			os.Exit(1)
-		}
+	streamAddr := ":" + mustPort("STREAM_PORT", "9092")
+	streamLn, err := (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
+	if err != nil {
+		slog.Error("failed to bind stream listener", "addr", streamAddr, "err", err)
+		os.Exit(1)
+	}
 
-		streamSrv = &http.Server{
-			// SecurityHeaders must stay outermost so its headers are present
-			// on every response, including a CORS preflight — CORS runs
-			// next, still ahead of Auth: a browser preflight carries no
-			// x-jwt-assertion header, so Auth must never see it first. See
-			// middleware.CORS's doc comment.
-			// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
-			// unset denies all cross-origin requests (fail-closed — see
-			// middleware.CORS's doc comment for why).
-			Handler: middleware.SecurityHeaders(
-				middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
-					middleware.CorrelationID(
-						authMiddleware(
-							middleware.Logger(streamMux),
-						),
+	streamSrv := &http.Server{
+		// SecurityHeaders must stay outermost so its headers are present
+		// on every response, including a CORS preflight — CORS runs
+		// next, still ahead of Auth: a browser preflight carries no
+		// x-jwt-assertion header, so Auth must never see it first. See
+		// middleware.CORS's doc comment.
+		// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
+		// unset denies all cross-origin requests (fail-closed — see
+		// middleware.CORS's doc comment for why).
+		Handler: middleware.SecurityHeaders(
+			middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
+				middleware.CorrelationID(
+					authMiddleware(
+						middleware.Logger(streamMux),
 					),
 				),
 			),
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      0,
-			IdleTimeout:       0,
-		}
-
-		// Shutdown waits for connections to go idle, which an open SSE
-		// response never does; closing the hub ends every stream (each
-		// with a terminal `shutdown` event so the client reconnects to
-		// another replica) and lets Shutdown complete within its grace
-		// period instead of timing out.
-		streamSrv.RegisterOnShutdown(activityHub.CloseAll)
-
-		go func() {
-			if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
-				slog.Error("stream server exited", "err", err)
-				os.Exit(1)
-			}
-		}()
-		slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
-
+		),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      0,
+		IdleTimeout:       0,
 	}
+
+	// Shutdown waits for connections to go idle, which an open SSE response
+	// never does; closing the hub ends every stream (each with a terminal
+	// `shutdown` event so the client reconnects to another replica) and lets
+	// Shutdown complete within its grace period instead of timing out.
+	if activityHub != nil {
+		streamSrv.RegisterOnShutdown(activityHub.CloseAll)
+	}
+
+	go func() {
+		if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("stream server exited", "err", err)
+			os.Exit(1)
+		}
+	}()
+	slog.Info("case-activity stream server started", "addr", streamLn.Addr().String(), "liveUpdates", activityHub != nil)
 
 	consumerDone := make(chan struct{})
 	if consumerSupervisor != nil {
@@ -257,13 +257,11 @@ func main() {
 	// Both listeners get the shutdown goroutine's own use of shutdownCtx,
 	// running concurrently rather than one after the other.
 	var wg sync.WaitGroup
-	if streamSrv != nil {
-		wg.Go(func() {
-			if err := streamSrv.Shutdown(shutdownCtx); err != nil {
-				slog.Error("stream server graceful shutdown failed", "err", err)
-			}
-		})
-	}
+	wg.Go(func() {
+		if err := streamSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("stream server graceful shutdown failed", "err", err)
+		}
+	})
 	var healthSrvErr error
 	wg.Go(func() {
 		healthSrvErr = healthSrv.Shutdown(shutdownCtx)
@@ -323,14 +321,16 @@ func envOrDefault(key, def string) string {
 // consumer group suffix (see the EVENT_HUB_BROKER block above), preferring
 // the container/pod hostname — in Kubernetes/Choreo this is the pod name by
 // default, requiring no extra deployment config — over a fresh random ID.
-// A random ID on every plain process restart would make Event Hub treat it
-// as a brand new, never-before-seen consumer group every time: NewConsumer
-// starts new groups at kafka.FirstOffset, so the restart would replay every
-// retained event and re-broadcast stale case_updated notifications to
-// whichever SSE clients happen to be connected. The hostname is only stable
-// within the same pod's lifetime, so an actual redeploy (new pod, new
-// hostname) still causes a one-time replay — an accepted, much rarer
-// tradeoff than replaying on every restart.
+// A random ID on every plain process restart (or every consumer restart by
+// eventbus.Supervisor, which reuses the same group) would create a brand new
+// consumer group each time; since the broker offers no API to delete one,
+// groups would pile up far faster than the one-per-pod they already do. A
+// stable suffix also lets a restarted consumer resume from the group's
+// committed offset instead of skipping whatever arrived while it was down.
+// Replay of old history is not the concern here: new groups start at
+// eventbus.LatestOffset (see the EVENT_HUB_BROKER block above). The hostname
+// is only stable within one pod's lifetime, so a redeploy (new pod, new
+// hostname) still creates a new group — the accepted tradeoff.
 //
 // Falls back to a random UUID v4 (deliberately duplicating
 // middleware.newCorrelationID's same crypto/rand-based approach rather than
