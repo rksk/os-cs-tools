@@ -21,7 +21,7 @@ Defined once in `vite.config.ts`, mirrored in `tsconfig.app.json`. Use them inst
 | `@providers` | `src/providers` |
 | `@utils` | `src/utils` |
 
-A handful of narrower aliases (`@case-details*`, `@time-tracking`, `@deployments`, `@update-cards`) point at specific component subfolders inside individual features — a one-off pattern from a couple of features, not something to replicate for new ones.
+Do not add aliases that point at a subfolder inside a single feature (the former `@case-details*`, `@time-tracking`, `@deployments` and `@update-cards` aliases were unused and have been removed); import those through `@features/...`.
 
 ## Frontend permission gating — an exception, not the norm
 
