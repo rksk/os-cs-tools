@@ -242,7 +242,7 @@ func main() {
 			attachments:    handler.NewAttachmentsHandler(snClient, accessGuard),
 			lookups:        handler.NewLookupsHandler(postgresLookups, accessGuard),
 			usageMetrics:   handler.NewUsageMetricsHandler(postgresUsageMetrics, accessGuard),
-			files:          handler.NewFilesHandler(driveClient, accessGuard),
+			files:          handler.NewFilesHandler(driveClient, accessGuard, viewerCfg.driveRootFolderIDs),
 			customerHealth: handler.NewCustomerHealthHandler(riskClient, snClient, accessGuard),
 			userInfo:       handler.NewUserInfoHandler(customerEntityClient, accessGuard),
 			userScan:       handler.NewSplUserScanHandler(salesEntityClient, customerEntityClient, accessGuard),
@@ -1396,6 +1396,7 @@ type viewerConfig struct {
 	driveClientID          string
 	driveClientSecret      string
 	driveRefreshToken      string
+	driveRootFolderIDs     []string
 	riskMySQLDSN           string
 	salesEntityBaseURL     string
 }
@@ -1447,6 +1448,7 @@ func loadViewerConfig() (bool, viewerConfig) {
 		driveClientID:          mustEnv("GOOGLE_DRIVE_CLIENT_ID"),
 		driveClientSecret:      mustEnv("GOOGLE_DRIVE_CLIENT_SECRET"),
 		driveRefreshToken:      mustEnv("GOOGLE_DRIVE_REFRESH_TOKEN"),
+		driveRootFolderIDs:     loadDriveRootFolderIDs(),
 		riskMySQLDSN:           mustRiskMySQLDSN(),
 		salesEntityBaseURL:     mustHTTPSBaseURL("SALES_ENTITY_BASE_URL", mustEnv("SALES_ENTITY_BASE_URL")),
 	}
@@ -1462,4 +1464,16 @@ func parseGoogleChatSpaces(raw string) []notifications.GoogleChatSpace {
 		return nil
 	}
 	return spaces
+}
+
+// loadDriveRootFolderIDs reads GOOGLE_DRIVE_ROOT_FOLDER_IDS, the
+// comma-separated Drive folder ids the /files endpoints are confined to (each
+// root and everything below it). Unset means nothing is reachable through
+// those endpoints, which is logged as a warning rather than refusing to start.
+func loadDriveRootFolderIDs() []string {
+	ids := splitComma(os.Getenv("GOOGLE_DRIVE_ROOT_FOLDER_IDS"))
+	if len(ids) == 0 {
+		slog.Warn("GOOGLE_DRIVE_ROOT_FOLDER_IDS is not set; GET /files and GET /files/search will find nothing")
+	}
+	return ids
 }
