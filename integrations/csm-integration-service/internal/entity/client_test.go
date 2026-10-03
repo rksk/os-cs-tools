@@ -198,6 +198,47 @@ func TestDoWithoutCorrelationIDOmitsHeader(t *testing.T) {
 	}
 }
 
+// TestHealthProbe verifies the reachability probe hits GET /health without a
+// token, succeeds on 2xx and fails on anything else.
+func TestHealthProbe(t *testing.T) {
+	var status int
+	var sawAuth bool
+	var tokenCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenCalls++
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/health" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		sawAuth = r.Header.Get("Authorization") != ""
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+	client := NewClient(Config{BaseURL: srv.URL + "/", TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"})
+
+	status = http.StatusOK
+	if err := client.Health(context.Background()); err != nil {
+		t.Errorf("200: err = %v, want nil", err)
+	}
+	if sawAuth || tokenCalls != 0 {
+		t.Errorf("probe sent credentials (auth header %v, token calls %d)", sawAuth, tokenCalls)
+	}
+
+	status = http.StatusServiceUnavailable
+	err := client.Health(context.Background())
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("503: err = %v, want *apierror.Error with 503", err)
+	}
+
+	srv.Close()
+	if err := client.Health(context.Background()); err == nil {
+		t.Error("closed server: err = nil, want an error")
+	}
+}
+
 // TestDoCapturesRetryAfter verifies an upstream Retry-After header travels on
 // the typed error so handlers can pass it through.
 func TestDoCapturesRetryAfter(t *testing.T) {

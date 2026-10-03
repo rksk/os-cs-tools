@@ -32,11 +32,26 @@ paths:
   /health:
     get:
       summary: Health check endpoint.
+      description: >
+        Reports whether this service can reach the entity service it forwards
+        every other operation to. The result is cached for up to 15 seconds,
+        so a change in reachability shows within that window. Requires no
+        token and no scope.
       operationId: getHealth
       security: []
       responses:
         "200":
-          description: Ok
+          description: Ok — the entity service is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        "503":
+          description: ServiceUnavailable — the entity service is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
 
   /accounts/{id}:
     get:
@@ -2218,6 +2233,14 @@ components:
       properties:
         message:
           type: string
+
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
 
     Pagination:
       type: object
