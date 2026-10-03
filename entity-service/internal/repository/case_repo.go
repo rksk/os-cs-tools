@@ -1459,13 +1459,24 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 	// LEFT JOIN "user" by email match: comment.created_by is a free-text
 	// VARCHAR (see CreateCaseComment above), not a FK, so a real user id/name
 	// is only available when it happens to match a known user's email.
+	// "user".email is not unique, so the join is wrapped in DISTINCT ON
+	// (cc.id), picking the lowest user id, as SearchCaseActivities and
+	// CommentRepository.SearchComments already do; otherwise a comment whose
+	// author's address is on two user rows appears twice on a page that
+	// countQuery counts once.
 	dataQuery := fmt.Sprintf(`
-		SELECT cc.id, cc.work_item_id, cc.type, cc.content, cc.created_by, cc.created_on,
-		       u.id, COALESCE(u.name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''))
-		FROM comment cc
-		LEFT JOIN "user" u ON LOWER(u.email) = LOWER(cc.created_by)
-		WHERE cc.work_item_id = $1 AND cc.deleted_at IS NULL%s
-		ORDER BY cc.created_on DESC, cc.id
+		SELECT c.id, c.work_item_id, c.type, c.content, c.created_by, c.created_on, c.user_id, c.user_name
+		FROM (
+			SELECT DISTINCT ON (cc.id)
+			       cc.id, cc.work_item_id, cc.type, cc.content, cc.created_by, cc.created_on,
+			       u.id AS user_id,
+			       COALESCE(u.name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '')) AS user_name
+			FROM comment cc
+			LEFT JOIN "user" u ON LOWER(u.email) = LOWER(cc.created_by)
+			WHERE cc.work_item_id = $1 AND cc.deleted_at IS NULL%s
+			ORDER BY cc.id, u.id
+		) c
+		ORDER BY c.created_on DESC, c.id
 		LIMIT $%d OFFSET $%d`, typeFilter, len(args)+1, len(args)+2)
 
 	dataArgs := append(args, req.Pagination.Limit, req.Pagination.Offset)
