@@ -105,6 +105,23 @@ func ClientFor(shared http.RoundTripper, creds Credentials, baseURL string, time
 	return NewClient(rt, timeout), nil
 }
 
+// PageDone reports whether an offset-paginated search is finished after a
+// page of got rows, with offset already advanced by got (callers advance by
+// rows returned, never by the page size asked for, so a short non-final
+// page cannot make them skip rows). An empty page always ends it. With a
+// total, it ends once offset reaches it. Without one (a response that omits
+// or zeroes total), only a short page — fewer rows than pageSize — ends it,
+// rather than stopping after the first page.
+func PageDone(got, offset, total, pageSize int) bool {
+	if got == 0 {
+		return true
+	}
+	if total > 0 {
+		return offset >= total
+	}
+	return got < pageSize
+}
+
 // TrimBase normalises a base URL for path concatenation.
 func TrimBase(baseURL string) string { return strings.TrimRight(baseURL, "/") }
 
