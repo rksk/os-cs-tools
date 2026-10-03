@@ -44,10 +44,10 @@ func NewITServiceHandler(entity entityITServiceClient) *ITServiceHandler {
 }
 
 // SearchITServices handles POST /services/search. Targets the same
-// ServiceNow-backed entity-service operation family as IncidentHandler's
+// externally backed entity-service operation family as IncidentHandler's
 // CreateIncident/SearchIncidents — it goes through the same M2M-credential
 // fallback described there, so a mapped 401 here is possible (if the target
-// environment's M2M ServiceNow credential isn't configured) but not
+// environment's M2M credential for the external data source isn't configured) but not
 // guaranteed. The request body is forwarded verbatim; the entity service
 // enforces its own field validation and 400s otherwise, so this handler does
 // not re-validate that.

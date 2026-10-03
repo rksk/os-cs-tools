@@ -67,7 +67,7 @@ func NewCaseHandler(entity entityCaseClient, umtActorEmail string) *CaseHandler 
 // the entity service enforces its own field-combination rules and 400s
 // otherwise, so this handler does not re-validate that. A state/severity/
 // workState-only update succeeds for this M2M-only service on a Postgres data
-// source; every other field this shape accepts is ServiceNow-data-source-only
+// source; every other field this shape accepts is external-data-source-only
 // and requires a forwarded end-user identity token this service cannot
 // supply, so those calls receive a mapped 401 from upstream.
 func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {

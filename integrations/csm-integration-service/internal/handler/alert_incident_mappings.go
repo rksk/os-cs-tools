@@ -32,7 +32,7 @@ type entityAlertIncidentMappingClient interface {
 // AlertIncidentMappingHandler handles HTTP requests for alert-incident-mapping
 // operations, delegating to the entity service for data access. Unlike
 // IncidentHandler above, the entity-service operations behind these two
-// endpoints are Postgres-only with no ServiceNow dependency, so no forwarded
+// endpoints are Postgres-only with no external-data-source dependency, so no forwarded
 // end-user identity is required — this service's M2M identity is sufficient
 // and these endpoints are expected to actually succeed today. See
 // AccountHandler's doc comment: there is no end-user identity checked here —
@@ -49,7 +49,7 @@ func NewAlertIncidentMappingHandler(entity entityAlertIncidentMappingClient) *Al
 }
 
 // CreateAlertIncidentMapping handles POST /alert-incident-mappings. Targets a
-// Postgres-only entity-service operation with no ServiceNow dependency — this
+// Postgres-only entity-service operation with no external-data-source dependency — this
 // service's M2M identity is sufficient, so this call is expected to actually
 // succeed today, unlike CreateIncident above. The request body is forwarded
 // verbatim; the entity service enforces its own field validation and 400s
