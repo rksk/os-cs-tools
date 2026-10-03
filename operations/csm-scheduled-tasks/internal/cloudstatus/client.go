@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/entityhttp"
@@ -145,6 +146,6 @@ func (c *Client) RecordDelivery(ctx context.Context, id string, delivered bool, 
 	if err != nil {
 		return fmt.Errorf("cloudstatus: encode delivery report: %w", err)
 	}
-	_, err = c.do(ctx, http.MethodPost, "/internal/cloud-status/"+id+"/delivery", body)
+	_, err = c.do(ctx, http.MethodPost, "/internal/cloud-status/"+url.PathEscape(id)+"/delivery", body)
 	return err
 }

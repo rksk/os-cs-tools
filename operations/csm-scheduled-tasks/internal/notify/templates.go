@@ -88,6 +88,12 @@ func escapeMultiline(s string) string {
 	return strings.ReplaceAll(escapeHTML(s), "\n", "<br>")
 }
 
+// EscapeMultiline is escapeMultiline for callers outside this package that
+// render their own e-mail body from free text (internal/outagecommtask):
+// HTML-escaped, every non-ASCII rune as a numeric character reference so it
+// survives the e-mail service's send path, newlines as <br>.
+func EscapeMultiline(s string) string { return escapeMultiline(s) }
+
 // AlertEmailData holds every value substituted into the "sub-cron failed"
 // HTML email template.
 type AlertEmailData struct {
@@ -233,6 +239,10 @@ func humanizeState(state string) string {
 //go:embed templates/outage_notification.html
 var outageNotificationTemplateRaw string
 
+// outageNotificationTemplate has the logo baked in once at init, like the
+// other templates above.
+var outageNotificationTemplate = bakeLogo(outageNotificationTemplateRaw)
+
 // OutageNotificationData is what RenderOutageNotification substitutes.
 //
 // Subject and Body arrive already rendered by entity-service, which owns the
@@ -256,11 +266,10 @@ type OutageNotificationData struct {
 // is a product decision tracked separately.
 func RenderOutageNotification(data OutageNotificationData) string {
 	replacer := strings.NewReplacer(
-		"<!-- [LOGO_SRC] -->", bakeLogo(wso2LogoURL),
 		"<!-- [PHASE_WORD] -->", escapeHTML(data.PhaseWord),
 		"<!-- [NUMBER] -->", escapeHTML(data.Number),
 		"<!-- [MESSAGE] -->", escapeHTML(data.Message),
 		"<!-- [YEAR] -->", strconv.Itoa(time.Now().Year()),
 	)
-	return replacer.Replace(outageNotificationTemplateRaw)
+	return replacer.Replace(outageNotificationTemplate)
 }
