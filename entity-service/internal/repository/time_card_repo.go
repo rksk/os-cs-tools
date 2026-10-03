@@ -761,7 +761,7 @@ func (r *timeCardRepo) TransitionTimeCardState(ctx context.Context, id string, s
 		}
 		// time_card_state_enum is UPPER_SNAKE_CASE; domain.TimeCardStateSubmitted
 		// is lowercase.
-		if currentState == nil || strings.ToUpper(*currentState) != strings.ToUpper(string(domain.TimeCardStateSubmitted)) {
+		if currentState == nil || !strings.EqualFold(*currentState, string(domain.TimeCardStateSubmitted)) {
 			return &apierror.ConflictError{Msg: "time card is not in the submitted state (it may already have been approved, rejected, processed, or recalled)"}
 		}
 
