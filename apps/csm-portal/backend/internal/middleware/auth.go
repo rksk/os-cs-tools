@@ -237,6 +237,9 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		}
 	} else {
 		token, err := jwt.ParseWithClaims(tokenStr, &c, keyFunc,
+			// Only RS256 is accepted; a token naming any other alg is
+			// rejected before its signature is checked.
+			jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 			jwt.WithIssuer(cfg.Issuer),
 			jwt.WithLeeway(cfg.ClockSkew),
 			jwt.WithExpirationRequired(),
