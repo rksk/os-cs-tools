@@ -36,9 +36,9 @@ type salesEntityClient interface {
 }
 
 // entityScanClient is the subset of internal/entity.CustomerEntityClient
-// SplUserScanHandler's ServiceNow-side checks need. Replaces the old CS-side
+// SplUserScanHandler's backing-system-side checks need. Replaces the old CS-side
 // entity GraphQL service (internal/entity/cs.go, removed): that GraphQL
-// service turned out to be ServiceNow itself behind a second, parallel
+// service turned out to be the backing system itself behind a second, parallel
 // integration, not an independent data source, so there was nothing to gain
 // from keeping it once this handler could resolve the same data through the
 // entity service every other CS Portal handler already uses.
@@ -60,7 +60,7 @@ type entitySearchUsersRequest struct {
 // entityScanUserView is the subset of entity-service's user-search result
 // this handler needs. LockedOut is populated only when entity-service's own
 // CUSTOMER_ENTITY_DATA_SOURCE is "servicenow" (its own first-party
-// ServiceNow integration, domain.SNUser) -- the "postgres" data source
+// The backing system integration, domain.SNUser) -- the "postgres" data source
 // (domain.User) has no such column, so LockedOut silently reads false
 // there. "servicenow" is this file's documented default (see
 // CUSTOMER_ENTITY_DATA_SOURCE's own .env.example comment).

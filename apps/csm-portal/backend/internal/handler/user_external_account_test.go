@@ -100,7 +100,7 @@ func TestGetUser_ExternalAccountStatus_SkippedForInternalStaff(t *testing.T) {
 	}
 }
 
-// TestGetUser_ExternalAccountStatus_SkippedForWso2Email: a ServiceNow row can
+// TestGetUser_ExternalAccountStatus_SkippedForWso2Email: a backing-system row can
 // carry a wso2.com email under a customer-facing role/userType (e.g. a
 // wso2.com contact recorded under snc_external for testing) -- that account
 // can never exist in the SCIM "external" org, so the lookup must not run.

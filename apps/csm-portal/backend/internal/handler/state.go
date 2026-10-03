@@ -89,7 +89,7 @@ func isValidStateTransition(from, to string) bool {
 
 // closedOnLayouts are the timestamp shapes the "closedOn" field has been seen
 // in, in order of preference. The entity service normally emits RFC 3339, but
-// some upstream (ServiceNow) values pass through as bare "YYYY-MM-DD HH:MM:SS"
+// some upstream (the backing system) values pass through as bare "YYYY-MM-DD HH:MM:SS"
 // with no zone — the frontend's normalizeBackendTimestamp (src/utils/dateTime.ts)
 // treats that shape as UTC, so this mirrors it rather than only accepting
 // RFC 3339 and silently hiding the action for those cases.
@@ -114,7 +114,7 @@ func parseClosedOn(closedOn string) (time.Time, bool) {
 
 // canCreateRelatedCase reports whether a new case may be created as related to
 // a case of the given type/state, closed at closedOn (as returned in the
-// "closedOn" field — see parseClosedOn for accepted shapes). The ServiceNow
+// "closedOn" field — see parseClosedOn for accepted shapes). the backing system
 // data source does not populate "closedOn" at all today, so this falls back
 // to updatedOn (also raw case JSON, always present) when closedOn is absent —
 // a closed case is normally terminal, so its last update time is a reasonable

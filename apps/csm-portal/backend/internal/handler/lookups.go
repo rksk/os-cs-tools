@@ -22,7 +22,7 @@ import (
 	"net/http"
 )
 
-// lookupsClient abstracts the ServiceNow lookup operations used by
+// lookupsClient abstracts the backing-system lookup operations used by
 // LookupsHandler.
 type lookupsClient interface {
 	GetProductList(ctx context.Context) ([]string, error)
@@ -30,14 +30,14 @@ type lookupsClient interface {
 }
 
 // LookupsHandler handles HTTP requests for SupportPortalLite's small
-// standalone dropdown lookups, delegating to the ServiceNow service.
+// standalone dropdown lookups, delegating to the backing system service.
 type LookupsHandler struct {
 	servicenow  lookupsClient
 	accessGuard *AccessGuard
 }
 
 // NewLookupsHandler creates a LookupsHandler backed by the given
-// ServiceNow client. accessGuard enforces PermViewerAccess, SupportPortalLite's
+// The backing system client. accessGuard enforces PermViewerAccess, SupportPortalLite's
 // blanket audience gate.
 func NewLookupsHandler(sn lookupsClient, accessGuard *AccessGuard) *LookupsHandler {
 	return &LookupsHandler{servicenow: sn, accessGuard: accessGuard}

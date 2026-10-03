@@ -167,7 +167,7 @@ func (h *CaseHandler) WithAccessGuard(g *AccessGuard) *CaseHandler {
 // WithInlineImageProcessor enables server-side inline-image extraction on
 // CreateCaseComment: a base64 data: URI embedded in a comment's rich-text
 // HTML is extracted, uploaded as a real SFTPGo-backed attachment, and the
-// HTML is rewritten to a ".iix" reference — mirroring ServiceNow's own
+// HTML is rewritten to a ".iix" reference — mirroring the backing system's own
 // RichTextUtils.processInlineImages for SN-backed comments. Only wired up in
 // cmd/server/main.go when SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; SN-backed
 // comment creation is untouched either way, since SN's own scripted API
@@ -349,7 +349,7 @@ const maxCaseBodyBytes = 10 << 20
 
 // maxCommentBodyBytes caps comment-create bodies at 10 MiB. Comments can carry
 // inline images as base64 data URIs, which inflate raw image size by ~33%, so
-// a 1 MiB global cap rejects images well under ServiceNow's own limit.
+// a 1 MiB global cap rejects images well under the backing system's own limit.
 const maxCommentBodyBytes = 10 << 20
 
 // maxAttachmentBodyBytes caps attachment-create bodies at 15 MiB. The entity
@@ -577,7 +577,7 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 
 	// Extract any base64 inline image embedded in the comment's rich-text
 	// HTML into a real SFTPGo-backed attachment before forwarding to the
-	// entity service — mirrors ServiceNow's own RichTextUtils processing for
+	// entity service — mirrors the backing system's own RichTextUtils processing for
 	// SN-backed comments (that path is untouched: it already runs inside the
 	// SN scripted API, not here). Only active when
 	// SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; see WithInlineImageProcessor.
@@ -2080,16 +2080,16 @@ func (h *CaseHandler) CreateCaseGithubIssue(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, result)
 }
 
-// viewerCaseClient abstracts the ServiceNow operations used by ViewerCaseHandler.
+// viewerCaseClient abstracts the backing-system operations used by ViewerCaseHandler.
 // GetCases/GetCaseByNumber/GetCommentsAndWorknotes used to live here too,
-// backed first by ServiceNow and later by a Postgres translation layer --
+// backed first by the backing system and later by a Postgres translation layer --
 // both removed in favor of calling CS Portal's own POST /cases/search,
 // GET /cases/{id}, and POST /cases/{id}/comments/search directly (worknote
 // creation similarly merged onto POST /cases/{id}/comments, using the same
 // entity-service CommentType distinction CS Portal's own comment handler
 // already exposes -- see splWorknotesHandler's removal). Attachments have no
 // entity-service equivalent at all yet (no Postgres storage/backfill path),
-// so that one stays here, ServiceNow-backed, unmerged.
+// so that one stays here, legacy-data-source, unmerged.
 type viewerCaseClient interface {
 	GetAttachmentsInfo(ctx context.Context, caseNumber string, offset, limit int) ([]servicenow.AttachmentInfo, error)
 }

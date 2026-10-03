@@ -81,10 +81,10 @@ func validateCreateProblemBody(body []byte) bool {
 // boundary; the original raw body is still forwarded to the entity service unchanged.
 //
 // Transition is deliberately not represented here as a typed/validated field: it is one
-// of "assess"/"confirm"/"fix"/"resolve"/"close" per ServiceNow's own server-side
-// validation, but every layer below this one (ServiceNow, the Ballerina entity-service,
+// of "assess"/"confirm"/"fix"/"resolve"/"close" per the backing system's own server-side
+// validation, but every layer below this one (the backing system, the Ballerina entity-service,
 // the Go entity-service) ships it as a plain unvalidated string on purpose. A closed-enum
-// check here would swallow ServiceNow's own actionable error message ("Invalid
+// check here would swallow the backing system's own actionable error message ("Invalid
 // transition: ...") behind a generic validation error instead. Do not add one.
 type updateProblemRequest struct {
 	AssignedToID      string `json:"assignedToId"`

@@ -1485,7 +1485,7 @@ func TestPatchCase(t *testing.T) {
 			},
 			{
 				// Item 6 (revised): autocloseHoldUntil is the only supported write against
-				// ServiceNow's staged auto-closure sequence; it internally sets
+				// The backing system's staged auto-closure sequence; it internally sets
 				// autoclosureStep=ON_HOLD + autoclosureStateTime, but the BFF forwards the
 				// request/response verbatim with no knowledge of that mechanism.
 				name:       "autocloseHoldUntil",
@@ -1642,7 +1642,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("autocloseHoldUntil PATCH records a work note even when resent with the same hold date", func(t *testing.T) {
-		// Deliberately no dedup: ServiceNow's own case-read doesn't reliably surface
+		// Deliberately no dedup: the backing system's own case-read doesn't reliably surface
 		// autoclosureStep/autoclosureStateTime, so a dedup keyed on it can't be trusted,
 		// and the legacy ticketing UI's equivalent action has this exact same behavior
 		// (a resend posts another identical note too) — this matches established
@@ -1911,7 +1911,7 @@ func TestGetCase(t *testing.T) {
 			{"open case with a closedOn value", `{"id":"` + testCaseID + `","type":"case","state":"open","closedOn":"` + recentClosed + `"}`, []string{caseStateWorkInProgress}},
 			{"closed service_request within the window", `{"id":"` + testCaseID + `","type":"service_request","state":"closed","closedOn":"` + recentClosed + `"}`, []string{}},
 			{"closed case with no type set", `{"id":"` + testCaseID + `","state":"closed","closedOn":"` + recentClosed + `"}`, []string{}},
-			// ServiceNow-backed cases never populate closedOn today, so
+			// legacy-data-source cases never populate closedOn today, so
 			// updatedOn stands in for it.
 			{"closed case with no closedOn, falls back to a recent updatedOn", `{"id":"` + testCaseID + `","type":"case","state":"closed","updatedOn":"` + recentClosed + `"}`, []string{caseStateReopened}},
 			{"closed case with no closedOn, falls back to an old updatedOn", `{"id":"` + testCaseID + `","type":"case","state":"closed","updatedOn":"` + oldClosed + `"}`, []string{}},
