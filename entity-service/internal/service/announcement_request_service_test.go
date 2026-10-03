@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -413,6 +414,29 @@ func TestAnnouncementRequestService_Approve(t *testing.T) {
 		}
 		if repo.gotApproveActorEmail != "user-2@example.com" {
 			t.Fatalf("expected actorEmail forwarded, got %q", repo.gotApproveActorEmail)
+		}
+	})
+
+	t.Run("refuses the request's own creator, by id or by e-mail", func(t *testing.T) {
+		creatorEmail := "jane.doe@example.com"
+		for name, actor := range map[string][2]string{
+			"same id":    {"user-1", "someone@example.com"},
+			"same email": {"user-9", "Jane.Doe@example.com"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				repo := &fakeAnnouncementRequestRepo{getResult: domain.AnnouncementRequest{
+					State: domain.AnnouncementRequestStatePendingApproval, CreatedBy: "user-1", CreatedByEmail: &creatorEmail,
+				}}
+				svc := NewAnnouncementRequestService(repo, nil, nil)
+				_, err := svc.Approve(context.Background(), "req-1", actor[0], actor[1])
+				var fe *apierror.ForbiddenError
+				if !errors.As(err, &fe) {
+					t.Fatalf("err = %v, want ForbiddenError", err)
+				}
+				if repo.gotApproveActorID != "" {
+					t.Fatalf("the approval was recorded for the creator")
+				}
+			})
 		}
 	})
 

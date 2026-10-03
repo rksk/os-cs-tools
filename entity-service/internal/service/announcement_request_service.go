@@ -243,10 +243,10 @@ func (s *announcementRequestService) Submit(ctx context.Context, id string, req 
 }
 
 // Approve implements AnnouncementRequestService. Rejects unless the current
-// state is pending_approval. There is deliberately no approver-role check
-// here — the real approval decision already happened over email, outside
-// this service; this call only records that whoever is working the
-// request says it's been approved.
+// state is pending_approval. There is no approver-role check here -- the
+// approval decision itself happens over email, outside this service -- but
+// the approval is never recorded by the request's own creator: one person
+// must not be able to create, approve and publish an announcement alone.
 func (s *announcementRequestService) Approve(ctx context.Context, id, actorID, actorEmail string) (domain.AnnouncementRequest, error) {
 	if strings.TrimSpace(actorID) == "" {
 		return domain.AnnouncementRequest{}, &apierror.ValidationError{Msg: "actorId is required"}
@@ -259,7 +259,22 @@ func (s *announcementRequestService) Approve(ctx context.Context, id, actorID, a
 	if current.State != domain.AnnouncementRequestStatePendingApproval {
 		return domain.AnnouncementRequest{}, &apierror.ConflictError{Msg: "only a request pending approval can be approved, not " + string(current.State)}
 	}
+	if isAnnouncementCreator(current, actorID, actorEmail) {
+		return domain.AnnouncementRequest{}, &apierror.ForbiddenError{Msg: "an announcement request must be approved by someone other than its creator"}
+	}
 	return s.repo.Approve(ctx, id, actorID, actorEmail)
+}
+
+// isAnnouncementCreator reports whether the actor is the request's creator,
+// by id, or by e-mail when both sides carry one.
+func isAnnouncementCreator(req domain.AnnouncementRequest, actorID, actorEmail string) bool {
+	if strings.TrimSpace(req.CreatedBy) != "" && strings.TrimSpace(req.CreatedBy) == strings.TrimSpace(actorID) {
+		return true
+	}
+	if req.CreatedByEmail != nil && strings.TrimSpace(*req.CreatedByEmail) != "" && strings.TrimSpace(actorEmail) != "" {
+		return strings.EqualFold(strings.TrimSpace(*req.CreatedByEmail), strings.TrimSpace(actorEmail))
+	}
+	return false
 }
 
 // MarkPublished implements AnnouncementRequestService. Rejects unless the
