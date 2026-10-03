@@ -302,6 +302,51 @@ describe("useAuthApiClient", () => {
     expect(request.bodyUsed).toBe(false);
   });
 
+  it("shares one recovery across concurrent callers: N failing calls do not each run their own poll loop", async () => {
+    const CALLERS = 6;
+    fetchMock.mockResolvedValue(jsonResponse(401));
+    signInSilentlyMock.mockResolvedValue(false);
+
+    const { result } = renderHook(() => useAuthApiClient());
+    const settled: Response[] = [];
+    for (let i = 0; i < CALLERS; i++) {
+      void result.current("https://example.test/api/thing", undefined, {
+        skipSignInRedirect: true,
+      }).then((r) => settled.push(r));
+    }
+
+    await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + POLL_INTERVAL_MS);
+    await vi.waitFor(() => expect(settled).toHaveLength(CALLERS));
+
+    // Every caller: first attempt + bare retry. The leader additionally polls
+    // (at most one poll here because silent sign-in already reported failure);
+    // followers wait for it and never poll themselves.
+    const maxPollsPerLeader = Math.ceil(POLL_BUDGET_MS / POLL_INTERVAL_MS);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(CALLERS * 2 + maxPollsPerLeader);
+    expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("followers retry once with the refreshed token after the leader recovers", async () => {
+    // First two attempts per caller fail (attempt + bare retry), then the
+    // token "refreshes" and every later request succeeds.
+    let calls = 0;
+    const CALLERS = 3;
+    fetchMock.mockImplementation(async () => {
+      calls += 1;
+      return calls <= CALLERS * 2 ? jsonResponse(401) : jsonResponse(200, { ok: true });
+    });
+
+    const { result } = renderHook(() => useAuthApiClient());
+    const responses = Promise.all(
+      Array.from({ length: CALLERS }, () => result.current("https://example.test/api/thing")),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
+    const all = await responses;
+
+    expect(all.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
   it("loop guard: still redirects for a stale marker well outside the guard window", async () => {
     sessionStorage.setItem(
       "csm.auth.lastForcedSignInAt",
