@@ -191,7 +191,7 @@ function buildPdfContent(
       const title = element.querySelector(".widget-title")?.textContent || "Business Overview";
       const textarea = element.querySelector("textarea") as HTMLTextAreaElement | null;
       const formattedText = textarea ? escapeHtml(textarea.value).replace(/\n/g, "<br>") : "No data to show";
-      widgetContainer.innerHTML = `<h2 class="widget-title">${title}</h2><p>${formattedText}</p>`;
+      widgetContainer.innerHTML = `<h2 class="widget-title">${escapeHtml(title)}</h2><p>${formattedText}</p>`;
       pdfContent.appendChild(widgetContainer);
     } else if (selector === ".deployment-image-section") {
       const title = element.querySelector(".widget-title")?.textContent || "Deployment";
@@ -199,7 +199,7 @@ function buildPdfContent(
       if (imageElement) {
         const deploymentElement = document.createElement("div");
         deploymentElement.classList.add("styled-text");
-        deploymentElement.innerHTML = `<h2 class="widget-title">${title}</h2>`;
+        deploymentElement.innerHTML = `<h2 class="widget-title">${escapeHtml(title)}</h2>`;
 
         const imageWrapperDiv = document.createElement("div");
         imageWrapperDiv.style.display = "flex";
@@ -220,13 +220,13 @@ function buildPdfContent(
 
       const textElement = document.createElement("div");
       textElement.classList.add("styled-text");
-      textElement.innerHTML = `<h2 class="widget-title">${title}</h2><p>${formattedText}</p>`;
+      textElement.innerHTML = `<h2 class="widget-title">${escapeHtml(title)}</h2><p>${formattedText}</p>`;
       pdfContent.appendChild(textElement);
 
       if (image) {
         const imageElement = document.createElement("div");
         imageElement.classList.add("page-break");
-        imageElement.innerHTML = `<h2 class="widget-title">${title}</h2>`;
+        imageElement.innerHTML = `<h2 class="widget-title">${escapeHtml(title)}</h2>`;
 
         const imageWrapperDiv = document.createElement("div");
         imageWrapperDiv.style.display = "flex";
