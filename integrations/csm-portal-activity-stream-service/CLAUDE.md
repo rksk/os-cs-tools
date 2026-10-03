@@ -86,7 +86,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 
 - `internal/apierror` — typed upstream error (mirrors csm-portal-backend/internal/apierror)
 - `internal/events` — `Envelope` + event types (hand-synced copy; keep in sync with csm-notification-service's and entity-service's own copies)
-- `internal/eventbus` — `Consumer` (simple: no retry/DLQ; commit after Handle; `LatestOffset`; per-replica group suffix)
+- `internal/eventbus` — `Consumer` (simple: no retry/DLQ; commit after Handle; `LatestOffset`; per-replica group suffix; `Run` returns an error, logged at Error, when its reader stops — `io.EOF` included) and `Supervisor` (replaces an exited consumer with exponential backoff, 1s doubling to 30s; `Running()` drives `/health`, which answers 503 `{"status":"unavailable"}` while the configured consumer is not running and stays 200 when Event Hub is not configured)
 - `internal/stream` — `BroadcastHub` (in-process pub-sub per case ID; `subscriberBuffer=4`; non-blocking publish; `CloseAll` is registered as the stream server's `RegisterOnShutdown` hook so SIGTERM ends every stream with a terminal `event: shutdown` and `Server.Shutdown` completes within its grace period)
 - `internal/caseevents` — `Handler` (consumes events, fans to BroadcastHub for the two SSE types)
 - `internal/entity` — minimal `CustomerEntityClient` (only `GetCase`, OAuth2 client-credentials, forwards `x-user-id-token` + correlation ID)
