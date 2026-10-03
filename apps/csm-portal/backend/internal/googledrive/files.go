@@ -87,7 +87,7 @@ func (c *Client) ListFiles(ctx context.Context, folderID string) ([]DriveFile, e
 		}
 
 		for _, f := range page.Files {
-			results = append(results, DriveFile{ID: f.ID, Name: f.Name, MimeType: f.MimeType})
+			results = append(results, DriveFile(f))
 		}
 
 		if page.NextPageToken == "" {
