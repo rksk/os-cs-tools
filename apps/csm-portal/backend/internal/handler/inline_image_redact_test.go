@@ -105,6 +105,7 @@ func TestShouldRedactInlineImages(t *testing.T) {
 
 func TestRedactRawBase64Images_Formats(t *testing.T) {
 	const payload = "iVBORw0KGgoAAAANSUhEUgAAAXc"
+	const bs = `\`
 	cases := []struct {
 		name string
 		body string
@@ -112,9 +113,12 @@ func TestRedactRawBase64Images_Formats(t *testing.T) {
 		{"upper-case scheme and BASE64", `{"c":"<img src=\"DATA:IMAGE/PNG;BASE64,` + payload + `\">"}`},
 		{"MIME parameters before base64", `{"c":"<img src=\"data:image/png;name=a.png;charset=x;base64,` + payload + `\">"}`},
 		{"escaped slash in the payload", `{"c":"<img src=\"data:image\/png;base64,iVBORw0K\/GgoAAAANSUhEUgAAAXc\">"}`},
-		{"unicode-escaped plus", `{"c":"<img src=\"data:image/png;base64,iVBORw0K+GgoAAAANSUhEUgAAAXc\">"}`},
-		{"76-column wrapped with \n", `{"c":"<img src=\"data:image/png;base64,iVBORw0KGgo\nAAAANSUhEUgAAAXc\">"}`},
-		{"wrapped with \r\n", `{"c":"<img src=\"data:image/png;base64,iVBORw0KGgo\r\nAAAANSUhEUgAAAXc\">"}`},
+		// The JSON \u escapes are assembled from bs+"u..." so the source holds
+		// the six-character escape, not the decoded character.
+		{"unicode-escaped plus", `{"c":"<img src=\"data:image/png;base64,iVBORw0K` + bs + `u002bGgoAAAANSUhEUgAAAXc\">"}`},
+		{"unicode-escaped data URI prefix", `{"c":"<img src=\"` + bs + `u0064ata:image` + bs + `u002fpng;base64,iVBORw0KGgoAAAANSUhEUgAAAXc\">"}`},
+		{"76-column wrapped with LF", `{"c":"<img src=\"data:image/png;base64,iVBORw0KGgo\nAAAANSUhEUgAAAXc\">"}`},
+		{"wrapped with CRLF", `{"c":"<img src=\"data:image/png;base64,iVBORw0KGgo\r\nAAAANSUhEUgAAAXc\">"}`},
 		{"single-quoted attribute", `{"c":"<img src='data:image/jpeg;base64,` + payload + `'>"}`},
 		{"url-encoded svg", `{"c":"<img src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22iVBORw0KGgoAAAANSUhEUgAAAXc%22%3E\">"}`},
 		{"nested arrays and objects", `{"a":[{"b":{"c":["x","data:image/gif;base64,` + payload + `"]}}],"n":12345678901234567890}`},
