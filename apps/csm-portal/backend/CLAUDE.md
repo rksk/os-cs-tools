@@ -4,10 +4,12 @@ Go HTTP server (`net/http`, Go 1.26+) that acts as a backend-for-frontend (BFF) 
 
 ## Middleware chain
 
-`SecurityHeaders → CorrelationID → Auth → Logger → Mux`
+`SecurityHeaders → Recover → CORS → CorrelationID → Auth → Logger → Mux`, and inside the mux every route is `AccessGuard.Require → RedactInlineImages → [ClampSearchPagination on POST …/search] → handler` (see `route()` in `cmd/server/main.go`).
 
-- `SecurityHeaders` (`internal/middleware/security_headers.go`): sets `X-Content-Type-Options: nosniff`, `Content-Security-Policy: upgrade-insecure-requests`, and `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every response; outermost so headers are present even on auth failures
-- `CorrelationID` (`internal/middleware/correlation.go`): reads `X-CSM-Correlation-ID` from the incoming request or generates a UUID v4; stores the ID in context for the slog handler and for the entity client to forward; echoes the ID in the response header
+- `SecurityHeaders` (`internal/middleware/security_headers.go`): sets `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY` on every response; outermost so headers are present even on auth failures. A handler may still override one (download routes set their own `Content-Type`/`Content-Disposition`)
+- `Recover` (`internal/middleware/recover.go`): turns a handler panic into a logged 500 with the standard `{"message": …}` envelope (logging the correlation id from the response header) instead of a dropped connection; re-panics `http.ErrAbortHandler`
+- `CORS` (`internal/middleware/cors.go`): fail-closed allow-list from `CORS_ALLOWED_ORIGINS`; unset allows no cross-origin browser request. Ahead of Auth because a preflight carries no token
+- `CorrelationID` (`internal/middleware/correlation.go`): reads `X-CSM-Correlation-ID` from the incoming request (kept only if it is 1–64 letters, digits or hyphens) or generates a UUID v4; stores the ID in context for the slog handler and for the entity client to forward; echoes the ID in the response header
 - `Auth` (`internal/middleware/auth.go`): validates the `x-jwt-assertion` JWT and sets `UserInfo` in context. When `TokenValidatorEnabled` is true, the JWKS fetch runs through `x5cStrippingTransport`, which strips the `x5c` field from every key before `MicahParks/jwkset` parses the response — some IdPs (Asgardeo included) publish JWKS certs with a negative serial number, which Go's `crypto/x509` rejects since Go 1.23 and would otherwise make the whole JWK Set fail to load, even though verification only needs `n`/`e`. In Choreo deployments `TokenValidatorEnabled` is false (the gateway validates the JWT upstream), so this path only runs in local dev.
 - `Logger` (`internal/middleware/logger.go`): logs every completed request (method, path, status, elapsed) via slog; runs after Auth so both `correlationID` and `userID` are present in every record
 

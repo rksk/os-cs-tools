@@ -284,9 +284,8 @@ func hasAnyAudience(tokenAuds jwt.ClaimStrings, expected []string) bool {
 	return false
 }
 
-// addSecurityHeaders mirrors the Ballerina ResponseInterceptor security headers.
+// addSecurityHeaders applies the same headers SecurityHeaders sets, so Auth
+// used on its own (as in its tests) still produces them.
 func addSecurityHeaders(w http.ResponseWriter) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "upgrade-insecure-requests")
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	setSecurityHeaders(w.Header())
 }
