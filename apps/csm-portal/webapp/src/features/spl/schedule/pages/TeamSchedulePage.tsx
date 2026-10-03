@@ -71,6 +71,7 @@ import DOMPurify from "dompurify";
 import { BackendApiError } from "@api/backend/client";
 import { useGetTeamSchedule } from "@features/spl/schedule/api/useGetTeamSchedule";
 import type { ABTTeamScheduleList } from "@features/spl/schedule/scheduleTypes";
+import { openExternalUrl } from "@utils/openExternalUrl";
 import "@features/spl/schedule/ScheduleTable.css";
 
 enum EventType {
@@ -181,7 +182,9 @@ export default function TeamSchedulePage(): JSX.Element {
     if (newValue) setFrom(formatDateOnly(newValue));
   };
 
-  const handleSNUrlClick = () => window.open(serviceNowUrl, "_blank");
+  const handleSNUrlClick = () => {
+    openExternalUrl(serviceNowUrl);
+  };
 
   return (
     <Box className="schedule-app-container">
