@@ -25,6 +25,7 @@
 // instead of Quill for visual consistency with the rest of this codebase
 // (e.g. CsmCaseCommentInput). It only existed as dead code here because no
 // SPL-side role used to grant canAddWorkNotes -- see PermissionProvider.tsx.
+import { safeRouteId } from "@features/spl/utils/routeId";
 import { useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router";
 import DOMPurify from "dompurify";
@@ -74,7 +75,7 @@ const STATE_COLOR: Record<string, string> = {
 
 export default function CaseDetailPage() {
   const { caseId: rawCaseId } = useParams<{ caseId: string }>();
-  const caseId = rawCaseId ? DOMPurify.sanitize(rawCaseId) : "";
+  const caseId = safeRouteId(rawCaseId);
 
   const { notice, showSuccess, showWarning, showError, clear } = useCaseNotice();
   const { canAddWorkNotes } = usePermissions();
