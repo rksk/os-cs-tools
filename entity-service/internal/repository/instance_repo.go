@@ -123,6 +123,12 @@ func buildOptionalRef(id, name *string) *domain.ReferenceTableItem {
 	return &domain.ReferenceTableItem{ID: *id, Name: n}
 }
 
+// Date-range filters in this file compare the raw timestamp column against
+// day boundaries (col >= start AND col < end + 1 day) rather than casting the
+// column (col::date BETWEEN start AND end). Both read the day in the session
+// time zone, so they match the same rows, but a cast column cannot use its
+// index (idx_hourly_usage_summary_counted_on on the largest table here).
+
 // instanceIDFilterClause builds the WHERE fragment and args shared by every
 // instance query: the request's mutually-exclusive project/deployment/
 // deployed-product ID filters, then the caller's project scope. argIdx is the
@@ -170,12 +176,12 @@ func (r *instanceRepo) SearchInstances(ctx context.Context, req domain.SearchIns
 
 	if req.Filters != nil {
 		if req.Filters.StartDate != nil {
-			where += fmt.Sprintf(" AND dn.created_on::date >= $%d::date", argIdx)
+			where += fmt.Sprintf(" AND dn.created_on >= $%d::date", argIdx)
 			args = append(args, *req.Filters.StartDate)
 			argIdx++
 		}
 		if req.Filters.EndDate != nil {
-			where += fmt.Sprintf(" AND dn.created_on::date <= $%d::date", argIdx)
+			where += fmt.Sprintf(" AND dn.created_on < ($%d::date + 1)", argIdx)
 			args = append(args, *req.Filters.EndDate)
 			argIdx++
 		}
@@ -311,7 +317,7 @@ func (r *instanceRepo) latestDeploymentInformation(ctx context.Context, nodeIDs 
 
 // SearchInstanceMetrics implements InstanceRepository.
 func (r *instanceRepo) SearchInstanceMetrics(ctx context.Context, filters domain.InstanceDateRangeFilters) ([]domain.InstanceMetric, int, error) {
-	where := "WHERE di.payload_updated_on::date BETWEEN $1::date AND $2::date"
+	where := "WHERE di.payload_updated_on >= $1::date AND di.payload_updated_on < ($2::date + 1)"
 	args := []any{filters.StartDate, filters.EndDate}
 	scope, _ := CallerIdentityFromContext(ctx)
 	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
@@ -392,7 +398,7 @@ func (r *instanceRepo) SearchInstanceMetrics(ctx context.Context, filters domain
 
 // SearchInstanceUsage implements InstanceRepository.
 func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.InstanceDateRangeFilters) ([]domain.InstanceUsageEntry, int, error) {
-	where := "WHERE uc.counted_on::date BETWEEN $1::date AND $2::date"
+	where := "WHERE uc.counted_on >= $1::date AND uc.counted_on < ($2::date + 1)"
 	args := []any{filters.StartDate, filters.EndDate}
 	scope, _ := CallerIdentityFromContext(ctx)
 	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
@@ -488,7 +494,7 @@ func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.I
 // non-nil DataSource filter before this is ever called rather than silently
 // ignoring it.
 func (r *instanceRepo) SearchInstanceMetricsStats(ctx context.Context, filters domain.InstanceDateRangeFilters) (domain.InstanceMetricsStatsResponse, error) {
-	where := "WHERE di.payload_updated_on::date BETWEEN $1::date AND $2::date"
+	where := "WHERE di.payload_updated_on >= $1::date AND di.payload_updated_on < ($2::date + 1)"
 	args := []any{filters.StartDate, filters.EndDate}
 	scope, _ := CallerIdentityFromContext(ctx)
 	clause, clauseArgs := instanceIDFilterClause(scope, filters.ProjectIDs, filters.DeploymentIDs, filters.DeployedProductIDs, len(args)+1)
