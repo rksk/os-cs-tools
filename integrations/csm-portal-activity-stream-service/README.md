@@ -49,6 +49,8 @@ A stream is bounded by the credential that opened it: it is closed at `min(token
 | `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-portal-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
 | `STREAM_PORT` | No (default 9092) | Port the SSE listener binds to |
 | `STREAM_MAX_LIFETIME` | No (default `1h`) | Maximum lifetime of one SSE connection. A stream is closed at `min(token exp, connect + STREAM_MAX_LIFETIME)` with a terminal `stream_closed` event; the client reconnects with a fresh token |
+| `STREAM_MAX_CONNECTIONS_PER_USER` | No (default `8`) | Maximum concurrently open streams per authenticated user on one replica; excess connections get `429` with `Retry-After`. `0` disables the cap |
+| `STREAM_MAX_CONNECTIONS` | No (default `2000`) | Maximum concurrently open streams per replica; excess connections get `503` with `Retry-After`. `0` disables the cap |
 | `STREAM_REAUTH_INTERVAL` | No (default `10m`) | How often an open stream repeats the connect-time case-access check (entity-service `GetCase`). A definitive 401/403/404 closes the stream (`stream_closed`, reason `access_revoked`); transient upstream errors are logged and the stream kept open |
 | `STREAM_CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the SSE endpoint; fail-closed |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the health listener (:8080); fail-closed |

@@ -48,6 +48,8 @@ The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call
 | `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-portal-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
 | `STREAM_PORT` | No (default 9092) | Port the SSE listener binds to |
 | `STREAM_MAX_LIFETIME` | No (default `1h`) | Maximum lifetime of one SSE connection. A stream is closed at `min(token exp, connect + STREAM_MAX_LIFETIME)` with a terminal `stream_closed` event; the client reconnects with a fresh token |
+| `STREAM_MAX_CONNECTIONS_PER_USER` | No (default `8`) | Maximum concurrently open streams per authenticated user on one replica; excess connections get `429` with `Retry-After`. `0` disables the cap |
+| `STREAM_MAX_CONNECTIONS` | No (default `2000`) | Maximum concurrently open streams per replica; excess connections get `503` with `Retry-After`. `0` disables the cap |
 | `STREAM_REAUTH_INTERVAL` | No (default `10m`) | How often an open stream repeats the connect-time case-access check (entity-service `GetCase`). A definitive 401/403/404 closes the stream (`stream_closed`, reason `access_revoked`); transient upstream errors are logged and the stream kept open |
 | `STREAM_CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the SSE endpoint; fail-closed |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the health listener (:8080); fail-closed |
@@ -93,7 +95,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 
 ## Known limitations
 
-- No per-user/per-replica cap on concurrent SSE connections (same as csm-portal-backend's `StreamCaseActivities` doc comment). A hostile client could exhaust goroutines/FDs.
+- The concurrent-stream caps (`STREAM_MAX_CONNECTIONS_PER_USER`, `STREAM_MAX_CONNECTIONS`) are per replica and in-memory; there is no cluster-wide count, so a user's effective cap is the per-user cap multiplied by the replica count.
 - `Envelope` is hand-synced across three Go modules — changes must be propagated manually to csm-notification-service's and entity-service's own `internal/events`.
 - A redeploy (new pod/hostname) causes one-time replay of retained events (accepted tradeoff).
 - Consumer groups accumulate forever on the broker (no API to delete).

@@ -110,6 +110,10 @@ func main() {
 	streamHandler := handler.NewStreamHandler(customerEntityClient, activityHub,
 		handler.WithMaxLifetime(envDuration("STREAM_MAX_LIFETIME", handler.DefaultMaxStreamLifetime)),
 		handler.WithReauthInterval(envDuration("STREAM_REAUTH_INTERVAL", handler.DefaultReauthInterval)),
+		handler.WithConnectionLimits(
+			envInt("STREAM_MAX_CONNECTIONS_PER_USER", handler.DefaultMaxStreamsPerUser),
+			envInt("STREAM_MAX_CONNECTIONS", handler.DefaultMaxStreamsTotal),
+		),
 	)
 
 	// Health check listener (:8080) — simple REST endpoint for Choreo liveness probe.
@@ -314,6 +318,22 @@ func envDuration(key string, def time.Duration) time.Duration {
 		os.Exit(1)
 	}
 	return d
+}
+
+// envInt returns the value of the given environment variable parsed as a
+// non-negative integer, or def if unset. Exits the process on an unparseable
+// or negative value rather than silently falling back.
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		slog.Error("environment variable must be a non-negative integer", "key", key, "value", v)
+		os.Exit(1)
+	}
+	return n
 }
 
 // mustPort returns the value of the given environment variable (or def if
