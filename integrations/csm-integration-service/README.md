@@ -20,12 +20,20 @@ Server starts at `http://localhost:8080`.
 - Default port: `8080`
 - Runtime: Go `1.26+`
 - Entry point: `cmd/server/main.go`
-- Authentication:
-  - Incoming requests: **none at the app layer.** This service is fronted by Choreo's
-    API Manager gateway (subscription + M2M client-credentials app auth) — the app
-    code performs no Bearer/JWT validation of its own. Unlike `apps/csm-portal/backend`
-    (which authenticates its own end users), this service has no end-user identity to
-    check.
+- Authentication and authorization:
+  - Incoming requests: **authentication is the gateway's; authorization is per
+    operation here.** This service is fronted by Choreo's API Manager gateway
+    (subscription + M2M client-credentials app auth) — the app code performs no
+    Bearer/JWT signature validation of its own. Unlike `apps/csm-portal/backend`
+    (which authenticates its own end users), this service has no end-user identity
+    to check. It does, however, require one OAuth2 scope per operation (for
+    example `cases:write`, `contacts:read`, `vulnerabilities:sync`; the full list
+    is in `openapi.yaml`'s security scheme and `cmd/server/routes.go`), read from
+    the `scope` claim of the token the gateway forwards: no usable token is a
+    401, a token without the operation's scope is a 403, and neither is forwarded
+    upstream. `GET /health` is the only unscoped route. Set
+    `REQUIRE_OPERATION_SCOPES=false` to switch the check off for local
+    development only.
   - Outbound service calls: OAuth2 client credentials grant to the entity service
     (managed automatically) — always M2M, on every request, with no mechanism to
     carry an end-user identity. entity-service's ServiceNow-backed operations
@@ -65,10 +73,11 @@ Handler tests use a mock entity client (`internal/handler/helpers_test.go`) and 
 shared `upstreamErrors` table covering every `mapUpstreamError` status-code mapping.
 Entity client tests spin up real `httptest.Server`s to exercise the OAuth2
 client-credentials flow, error-body truncation, and correlation ID forwarding.
-Middleware tests cover header injection and ID generation/preservation.
-`cmd/server` (wiring only) and `internal/apierror` (a two-line `Error()` method)
-have no dedicated tests, matching the same judgment call `apps/csm-portal/backend`
-makes for its own equivalents.
+Middleware tests cover header injection, ID generation/preservation, and the
+scope guard's 401/403/pass decisions. `cmd/server/routes_test.go` drives every
+route in the scope table through a real mux against a stub upstream, asserting
+401 without a token, 403 with every other scope, and 2xx with the required one.
+`internal/apierror` (a two-line `Error()` method) has no dedicated tests.
 
 ### Run tests before every push (recommended)
 
@@ -107,6 +116,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | Variable | Description |
 |---|---|
 | `PORT` | Server listen port (default `8080`) |
+| `REQUIRE_OPERATION_SCOPES` | Enforce the per-operation scope check on every route except `GET /health` (default `true`). Set to `false` only for local development against a client that forwards no token; the server logs a warning at startup when it is off |
 
 ## Project Structure
 

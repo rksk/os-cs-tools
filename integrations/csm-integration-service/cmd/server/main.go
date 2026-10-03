@@ -25,12 +25,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
 )
 
@@ -48,9 +48,6 @@ func main() {
 	}
 
 	entityClient := entity.NewClient(cfg)
-	accountHandler := handler.NewAccountHandler(entityClient)
-	projectHandler := handler.NewProjectHandler(entityClient)
-	vulnerabilityHandler := handler.NewVulnerabilityHandler(entityClient)
 	// UMT_INTEGRATION_ACTOR_EMAIL is this service's own trusted M2M actor
 	// identity, asserted on POST /cases/{id}/comments (CreateCaseComment)
 	// and POST /cases/{id}/tags (AddCaseTag), as entity-service's
@@ -60,47 +57,21 @@ func main() {
 	// deploy-time misconfiguration, not something this service validates
 	// defensively -- the resulting entity-service 403 surfaces normally.
 	umtActorEmail := os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL")
-	caseHandler := handler.NewCaseHandler(entityClient, umtActorEmail)
-	opportunityHandler := handler.NewOpportunityHandler(entityClient)
-	invoiceHandler := handler.NewInvoiceHandler(entityClient)
-	projectOpportunityLinkHandler := handler.NewProjectOpportunityLinkHandler(entityClient)
-	incidentHandler := handler.NewIncidentHandler(entityClient)
-	itServiceHandler := handler.NewITServiceHandler(entityClient)
-	alertIncidentMappingHandler := handler.NewAlertIncidentMappingHandler(entityClient)
-	cloudStatusHandler := handler.NewCloudStatusHandler(entityClient)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	health := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)
-	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
-	mux.HandleFunc("POST /accounts/{id}/contacts/search", accountHandler.SearchAccountContacts)
-	mux.HandleFunc("GET /projects/{id}", projectHandler.GetProject)
-	mux.HandleFunc("POST /projects/search", projectHandler.SearchProjects)
-	mux.HandleFunc("POST /projects/{id}/contacts/search", projectHandler.SearchProjectContacts)
-	mux.HandleFunc("PATCH /projects/{id}", projectHandler.UpdateProject)
-	mux.HandleFunc("POST /vulnerabilities/sync", vulnerabilityHandler.SyncProductVulnerabilities)
-	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
-	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
-	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
-	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
-	mux.HandleFunc("POST /opportunities/search", opportunityHandler.SearchOpportunities)
-	mux.HandleFunc("GET /opportunities/{id}", opportunityHandler.GetOpportunity)
-	mux.HandleFunc("POST /invoices/search", invoiceHandler.SearchInvoices)
-	mux.HandleFunc("GET /invoices/{id}", invoiceHandler.GetInvoice)
-	mux.HandleFunc("POST /project-opportunity-links/search", projectOpportunityLinkHandler.SearchProjectOpportunityLinks)
-	mux.HandleFunc("POST /incidents", incidentHandler.CreateIncident)
-	mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
-	mux.HandleFunc("POST /incidents/search", incidentHandler.SearchIncidents)
-	mux.HandleFunc("POST /services/search", itServiceHandler.SearchITServices)
-	mux.HandleFunc("POST /alert-incident-mappings", alertIncidentMappingHandler.CreateAlertIncidentMapping)
-	mux.HandleFunc("POST /alert-incident-mappings/lookup", alertIncidentMappingHandler.LookupAlertIncidentMappings)
-	mux.HandleFunc("GET /cloud-status/monitors", cloudStatusHandler.GetMonitors)
-	mux.HandleFunc("GET /cloud-status/incidents", cloudStatusHandler.GetIncidents)
-	mux.HandleFunc("GET /cloud-status/availabilities", cloudStatusHandler.GetAvailabilities)
-	mux.HandleFunc("GET /cloud-status/availability-history", cloudStatusHandler.GetAvailabilityHistory)
-	mux.HandleFunc("GET /cloud-status/incidents/{id}", cloudStatusHandler.GetIncidentDetail)
+
+	// REQUIRE_OPERATION_SCOPES switches the per-operation scope check (see
+	// cmd/server/routes.go for the route-to-scope table and
+	// middleware.ScopeGuard for the check itself). Enforcement is the default
+	// and the deployed configuration; "false" is for local development against
+	// a bare client that forwards no token.
+	guard := middleware.NewScopeGuard(envBool("REQUIRE_OPERATION_SCOPES", true))
+	if !guard.Enforcing() {
+		slog.Warn("operation scope enforcement is disabled; every caller may invoke every operation")
+	}
+
+	mux := newMux(newHandlers(entityClient, umtActorEmail, health), guard)
 
 	addr := ":" + envOrDefault("PORT", "8080")
 
@@ -111,9 +82,11 @@ func main() {
 	}
 	slog.Info("Integration Service started", "addr", addr)
 
-	// No Auth layer in this middleware chain — inbound requests are trusted at the
-	// Choreo API Manager gateway (subscription + M2M app auth), not validated again
-	// in this service. See internal/handler's doc comments for the same note.
+	// No authentication layer in this middleware chain: inbound callers are
+	// authenticated at the API gateway (subscription + client credentials), not
+	// validated again here. Authorization is per route, by the scope guard
+	// applied in newMux, which reads the scope claim of the token the gateway
+	// forwards.
 	srv := &http.Server{
 		Handler: middleware.SecurityHeaders(
 			middleware.CorrelationID(
@@ -162,6 +135,22 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envBool reads a boolean environment variable, returning def when it is unset.
+// A value that is set but not a boolean is a misconfiguration and stops startup,
+// so a typo can never silently flip a default.
+func envBool(key string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Error("environment variable is not a boolean", "key", key, "value", v)
+		os.Exit(1)
+	}
+	return b
 }
 
 // loadDotEnv reads a .env file and sets any unset environment variables from it.
