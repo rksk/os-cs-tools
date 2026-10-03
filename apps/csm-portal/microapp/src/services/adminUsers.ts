@@ -44,7 +44,7 @@ const ADMIN_USERS_PAGE_LIMIT = 20;
 // generic internal-user roles ("internal"/"agent"/"admin") instead — the webapp's own past bug,
 // since fixed there — let a submitter pick literally anyone at the company; here it did the
 // opposite, since none of the ServiceNow accounts actually eligible to approve carry those
-// generic role tags, so the search always came back empty (digiops-cs#2805).
+// generic role tags, so the search always came back empty.
 const TIMECARD_APPROVER_GROUP = "timecard_approver";
 const APPROVER_SEARCH_LIMIT = 6;
 
