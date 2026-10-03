@@ -709,6 +709,9 @@ func main() {
 				),
 			),
 		),
+		// Request headers are capped at 64 KiB (net/http's default is 1 MiB);
+		// a token plus the handful of headers this API reads fit easily.
+		MaxHeaderBytes:    maxHeaderBytes,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -1212,6 +1215,10 @@ func envOrDefault(key, def string) string {
 	}
 	return def
 }
+
+// maxHeaderBytes caps the size of a request's header block (http.Server's
+// MaxHeaderBytes).
+const maxHeaderBytes = 64 << 10
 
 // mustPort returns the value of the given environment variable (or def if
 // unset) as a bare port number, e.g. "8080" — not an address like ":8080" or
