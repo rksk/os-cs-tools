@@ -24,7 +24,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/apierror"
 )
 
 // ----- assertion helpers -----

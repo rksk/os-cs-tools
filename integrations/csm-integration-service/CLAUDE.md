@@ -154,8 +154,9 @@ the always-401 state described in earlier revisions of this doc.**
   injects it. entity-service checks it against its own
   `M2M_TRUSTED_ACTOR_EMAILS` allowlist and, when it matches, creates the
   comment with no forwarded token required. **Succeeds** today when
-  `UMT_INTEGRATION_ACTOR_EMAIL` is configured and allowlisted; **403** if
-  it's unset or not on the allowlist.
+  `UMT_INTEGRATION_ACTOR_EMAIL` is allowlisted; **403** if it is not. The
+  variable is required: the server refuses to start when it is unset or not
+  a single bare e-mail address (`actorEmail` in `cmd/server/main.go`).
 - On `DATA_SOURCE=servicenow`, entity-service's `sn_case_service.go` never
   hard-required a token locally to begin with, it just forwards whatever
   `x-user-id-token` is on the request (possibly empty) straight to
@@ -194,10 +195,11 @@ Contacts search and opportunity/invoice/link reads work over M2M only if this se
 
 `SecurityHeaders → CorrelationID → Logger → Mux → (ScopeGuard per route) → handler`
 
-- `SecurityHeaders` (`internal/middleware/security_headers.go`): sets
-  `X-Content-Type-Options: nosniff`, `Content-Security-Policy:
-  upgrade-insecure-requests`, and `Strict-Transport-Security:
-  max-age=31536000; includeSubDomains` on every response
+- `SecurityHeaders` (`internal/middleware/security_headers.go`): sets five
+  headers on every response — `X-Content-Type-Options: nosniff`,
+  `Content-Security-Policy: upgrade-insecure-requests`,
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
+  `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`
 - `CorrelationID` (`internal/middleware/correlation.go`): reads
   `X-CSM-Correlation-ID` from the incoming request and keeps it only if it is at
   most 128 bytes of `[A-Za-z0-9._-]` (otherwise generates a UUID v4); ensures
@@ -236,7 +238,7 @@ same `Config`/`Client`/`NewClient`/`do()` pattern as `internal/entity`.
 ## Running locally
 
 ```bash
-# from operations/csm-integration-service
+# from integrations/csm-integration-service
 go run ./cmd/server/main.go
 ```
 

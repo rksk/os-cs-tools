@@ -2554,7 +2554,9 @@ components:
         M2M-only service; every other field requires a forwarded end-user
         identity token this service cannot supply. See the entity service's
         own OpenAPI spec for the full field set and combination rules — this
-        is deliberately not fully re-specified here.
+        is deliberately not fully re-specified here. The body is forwarded
+        verbatim: a field the entity service does not recognise is rejected
+        there with 400, not silently accepted.
       properties:
         state:
           type: string
@@ -2574,7 +2576,6 @@ components:
             state/severity/workState, this succeeds through this M2M-only
             service unconditionally, with no data-source-dependent 401.
           enum: [true]
-      additionalProperties: true
 
     CaseUpdateResult:
       type: object
@@ -2605,6 +2606,9 @@ components:
 
     CaseCommentCreateRequest:
       type: object
+      description: >
+        Only type and content are read; any other field (including
+        actorEmail) is ignored and never forwarded.
       required:
         - type
         - content
@@ -2640,6 +2644,9 @@ components:
 
     CaseTagCreateRequest:
       type: object
+      description: >
+        Only label is read; any other field (including actorEmail) is
+        ignored and never forwarded.
       required:
         - label
       properties:

@@ -178,24 +178,22 @@ func (c *Client) SyncProductVulnerabilities(ctx context.Context, body []byte) ([
 	return c.do(ctx, http.MethodPost, "/products/vulnerabilities/sync", body)
 }
 
-// CreateIncident calls POST /incidents on the entity service. This targets a
-// ServiceNow-backed operation that requires a forwarded end-user identity
-// token. This service is strictly M2M with no mechanism to carry one, so
-// entity-service is expected to reject this call with 401 — kept for
-// API-shape completeness so a real caller has somewhere stable to point at,
-// not because it currently succeeds. See UpdateProject's doc comment above
-// for the same situation. Response is returned as raw JSON; typed response
-// structs are deferred.
+// CreateIncident calls POST /incidents on the entity service. The backing
+// operation does not strictly require a forwarded end-user identity: when
+// none is present it falls back to a separately configured machine
+// credential for the backing data source, so this M2M-only call succeeds
+// wherever that credential is configured and is answered 401 only where it
+// is not. Unlike UpdateProject, a 401 here is therefore environment-dependent,
+// not unconditional. Response is returned as raw JSON; typed response structs
+// are deferred.
 func (c *Client) CreateIncident(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/incidents", body)
 }
 
-// SearchIncidents calls POST /incidents/search on the entity service. This
-// targets a ServiceNow-backed operation that requires a forwarded end-user
-// identity token, same as CreateIncident above — this service cannot supply
-// one, so entity-service is expected to reject this call with 401. Kept for
-// API-shape completeness, not because it currently succeeds. Response is
-// returned as raw JSON; typed response structs are deferred.
+// SearchIncidents calls POST /incidents/search on the entity service. Same
+// machine-credential fallback as CreateIncident above: it succeeds over M2M
+// where that credential is configured and 401s only where it is not.
+// Response is returned as raw JSON; typed response structs are deferred.
 func (c *Client) SearchIncidents(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/incidents/search", body)
 }

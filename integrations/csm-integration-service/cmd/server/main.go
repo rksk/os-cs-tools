@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/signal"
 	"strconv"
@@ -30,9 +31,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/handler"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/handler"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/middleware"
 )
 
 func main() {
@@ -54,10 +55,13 @@ func main() {
 	// and POST /cases/{id}/tags (AddCaseTag), as entity-service's
 	// actorEmail field. It must match an entry in entity-service's
 	// M2M_TRUSTED_ACTOR_EMAILS allowlist or every call needing it 403s.
-	// Optional here at startup by design: an empty/unset value is a
-	// deploy-time misconfiguration, not something this service validates
-	// defensively -- the resulting entity-service 403 surfaces normally.
-	umtActorEmail := os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL")
+	// Required at startup: an unset or malformed value would otherwise only
+	// show up later as a 403 on every case comment and tag write.
+	umtActorEmail, err := actorEmail(os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL"))
+	if err != nil {
+		slog.Error("invalid UMT_INTEGRATION_ACTOR_EMAIL", "err", err)
+		os.Exit(1)
+	}
 	// GET /health reports whether the entity service is reachable (cached; see
 	// handler.HealthHandler), not merely that this process is up.
 	health := handler.NewHealthHandler(entityClient)
@@ -136,6 +140,21 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// actorEmail validates the configured trusted-actor address: it must be set
+// and be a single bare address (no display name, no list), since it is sent
+// verbatim as the acting identity on case comment and tag writes.
+func actorEmail(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", errors.New("is not set")
+	}
+	addr, err := mail.ParseAddress(v)
+	if err != nil || addr.Address != v {
+		return "", errors.New("is not a single bare e-mail address")
+	}
+	return v, nil
 }
 
 // envBool reads a boolean environment variable, returning def when it is unset.
