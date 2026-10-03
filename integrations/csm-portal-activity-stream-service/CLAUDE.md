@@ -18,6 +18,8 @@ entity-service ──▶ Event Hub "case-events" ──▶ this service (consume
 
 Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
 
+SSE framing: each stream starts with `retry: 3000`; each `case_updated` carries `id: <hub-epoch>-<seq>`. On reconnect with `Last-Event-ID` the handler replays this case's missed events from the hub's in-memory ring (`stream.ReplayCapacity` = 256 events across all cases, `stream.ReplayWindow` = 2 min). Best-effort only: IDs are local to one process, so a reconnect to another replica, after a restart, or past the window gets no replay — clients still refresh on (re)connect. Consumer offsets are committed in 1 s batches (`CommitInterval`), not one synchronous commit per record.
+
 ## Auth
 
 The SSE endpoint validates `x-jwt-assertion` (and optional `x-user-id-token`) on every request via the same `middleware.Auth` chain as `csm-portal-backend`. There is no separate ticket/token-exchange step. The browser connects with these headers directly via an EventSource polyfill (`@sanity/eventsource`) — native `EventSource` cannot set custom headers.

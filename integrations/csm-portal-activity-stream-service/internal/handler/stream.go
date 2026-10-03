@@ -38,6 +38,14 @@ var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 // connection limiter. Advisory: the browser polyfill applies its own backoff.
 const limitRetryAfter = 30 * time.Second
 
+// streamRetry is the reconnect delay advertised with the SSE `retry:` field
+// at the start of every stream.
+const streamRetry = 3 * time.Second
+
+// maxLastEventIDLen bounds the Last-Event-ID request header the handler will
+// consider; the hub's own IDs are far shorter.
+const maxLastEventIDLen = 64
+
 // caseActivityStreamHeartbeat is how often StreamCaseActivities writes a
 // comment-only SSE ping to keep the connection alive through intermediate
 // proxies that would otherwise time out an idle response.
@@ -257,10 +265,31 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 	// endpoint; harmless (ignored) on stacks that don't recognise it.
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+
+	// Pace the client's automatic reconnect (an SSE `retry:` field on its
+	// own dispatches no event).
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n", streamRetry.Milliseconds()); err != nil {
+		return
+	}
 	flusher.Flush()
 
-	ch := h.hub.Register(caseID)
+	// Best-effort resume: a client reconnecting with Last-Event-ID gets the
+	// events for this case it missed, if this replica still holds them (see
+	// stream.ReplayCapacity). Over-long values are ignored, not parsed.
+	lastEventID := r.Header.Get("Last-Event-ID")
+	if len(lastEventID) > maxLastEventIDLen {
+		lastEventID = ""
+	}
+	ch, missed := h.hub.Subscribe(caseID, lastEventID)
 	defer h.hub.Unregister(caseID, ch)
+	for _, ev := range missed {
+		if err := writeCaseUpdated(w, ev); err != nil {
+			return
+		}
+	}
+	if len(missed) > 0 {
+		flusher.Flush()
+	}
 
 	ticker := time.NewTicker(caseActivityStreamHeartbeat)
 	defer ticker.Stop()
@@ -297,7 +326,7 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 				return
 			}
 			flusher.Flush()
-		case payload, ok := <-ch:
+		case ev, ok := <-ch:
 			if !ok {
 				// Only BroadcastHub.CloseAll closes a channel while its
 				// subscriber is still reading (Unregister runs after this
@@ -306,17 +335,24 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 				slog.InfoContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", ReasonShutdown)
 				return
 			}
-			// payload is always compact, single-line JSON built by
-			// internal/caseevents.Handler (see BroadcastHub.Publish's
-			// caller) — safe to write as one `data:` line, since
-			// json.Marshal escapes any literal newline in a string value
-			// rather than emitting one.
-			if _, err := fmt.Fprintf(w, "event: case_updated\ndata: %s\n\n", payload); err != nil {
+			if err := writeCaseUpdated(w, ev); err != nil {
+				// The client is gone or stalled past the transport's
+				// buffers; return so the subscription is released.
 				return
 			}
 			flusher.Flush()
 		}
 	}
+}
+
+// writeCaseUpdated writes ev as a `case_updated` SSE event with its `id:`.
+// ev.Data is always compact, single-line JSON built by
+// internal/caseevents.Handler — safe to write as one `data:` line, since
+// json.Marshal escapes any literal newline in a string value rather than
+// emitting one — and ev.ID is the hub's `<epoch>-<seq>`, [0-9a-z-] only.
+func writeCaseUpdated(w io.Writer, ev stream.Event) error {
+	_, err := fmt.Fprintf(w, "id: %s\nevent: case_updated\ndata: %s\n\n", ev.ID, ev.Data)
+	return err
 }
 
 // isAccessDenied reports whether err is a definitive upstream answer that the

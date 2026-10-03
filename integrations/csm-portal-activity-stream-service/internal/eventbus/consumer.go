@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 )
@@ -96,11 +97,19 @@ func (s StartOffset) kafkaOffset() int64 {
 	return kafka.FirstOffset
 }
 
+// commitInterval batches offset commits: Run still marks each record
+// committed only after handling it, but the reader flushes those marks to
+// the broker on this interval (and on Close) instead of one synchronous
+// round-trip per record, which would otherwise delay the fan-out of the
+// next record. A crash can therefore redeliver up to one interval's worth of
+// records — harmless for this live-only, idempotent cache-invalidation ping.
+const commitInterval = time.Second
+
 // NewConsumer constructs a Consumer that joins groupID and consumes
-// cfg.Topic. Auto-commit is not used: offsets are committed explicitly by
-// Run, only after a record has been handled — never before — so a crash
-// mid-processing redelivers the record on restart instead of silently
-// skipping it.
+// cfg.Topic. Offsets are marked for commit by Run only after a record has
+// been handled — never before — and flushed in batches (see commitInterval),
+// so a crash mid-processing redelivers the record on restart instead of
+// silently skipping it.
 func NewConsumer(cfg Config, groupID string, startOffset StartOffset) *Consumer {
 	return &Consumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
@@ -113,9 +122,10 @@ func NewConsumer(cfg Config, groupID string, startOffset StartOffset) *Consumer 
 			},
 			// Only applies to a partition with no committed offset yet (this
 			// consumer group's first run) — see StartOffset.
-			StartOffset: startOffset.kafkaOffset(),
-			Logger:      kafka.LoggerFunc(logDebug),
-			ErrorLogger: kafka.LoggerFunc(logError),
+			StartOffset:    startOffset.kafkaOffset(),
+			CommitInterval: commitInterval,
+			Logger:         kafka.LoggerFunc(logDebug),
+			ErrorLogger:    kafka.LoggerFunc(logError),
 		}),
 	}
 }

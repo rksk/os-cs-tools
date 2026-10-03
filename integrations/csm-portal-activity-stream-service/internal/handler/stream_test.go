@@ -19,6 +19,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -404,5 +405,130 @@ func TestStreamCaseActivities_ClientDisconnect_NoTerminalEvent(t *testing.T) {
 	waitDone(t, done, 3*time.Second)
 	if strings.Contains(w.String(), "event: "+EventStreamClosed) {
 		t.Errorf("terminal event written to a client that already disconnected: %q", w.String())
+	}
+}
+
+// ---- SSE protocol fields (retry, id, Last-Event-ID) and write failures ----
+
+func TestStreamCaseActivities_WritesRetryThenIDs(t *testing.T) {
+	hub := stream.NewBroadcastHub()
+	h := NewStreamHandler(&mockEntityCaseClient{}, hub)
+	w, done, cancel := startStream(t, h, testUser)
+	defer func() { cancel(); waitDone(t, done, 3*time.Second) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(w.String(), "event: case_updated") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no event delivered; body: %q", w.String())
+		}
+		hub.Publish(streamTestCaseID, `{"caseId":"x"}`)
+		time.Sleep(5 * time.Millisecond)
+	}
+	body := w.String()
+	if !strings.HasPrefix(body, "retry: 3000\n\n") {
+		t.Errorf("stream does not start with the retry field; body: %q", body)
+	}
+	if !strings.Contains(body, "\nevent: case_updated\n") || !strings.Contains(body, "id: ") {
+		t.Errorf("case_updated event without an id field; body: %q", body)
+	}
+}
+
+func TestStreamCaseActivities_LastEventIDReplaysMissedEvents(t *testing.T) {
+	hub := stream.NewBroadcastHub()
+	// Learn a real ID from a first subscriber, then publish two more events
+	// the reconnecting client has not seen (plus one for another case).
+	first := hub.Register(streamTestCaseID)
+	hub.Publish(streamTestCaseID, `{"n":1}`)
+	seen := <-first
+	hub.Unregister(streamTestCaseID, first)
+	hub.Publish(streamTestCaseID, `{"n":2}`)
+	hub.Publish("22222222-2222-2222-2222-222222222222", `{"other":true}`)
+	hub.Publish(streamTestCaseID, `{"n":3}`)
+
+	h := NewStreamHandler(&mockEntityCaseClient{}, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil).
+		WithContext(middleware.WithUserInfo(ctx, testUser))
+	req.SetPathValue("id", streamTestCaseID)
+	req.Header.Set("Last-Event-ID", seen.ID)
+	w := newSyncRecorder()
+	done := make(chan struct{})
+	go func() { h.StreamCaseActivities(w, req); close(done) }()
+	defer func() { cancel(); waitDone(t, done, 3*time.Second) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(w.String(), `{"n":3}`) {
+		if time.Now().After(deadline) {
+			t.Fatalf("missed events not replayed; body: %q", w.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	body := w.String()
+	if strings.Contains(body, `{"n":1}`) || strings.Contains(body, `{"other":true}`) {
+		t.Errorf("replay included an already-seen or foreign event; body: %q", body)
+	}
+	if strings.Index(body, `{"n":2}`) > strings.Index(body, `{"n":3}`) {
+		t.Errorf("replay out of order; body: %q", body)
+	}
+}
+
+// failingRecorder is a syncRecorder whose writes start failing once broken
+// is set, standing in for a client that has gone away mid-stream.
+type failingRecorder struct {
+	*syncRecorder
+	mu     sync.Mutex
+	broken bool
+}
+
+func (f *failingRecorder) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	broken := f.broken
+	f.mu.Unlock()
+	if broken {
+		return 0, io.ErrClosedPipe
+	}
+	return f.syncRecorder.Write(p)
+}
+
+func TestStreamCaseActivities_WriteErrorEndsStreamAndReleasesSlot(t *testing.T) {
+	hub := stream.NewBroadcastHub()
+	h := NewStreamHandler(&mockEntityCaseClient{}, hub, WithConnectionLimits(1, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil).
+		WithContext(middleware.WithUserInfo(ctx, testUser))
+	req.SetPathValue("id", streamTestCaseID)
+	w := &failingRecorder{syncRecorder: newSyncRecorder()}
+	done := make(chan struct{})
+	go func() { h.StreamCaseActivities(w, req); close(done) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !w.started() {
+		if time.Now().After(deadline) {
+			t.Fatal("stream never started")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	w.mu.Lock()
+	w.broken = true
+	w.mu.Unlock()
+
+	// The next event's write fails; the handler must return on its own
+	// (the request context is still live) and free its slot.
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case <-done:
+			if u, _ := h.limiter.counts(testUser.UserID); u != 0 {
+				t.Errorf("connection slot still held after write failure (%d)", u)
+			}
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("handler kept running after its writes started failing")
+		}
+		hub.Publish(streamTestCaseID, `{"caseId":"x"}`)
+		time.Sleep(5 * time.Millisecond)
 	}
 }
