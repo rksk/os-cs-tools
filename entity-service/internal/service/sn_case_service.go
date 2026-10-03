@@ -383,8 +383,8 @@ type snCaseAccount struct {
 }
 
 type snCaseState struct {
-	ID    int    `json:"id"`
-	Label string `json:"label"`
+	ID    snFlexibleInt `json:"id"`
+	Label string        `json:"label"`
 }
 
 type snCaseLabel struct {
