@@ -326,6 +326,17 @@ whatever's genuinely identical (a case-search method, a rendering helper), but k
 template, its own render function, and its own recipients wired through in `cmd/server/main.go` —
 there still isn't, and isn't meant to be, one shared "send a report" mechanism in `engine`.
 
+**Once per period.** `registry.Task.Handler` must be idempotent per period, and a report handler on
+its own is not: if the engine's `Complete` fails after the e-mail went out (or the process dies in
+between), the row is reclaimed and the same report is mailed again. Both report tasks therefore run
+their search-render-send inside `internal/reportguard.Guard.Once`, which records the send as a
+companion ledger row named `<task>.sent` for the same period key — claimed before the send,
+completed right after. A re-run for a period whose companion row already succeeded skips the query
+and the send. This uses only the existing ledger endpoints (the companion rows are ordinary rows,
+deleted by `housekeeping_cleanup` like any other); the engine passes the claimed period to every
+handler via `registry.WithPeriod`/`PeriodFrom`. A new report-sending sub-cron should be wired the
+same way.
+
 ## Future: events
 
 Not built yet. `engine.Engine`'s `recordSuccess`/`recordFailure` are the one place a status
