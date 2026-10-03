@@ -8020,6 +8020,8 @@ paths:
         Send an incident alert card message to the Google Chat space
         configured for the given product. Triggered manually today, pending
         integration into real case/incident creation.
+        The card content comes from the incident record named by caseId; each
+        caller may send at most 5 alerts per 10 minutes (429 beyond that).
       operationId: postNotificationsGoogleChatAlerts
       requestBody:
         content:
@@ -8055,8 +8057,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound (no incident with the given caseId)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "429":
+          description: TooManyRequests (more than 5 alerts from this caller in 10 minutes)
           content:
             application/json:
               schema:
@@ -19049,7 +19063,7 @@ components:
 
     GoogleChatAlertPayload:
       type: object
-      required: [product, title, shortDescription, caseId]
+      required: [product, caseId]
       additionalProperties: false
       properties:
         product:
@@ -19060,15 +19074,23 @@ components:
             whitespace-insensitively against NOTIFICATIONS_GOOGLE_CHAT_SPACES.
         title:
           type: string
-          description: Card header title (e.g. "P1 Incident - CASE-001").
+          deprecated: true
+          description: >-
+            Accepted for compatibility and ignored: the card title is built from
+            the incident record ("<priority> Incident - <number>").
         shortDescription:
           type: string
-          description: Card body text shown under "Short Description".
+          deprecated: true
+          description: >-
+            Accepted for compatibility and ignored: the card text is the incident
+            record's subject.
         caseId:
           type: string
+          format: uuid
           description: >-
-            Case ID used to build the "Open in CSM Portal" link
-            (/operations/incidents/{caseId}).
+            Incident id. The card is built from this incident's record
+            (HTML-escaped), and it is used to build the "Open in CSM Portal"
+            link (/operations/incidents/{caseId}).
 
     Incident:
       type: object
