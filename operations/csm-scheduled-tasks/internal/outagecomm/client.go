@@ -17,7 +17,7 @@
 // Package outagecomm is a narrow client for entity-service's outage
 // COMMUNICATION sweep — the SRE-facing declaration and resolution emails.
 //
-// The port of ServiceNow's `Outage Communication` flow. Distinct from
+// The replacement for the legacy outage communication workflow. Distinct from
 // internal/outagenotify, which is the internal-STAKEHOLDER notifier: a
 // different flow, a different audience, and a different idempotency
 // mechanism. Two clients rather than one because the two entity-service
@@ -94,9 +94,9 @@ type SweepResult struct {
 // Sweep twice does not yield the same email twice — and a decision this
 // caller fails to deliver is LOST rather than retried.
 //
-// That log row is the port's whole idempotency mechanism. ServiceNow relies
-// on "Run Trigger: Once" and writes no state to the outage at all, which a
-// sweep cannot inherit. Recording first means a crash loses an email rather
+// That log row is the port's whole idempotency mechanism. The legacy
+// workflow relied on a run-once trigger and wrote no state to the outage at
+// all, which a sweep cannot inherit. Recording first means a crash loses an email rather
 // than repeating it, matching the internal notifier's choice for the same
 // reason: a duplicate announcement to a standing group is worse than a gap.
 func (c *Client) Sweep(ctx context.Context, limit int) (SweepResult, error) {

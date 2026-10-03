@@ -79,7 +79,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 // (domain.SearchCaseView there). Account and AssignedTo are "" when
 // entity-service returns no value for that case — an unassigned case, or a
 // data source that doesn't populate account details (see entity-service's
-// own CLAUDE.md on DATA_SOURCE=servicenow-gated fields) — rather than a
+// own CLAUDE.md on data-source-gated fields) — rather than a
 // pointer a caller has to nil-check.
 type Case struct {
 	ID         string
@@ -164,13 +164,11 @@ type searchCaseView struct {
 // caseDateTimeLayouts are tried in order to parse a case-search
 // createdOn/updatedOn value. entity-service's own domain.SearchCaseView
 // declares these as plain strings, not a guaranteed RFC3339 shape: the
-// ServiceNow-backed data source passes ServiceNow's raw datetime fields
-// straight through unreformatted (see entity-service's own
-// internal/service.parseSNDateTime and snCreatedOnLayout/snAltCreatedOnLayout
-// — root-caused there to a GlideRecord.getDisplayValue() vs getValue() bug on
-// the ServiceNow side that occasionally renders a locale-formatted date
-// instead of canonical ISO). This client tries the same two layouts for the
-// same reason, plus RFC3339 first for a Postgres-backed data source.
+// legacy backing data source passes its raw datetime fields straight through
+// unreformatted, and occasionally renders a locale-formatted date instead of
+// canonical ISO (entity-service's own adapter for that data source accepts
+// the same two layouts). This client tries those two layouts for the same
+// reason, plus RFC3339 first for a Postgres-backed data source.
 var caseDateTimeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02 15:04:05",
@@ -180,8 +178,8 @@ var caseDateTimeLayouts = []string{
 // parseCaseDateTime parses value against caseDateTimeLayouts in order,
 // returning the first successful result. A value in any of these formats
 // with no explicit zone offset is treated as UTC, matching
-// entity-service's own parseSNDateTime (time.Parse with no zone abbreviation
-// in the layout defaults to UTC).
+// entity-service's own data-source adapter (time.Parse with no zone
+// abbreviation in the layout defaults to UTC).
 func parseCaseDateTime(value string) (time.Time, error) {
 	var lastErr error
 	for _, layout := range caseDateTimeLayouts {

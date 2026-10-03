@@ -172,21 +172,20 @@ emails" below.
 
 The SRE-facing pair of outage emails: one when an outage is declared, one
 when it is resolved. Task name **`outage_communication`**, default schedule
-`*/5 * * * *`. The Go port of ServiceNow's `Outage Communication` flow.
+`*/5 * * * *`. The replacement for the legacy outage communication workflow.
 
 *** NOT THE SAME AS `outage_internal_notification`. *** That task is the
-internal-STAKEHOLDER notice, a different ServiceNow flow with a different
+internal-STAKEHOLDER notice, a different legacy workflow with a different
 audience and a different idempotency mechanism. They share the outage table
 and nothing else. Two tasks, two sub-cron names, two `SUB_CRON_RECIPIENTS`
 entries.
 
 **Recipients are configuration, and that is an evidenced decision.**
-ServiceNow resolves a group literally named `SRE Team`, which on the dev
-instance is `SRE_Team@gmail.com` with three members — a gmail address
-standing in for an internal list. Of seventeen active groups matching /SRE/,
-only one other has any address at all and it is a personal one. So there is
-no real distribution list to derive from, and the port takes its audience
-from `SUB_CRON_RECIPIENTS["outage_communication"].to` instead.
+The legacy workflow resolves a group whose only address on the
+non-production instance is an external mailbox standing in for an internal
+list, and no other matching group carries a usable distribution address. So
+there is no real distribution list to derive from, and the port takes its
+audience from `SUB_CRON_RECIPIENTS["outage_communication"].to` instead.
 
 Unlike the report tasks, `to` here is the REAL audience of the email, not
 just the failure-alert list — the same arrangement `outage_internal_notification`
@@ -204,7 +203,7 @@ Without that column the repository degrades to "nothing to send" rather than
 failing the sweep — narrow on purpose, so only `undefined_column` is
 swallowed.
 
-**What it will not send.** ServiceNow's declaration branch requires
+**What it will not send.** The legacy workflow's declaration branch requires
 `type=outage`, so a DEGRADATION or PLANNED outage produces no email at all.
 Reproduced deliberately; widening it is a product change, not a port.
 
