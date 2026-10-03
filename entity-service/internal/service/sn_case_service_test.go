@@ -1134,8 +1134,8 @@ func TestSNCaseService_UpdateCase_RejectsMarkFixIssued(t *testing.T) {
 // Pagination.limit constraint (max 50 vs the hardcoded 100 this gate sent),
 // which broke every case close in production. That business rule belongs at
 // the ServiceNow layer instead (see CaseUtils.patchCaseState's existing,
-// zero-round-trip child-case-block-close pattern) -- tracked in
-// tasks/active/2026-07-30-sn-close-gate-migration.md. This test guards
+// zero-round-trip child-case-block-close pattern), tracked separately as a
+// backing-system change. This test guards
 // against silently reintroducing the Go-side gate.
 
 func TestSNCaseService_UpdateCase_Close_NoLongerCallsTaskSearch(t *testing.T) {
