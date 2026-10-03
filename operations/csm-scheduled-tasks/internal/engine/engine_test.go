@@ -19,13 +19,19 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/ledger"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/registry"
+	"golang.org/x/oauth2"
 )
 
 // fakeLedger is an in-memory LedgerClient. Every call is recorded so a
@@ -352,5 +358,137 @@ func TestTick_CancellationMidTickStopsBeforeTheNextTask(t *testing.T) {
 	}
 	if strings.Join(l.attempts, ",") != "a" {
 		t.Fatalf("only task a should have been claimed, got %v", l.attempts)
+	}
+}
+
+// ── ledger-failure alerting ────────────────────────────────────────────
+
+func TestTick_ClaimFailuresProduceOneAggregatedLedgerAlert(t *testing.T) {
+	l := &fakeLedger{attemptErr: &apierror.Error{StatusCode: 503, Body: "secret body"}}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler, To: []string{"owner@example.com"}, Cc: []string{"cc@example.com"}},
+		{Name: "b", Schedule: "*/5 * * * *", Handler: okHandler, To: []string{"oncall@example.com"}},
+		{Name: "c", Schedule: "*/5 * * * *", Handler: okHandler},
+	}, l, m)
+
+	err := eng.Tick(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("claim failures must be returned")
+	}
+	if len(m.sent) != 1 {
+		t.Fatalf("expected exactly one aggregated ledger alert, got %d", len(m.sent))
+	}
+	e := m.sent[0]
+	if !strings.Contains(e.subject, "LEDGER ERROR: 3 task(s)") {
+		t.Errorf("subject should count the affected tasks, got %q", e.subject)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if !strings.Contains(e.body, "<strong>"+name+"</strong>") {
+			t.Errorf("body should list task %s, got %q", name, e.body)
+		}
+	}
+	if !strings.Contains(e.body, "claim") || !strings.Contains(e.body, "entity-service returned HTTP 503") {
+		t.Errorf("body should name the stage and the summarised error, got %q", e.body)
+	}
+	if strings.Contains(e.body, "secret body") {
+		t.Errorf("the upstream response body must never reach the alert, got %q", e.body)
+	}
+	if strings.Join(e.to, ",") != "oncall@example.com,owner@example.com" {
+		t.Errorf("To must be AlertRecipients plus affected tasks' To, de-duplicated; got %v", e.to)
+	}
+	if strings.Join(e.cc, ",") != "cc@example.com" {
+		t.Errorf("Cc must be the union of affected tasks' Cc, got %v", e.cc)
+	}
+}
+
+func TestTick_CompleteFailureProducesLedgerAlert(t *testing.T) {
+	l := &fakeLedger{allowed: true, completeErr: errors.New("upstream returned 500")}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler}}, l, m)
+
+	_ = eng.Tick(context.Background(), time.Now())
+	if len(m.sent) != 1 {
+		t.Fatalf("expected one ledger alert for the failed Complete, got %d", len(m.sent))
+	}
+	if !strings.Contains(m.sent[0].body, "complete") {
+		t.Errorf("body should name the complete stage, got %q", m.sent[0].body)
+	}
+}
+
+func TestTick_HandlerAndFailStageFailuresAlertSeparately(t *testing.T) {
+	l := &fakeLedger{allowed: true, failErr: errors.New("upstream returned 500")}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Handler: func(context.Context) error { return errors.New("boom") }},
+	}, l, m)
+
+	_ = eng.Tick(context.Background(), time.Now())
+	if len(m.sent) != 2 {
+		t.Fatalf("expected the handler alert plus the ledger alert, got %d", len(m.sent))
+	}
+	if !strings.Contains(m.sent[0].subject, "FAILED: a") || !strings.Contains(m.sent[1].subject, "LEDGER ERROR") {
+		t.Errorf("unexpected subjects: %q, %q", m.sent[0].subject, m.sent[1].subject)
+	}
+}
+
+func TestTick_LedgerAlertHonoursAlertsDisabled(t *testing.T) {
+	l := &fakeLedger{attemptErr: errors.New("down")}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler}}, l, m)
+	eng.AlertsEnabled = false
+
+	if err := eng.Tick(context.Background(), time.Now()); err == nil {
+		t.Fatal("the claim failure must still be returned")
+	}
+	if len(m.sent) != 0 {
+		t.Fatalf("no email expected with alerts disabled, got %d", len(m.sent))
+	}
+}
+
+func TestTick_LedgerAlertSendFailureIsReported(t *testing.T) {
+	l := &fakeLedger{attemptErr: errors.New("down")}
+	m := &fakeEmail{sendErr: errors.New("mail down")}
+	eng := newEngine([]registry.Task{{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler}}, l, m)
+
+	err := eng.Tick(context.Background(), time.Now())
+	got := stagesOf(err)
+	if !got["a/claim"] || !got[ledgerAlertTaskName+"/alert"] {
+		t.Fatalf("expected both the claim failure and the unsent ledger alert, got %v (err: %v)", got, err)
+	}
+}
+
+func TestSummarizeError(t *testing.T) {
+	tokenErr := &oauth2.RetrieveError{
+		Response: &http.Response{StatusCode: 401},
+		Body:     []byte(`{"error":"invalid_client","error_description":"very long secret-bearing body"}`),
+	}
+	cases := []struct {
+		name    string
+		err     error
+		want    string
+		mustNot string
+	}{
+		{"entity-service non-2xx", fmt.Errorf("ledger: wrap: %w", &apierror.Error{StatusCode: 503, Body: "body"}), "entity-service returned HTTP 503", "body"},
+		{"token endpoint", fmt.Errorf("ledger: POST /x: %w", &url.Error{Op: "Post", URL: "https://example.invalid/x", Err: tokenErr}), "token endpoint returned HTTP 401", "secret-bearing"},
+		{"timeout", fmt.Errorf("ledger: %w", context.DeadlineExceeded), "request timed out", ""},
+		{"cancelled", fmt.Errorf("ledger: %w", context.Canceled), "request cancelled (the process was interrupted)", ""},
+		{"transport", &url.Error{Op: "Post", URL: "https://example.invalid/scheduled-tasks/attempts?x=1", Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}, "Post request failed: dial tcp: connection refused", "example.invalid"},
+		{"fallback collapses whitespace", errors.New("line one\n\n   line two"), "line one line two", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := summarizeError(tc.err)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if tc.mustNot != "" && strings.Contains(got, tc.mustNot) {
+				t.Errorf("summary %q must not contain %q", got, tc.mustNot)
+			}
+		})
+	}
+	long := strings.Repeat("x", maxSummaryLen+50)
+	if got := summarizeError(errors.New(long)); len([]rune(got)) != maxSummaryLen+1 {
+		t.Errorf("fallback must be bounded to %d chars plus the ellipsis, got %d", maxSummaryLen, len([]rune(got)))
 	}
 }
