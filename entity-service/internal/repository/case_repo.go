@@ -824,7 +824,7 @@ func mapCreateCaseError(err error) error {
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23503": // foreign_key_violation -- one of the referenced IDs does not exist
-			return &apierror.ValidationError{Msg: "one or more referenced IDs do not exist: " + pgErr.Detail}
+			return fkViolationError(pgErr, "one or more referenced IDs do not exist")
 		case "P0001": // raise_exception from integrity triggers (deployment/project, deployed_product/deployment, catastrophic priority) and from next_portal_wso2_id when project_id doesn't exist
 			return &apierror.ValidationError{Msg: pgErr.Message}
 		}
@@ -1194,11 +1194,11 @@ func mapCreateCaseFromServiceNowError(err error, id string) error {
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505": // unique_violation on id/number/wso2_id — see CreateCaseFromServiceNow's own doc comment for why this "shouldn't" happen
-			return &apierror.ConflictError{Msg: "a case already exists for this ServiceNow id/number/internalId: " + pgErr.Detail}
+			return &apierror.ConflictError{Msg: "a case already exists for this ServiceNow id/number/internalId"}
 		case "22P02": // invalid_text_representation — id was not a valid UUID
 			return &apierror.ValidationError{Msg: "id is not a valid UUID: " + id}
 		case "23503": // foreign_key_violation — one of the referenced IDs does not exist
-			return &apierror.ValidationError{Msg: "one or more referenced IDs do not exist: " + pgErr.Detail}
+			return fkViolationError(pgErr, "one or more referenced IDs do not exist")
 		case "P0001": // raise_exception from integrity triggers (deployment/project, deployed_product/deployment, catastrophic priority)
 			return &apierror.ValidationError{Msg: pgErr.Message}
 		}
@@ -2173,7 +2173,7 @@ func (r *caseRepo) CreateCaseAttachment(ctx context.Context, req domain.CreateAt
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) {
 			switch pgErr.Code {
 			case "23503": // foreign_key_violation — case_id or uploaded_by does not exist
-				return domain.Attachment{}, &apierror.ValidationError{Msg: "one or more referenced IDs do not exist: " + pgErr.Detail}
+				return domain.Attachment{}, fkViolationError(pgErr, "one or more referenced IDs do not exist")
 			case "23514": // check_violation — e.g. size_bytes <= 0 or an invalid status
 				return domain.Attachment{}, &apierror.ValidationError{Msg: pgErr.Message}
 			}
@@ -2351,7 +2351,7 @@ func (r *caseRepo) UpdateCaseAttachmentName(ctx context.Context, id, name, updat
 	}
 	if err != nil {
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			return time.Time{}, &apierror.ValidationError{Msg: "one or more referenced IDs do not exist: " + pgErr.Detail}
+			return time.Time{}, fkViolationError(pgErr, "one or more referenced IDs do not exist")
 		}
 		return time.Time{}, fmt.Errorf("update case attachment name: %w", err)
 	}
@@ -3028,7 +3028,7 @@ func (r *caseRepo) SetCaseWatchList(ctx context.Context, caseID string, userIDs 
 				caseID, userIDs,
 			); err != nil {
 				if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
-					return &apierror.ValidationError{Msg: "one or more watch list user IDs do not exist: " + pgErr.Detail}
+					return fkViolationError(pgErr, "one or more watch list user IDs do not exist")
 				}
 				return fmt.Errorf("insert case watchers: %w", err)
 			}
@@ -3306,7 +3306,7 @@ func (r *caseRepo) UpdateCaseParent(ctx context.Context, caseID, parentID, calle
 	}
 	if err != nil {
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			return time.Time{}, &apierror.ValidationError{Msg: "parentId does not exist: " + pgErr.Detail}
+			return time.Time{}, &apierror.ValidationError{Msg: "parentId does not exist"}
 		}
 		return time.Time{}, fmt.Errorf("update case parent: %w", err)
 	}
@@ -3409,7 +3409,7 @@ func updateCaseFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateCaseReq
 		tag, err := tx.Exec(ctx, `UPDATE "case" SET `+strings.Join(caseSets, ", ")+` WHERE id = $1`, caseArgs...)
 		if err != nil {
 			if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
-				return time.Time{}, &apierror.ValidationError{Msg: "relatedCaseId does not exist: " + pgErr.Detail}
+				return time.Time{}, &apierror.ValidationError{Msg: "relatedCaseId does not exist"}
 			}
 			return time.Time{}, fmt.Errorf("update case fields: case: %w", err)
 		}
@@ -3479,7 +3479,7 @@ func updateCaseFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateCaseReq
 	}
 	if err != nil {
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			return time.Time{}, &apierror.ValidationError{Msg: "one or more referenced IDs do not exist: " + pgErr.Detail}
+			return time.Time{}, fkViolationError(pgErr, "one or more referenced IDs do not exist")
 		}
 		return time.Time{}, fmt.Errorf("update case fields: work_item: %w", err)
 	}
