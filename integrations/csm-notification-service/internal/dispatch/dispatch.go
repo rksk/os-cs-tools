@@ -239,6 +239,10 @@ type Dispatcher struct {
 	// an account" wording to someone who has never been told they have
 	// one. Released once the whole record succeeds or record.NoMoreRetries
 	// is true — same lifecycle as done; see handleProjectContactInvited.
+	// The memo is an optimisation, not the correctness guard: a retry in
+	// another process (or after a restart) finds the earlier attempt's
+	// IDENTITY row on the ledger instead and falls back to the neutral
+	// wording — see identityAlreadyProvisioned.
 	identityExisted map[string]bool
 }
 
@@ -1547,6 +1551,10 @@ func (d *Dispatcher) handleProjectContactInvited(ctx context.Context, record eve
 
 	// Step 1 — IDENTITY.
 	var existed bool
+	// identityKnown: existed is this version's first, trustworthy answer
+	// (the identity step ran here, or the memo of an earlier attempt in
+	// this process). Only then may the email claim either way.
+	var identityKnown bool
 	switch {
 	case !d.onboarding.IdentityEnabled:
 		d.recordOnboardingStep(ctx, p, entity.OnboardingStepIdentity, entity.OnboardingStepSkipped, nil)
@@ -1559,6 +1567,7 @@ func (d *Dispatcher) handleProjectContactInvited(ctx context.Context, record eve
 			// the doc comment above for why asking again gives the wrong
 			// email wording.
 			existed = remembered
+			identityKnown = true
 			slog.InfoContext(ctx, "dispatch: identity already provisioned by an earlier attempt at this record; not repeating", append(logAttrs, "existed", existed)...)
 			break
 		}
@@ -1567,6 +1576,18 @@ func (d *Dispatcher) handleProjectContactInvited(ctx context.Context, record eve
 			d.recordOnboardingStep(ctx, p, entity.OnboardingStepIdentity, entity.OnboardingStepFailed, err)
 			return err
 		}
+		// No in-process memo, but this version's identity step may still
+		// have succeeded already -- in another replica, or in this process
+		// before a restart, after which the email step failed and the
+		// record came back. SCIM would then answer existed=true for the
+		// account that attempt created. The ledger is the durable record:
+		// when it already shows IDENTITY succeeded for this version, the
+		// SCIM answer below is still requested (create-if-absent, so the
+		// account is guaranteed to exist) but not trusted for wording.
+		priorRun, err := d.identityAlreadyProvisioned(ctx, p, logAttrs)
+		if err != nil {
+			return fmt.Errorf("dispatch: check identity already provisioned for membership %s: %w", p.MembershipSfID, err)
+		}
 		user, err := d.onboarding.Identity.EnsureExternalUser(ctx, p.Email, p.GivenName, p.FamilyName)
 		if err != nil {
 			err = fmt.Errorf("dispatch: provision identity for membership %s: %w", p.MembershipSfID, err)
@@ -1574,9 +1595,12 @@ func (d *Dispatcher) handleProjectContactInvited(ctx context.Context, record eve
 			return err
 		}
 		existed = user.Existed
-		d.rememberIdentityExisted(identityKey, existed)
+		identityKnown = !priorRun
+		if identityKnown {
+			d.rememberIdentityExisted(identityKey, existed)
+		}
 		d.recordOnboardingStep(ctx, p, entity.OnboardingStepIdentity, entity.OnboardingStepSucceeded, nil)
-		slog.InfoContext(ctx, "dispatch: identity provisioned", append(logAttrs, "asgardeoUserId", user.ID, "existed", existed)...)
+		slog.InfoContext(ctx, "dispatch: identity provisioned", append(logAttrs, "asgardeoUserId", user.ID, "existed", existed, "earlierAttemptRecorded", priorRun)...)
 	}
 
 	// Step 2 — EMAIL.
@@ -1704,11 +1728,15 @@ func (d *Dispatcher) handleProjectContactInvited(ctx context.Context, record eve
 			// time. The reminder claims neither.
 			subject = "Reminder: " + invitationSubject(data.ProjectName)
 			body = notifications.RenderProjectContactInvitedReminderEmail(data)
-		case d.onboarding.IdentityEnabled && existed:
+		case identityKnown && existed:
 			subject = invitationSubject(data.ProjectName)
 			body = notifications.RenderProjectContactInvitedExistingEmail(data)
 		default:
-			data.AccountCreated = d.onboarding.IdentityEnabled
+			// identityKnown is false with identity disabled, and when an
+			// earlier attempt at this version already provisioned the
+			// account (see identityAlreadyProvisioned): either way neither
+			// "created for you" nor "you already have one" can be claimed.
+			data.AccountCreated = identityKnown
 			subject = invitationSubject(data.ProjectName)
 			body = notifications.RenderProjectContactInvitedNewEmail(data)
 		}
@@ -1870,6 +1898,40 @@ func (d *Dispatcher) invitationAlreadySent(ctx context.Context, p events.Project
 	}
 	slog.InfoContext(ctx, "dispatch: invitation already recorded as sent for this membership version; not sending again",
 		append(logAttrs, "eventModifiedOn", eventOn, "recordedEventModifiedOn", recordedOn)...)
+	return true, nil
+}
+
+// identityAlreadyProvisioned reports whether the ledger already holds a
+// SUCCEEDED IDENTITY step for this membership version -- the durable
+// "an earlier attempt, in any process, already provisioned this account"
+// signal that the in-process memo cannot give after a restart or on
+// another replica. Same version rule as invitationAlreadySent; when either
+// timestamp is missing or unparseable any SUCCEEDED row counts, since the
+// cost of a false positive is only the neutral wording.
+//
+// Consulted only when its answer can change something: the invitation
+// email is enabled and this is not a resend (a resend uses the reminder
+// wording regardless), and a ledger is configured. A failed read is
+// returned, so the record is retried rather than guessing.
+func (d *Dispatcher) identityAlreadyProvisioned(ctx context.Context, p events.ProjectContactInvitedPayload, logAttrs []any) (bool, error) {
+	if !d.onboarding.EmailEnabled || p.IsResend || d.onboarding.Steps == nil {
+		return false, nil
+	}
+	step, err := d.onboarding.Steps.SucceededStep(ctx, p.MembershipSfID, entity.OnboardingStepIdentity)
+	if err != nil {
+		return false, err
+	}
+	if step == nil {
+		return false, nil
+	}
+	recordedOn, recordedOK := parseLedgerTime(step.EventModifiedOn)
+	eventOn, eventOK := parseLedgerTime(p.EventModifiedOn)
+	if recordedOK && eventOK && recordedOn.Before(eventOn.Truncate(time.Microsecond)) {
+		// Provisioned for an older version (a re-invitation): this
+		// version's identity step is new, its answer is trustworthy.
+		return false, nil
+	}
+	slog.InfoContext(ctx, "dispatch: identity already recorded as provisioned for this membership version; invitation will use the neutral wording", logAttrs...)
 	return true, nil
 }
 
