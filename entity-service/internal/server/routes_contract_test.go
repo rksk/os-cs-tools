@@ -45,8 +45,9 @@ func TestEveryRegisteredRouteIsPublished(t *testing.T) {
 		t.Fatal("parsed no operations from openapi.yaml; the parser is broken, not the contract")
 	}
 
-	// Not part of the public contract: the health probe is consumed by the
-	// platform, not by API callers, and is deliberately unpublished.
+	// The liveness probe is published in both contracts (it is also served on
+	// the health listener); it is exempt here only because this check is
+	// about business routes a gateway must route.
 	skip := map[string]bool{"GET /health": true}
 
 	var missing []string
@@ -54,7 +55,7 @@ func TestEveryRegisteredRouteIsPublished(t *testing.T) {
 		if skip[r] {
 			continue
 		}
-		if !published[r] {
+		if _, ok := published[r]; !ok {
 			missing = append(missing, r)
 		}
 	}
@@ -64,6 +65,45 @@ func TestEveryRegisteredRouteIsPublished(t *testing.T) {
 			"An undeclared operation is unreachable behind an API gateway even though it works locally. "+
 			"Add it to openapi.yaml (and set its resource scopes when publishing).",
 			strings.Join(missing, "\n  "))
+	}
+}
+
+// TestAnonymousRoutesMatchTheContract pins the pairing between the
+// caller-identity gate's anonymous allow-list (anonymousRoutes) and the
+// operations the published contract declares with `security: []`. The two
+// must agree in both directions: a route served without a resolvable caller
+// must say so in the contract, and an operation the contract calls anonymous
+// must actually be reachable without one.
+func TestAnonymousRoutesMatchTheContract(t *testing.T) {
+	published := publishedOperations(t)
+	if len(published) == 0 {
+		t.Fatal("parsed no operations from openapi.yaml; the parser is broken, not the contract")
+	}
+
+	declaredAnonymous := map[string]bool{}
+	for op, spec := range published {
+		if spec.anonymous {
+			declaredAnonymous[op] = true
+		}
+	}
+	gateAnonymous := map[string]bool{}
+	for pattern := range anonymousRoutes {
+		method, path, ok := strings.Cut(pattern, " ")
+		if !ok {
+			t.Fatalf("anonymousRoutes entry %q is not a METHOD /path pattern", pattern)
+		}
+		gateAnonymous[normalizeRoute(method, path)] = true
+	}
+
+	for op := range gateAnonymous {
+		if !declaredAnonymous[op] {
+			t.Errorf("%s is served without a resolvable caller (anonymousRoutes) but openapi.yaml does not declare it with `security: []`", op)
+		}
+	}
+	for op := range declaredAnonymous {
+		if !gateAnonymous[op] {
+			t.Errorf("openapi.yaml declares %s with `security: []` but callerIdentityMiddleware still requires a resolvable caller for it; add it to anonymousRoutes or drop the declaration", op)
+		}
 	}
 }
 
@@ -106,13 +146,30 @@ var (
 	specPathRE = regexp.MustCompile(`^  (/\S*):\s*$`)
 	// An HTTP method under a path, at four-space indentation.
 	specMethodRE = regexp.MustCompile(`^    (get|put|post|delete|patch|options|head|trace):\s*$`)
+	// The operation-level `security: []` override, at six-space indentation.
+	specAnonymousRE = regexp.MustCompile(`^      security:\s*\[\s*\]\s*$`)
+	// The `responses:` key of an operation, at six-space indentation.
+	specResponsesRE = regexp.MustCompile(`^      responses:\s*$`)
+	// A status code key under `responses:`, at eight-space indentation,
+	// quoted or not, e.g. `        '403':` or `        "403":` or `        403:`.
+	specStatusRE = regexp.MustCompile(`^        ['"]?(\d{3}|default)['"]?:\s*$`)
 )
 
+// specOperation is what the contract says about one published operation.
+type specOperation struct {
+	// anonymous is true when the operation declares `security: []`, i.e. the
+	// gateway and this service both serve it without a caller identity.
+	anonymous bool
+	// responses is the set of status codes the operation declares.
+	responses map[string]bool
+}
+
 // publishedOperations extracts every method+path declared in the published
-// contract. The spec is parsed line-wise on indentation rather than with a YAML
-// library so that this check adds no dependency; the test's empty-result guard
-// fails loudly if the spec's formatting ever moves out from under it.
-func publishedOperations(t *testing.T) map[string]bool {
+// contract, with the per-operation facts the contract tests check. The spec is
+// parsed line-wise on indentation rather than with a YAML library so that this
+// check adds no dependency; the tests' empty-result guards fail loudly if the
+// spec's formatting ever moves out from under it.
+func publishedOperations(t *testing.T) map[string]*specOperation {
 	t.Helper()
 	specPath := filepath.Join("..", "..", "openapi.yaml")
 	src, err := os.ReadFile(specPath)
@@ -120,9 +177,11 @@ func publishedOperations(t *testing.T) map[string]bool {
 		t.Fatalf("read %s: %v", specPath, err)
 	}
 
-	ops := map[string]bool{}
+	ops := map[string]*specOperation{}
 	inPaths := false
 	current := ""
+	var op *specOperation
+	inResponses := false
 	for _, line := range strings.Split(string(src), "\n") {
 		if strings.HasPrefix(line, "paths:") {
 			inPaths = true
@@ -140,13 +199,34 @@ func publishedOperations(t *testing.T) map[string]bool {
 		}
 		if m := specPathRE.FindStringSubmatch(line); m != nil {
 			current = m[1]
+			op, inResponses = nil, false
 			continue
 		}
 		if current == "" {
 			continue
 		}
 		if m := specMethodRE.FindStringSubmatch(line); m != nil {
-			ops[normalizeRoute(m[1], current)] = true
+			op = &specOperation{responses: map[string]bool{}}
+			ops[normalizeRoute(m[1], current)] = op
+			inResponses = false
+			continue
+		}
+		if op == nil {
+			continue
+		}
+		switch {
+		case specAnonymousRE.MatchString(line):
+			op.anonymous = true
+			inResponses = false
+		case specResponsesRE.MatchString(line):
+			inResponses = true
+		case inResponses:
+			if m := specStatusRE.FindStringSubmatch(line); m != nil {
+				op.responses[m[1]] = true
+			} else if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "        ") {
+				// Back out to a sibling of `responses:` (or shallower).
+				inResponses = false
+			}
 		}
 	}
 	return ops
