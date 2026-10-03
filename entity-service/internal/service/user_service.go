@@ -223,10 +223,9 @@ func (s *userService) GetUser(ctx context.Context, id string) (domain.UserDetail
 	if err := validateUUIDs("id", []string{id}); err != nil {
 		return domain.UserDetail{}, err
 	}
-	// The directory is read with the caller's resolved scope. Only an
-	// internal caller may look up any user; any other caller may only see
-	// internal users, and a non-internal user is reported as not found rather
-	// than confirming it exists.
+	// The directory is read with the caller's resolved scope (see
+	// userVisibleToScope). A user the caller may not see is reported as not
+	// found rather than confirming it exists.
 	scope, err := resolveCallerScope(ctx, nil)
 	if err != nil {
 		return domain.UserDetail{}, err
@@ -235,7 +234,11 @@ func (s *userService) GetUser(ctx context.Context, id string) (domain.UserDetail
 	if err != nil {
 		return domain.UserDetail{}, err
 	}
-	if !scope.Unrestricted && u.UserType != domain.UserTypeInternal {
+	visible, err := s.userVisibleToScope(ctx, scope, u.UserType, u.Email)
+	if err != nil {
+		return domain.UserDetail{}, err
+	}
+	if !visible {
 		return domain.UserDetail{}, &apierror.NotFoundError{Msg: "user not found"}
 	}
 	if u.Roles, err = s.repo.GetUserRoles(ctx, id); err != nil {
@@ -245,12 +248,45 @@ func (s *userService) GetUser(ctx context.Context, id string) (domain.UserDetail
 		return domain.UserDetail{}, err
 	}
 	// Project access is a customer concept: staff have no project-contact rows.
-	if u.UserType == domain.UserTypeCustomer && u.Email != "" {
+	// It lists every project the user is on, so only an internal caller gets it.
+	if scope.Unrestricted && u.UserType == domain.UserTypeCustomer && u.Email != "" {
 		if u.ProjectAccess, err = s.repo.GetUserProjectAccess(ctx, u.Email); err != nil {
 			return domain.UserDetail{}, err
 		}
 	}
 	return u, nil
+}
+
+// userVisibleToScope decides whether a caller with scope may see a user in
+// the directory. An internal caller sees everyone. Any other caller sees
+// internal users, and external users who are registered contacts on one of
+// the caller's own projects -- the colleagues a customer contact picks as
+// case watchers -- but no one from another tenant.
+//
+// One project-access lookup per external user on the page (at most 50); a
+// batched repository lookup would remove it.
+func (s *userService) userVisibleToScope(ctx context.Context, scope AccessScope, userType domain.UserType, email string) (bool, error) {
+	if scope.Unrestricted || userType == domain.UserTypeInternal {
+		return true, nil
+	}
+	if email == "" || len(scope.ProjectIDs) == 0 {
+		return false, nil
+	}
+	access, err := s.repo.GetUserProjectAccess(ctx, email)
+	if err != nil {
+		return false, err
+	}
+	for _, a := range access {
+		if !a.GrantsCaseAccess {
+			continue
+		}
+		for _, pid := range scope.ProjectIDs {
+			if strings.EqualFold(pid, a.ProjectID) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // SearchUsers implements UserService.
@@ -295,17 +331,21 @@ func (s *userService) SearchUsers(ctx context.Context, req domain.SearchUsersReq
 	if err != nil {
 		return domain.SearchUsersResponse{}, err
 	}
-	// A caller that is not internal may only list internal users. The
-	// repository has no user-type predicate, so this filters the page;
-	// total still counts the unfiltered match set.
+	// A caller that is not internal sees only the users userVisibleToScope
+	// allows. The repository has no such predicate, so this filters the
+	// page; total still counts the unfiltered match set.
 	if !scope.Unrestricted {
-		internal := users[:0]
+		visibleUsers := users[:0]
 		for _, u := range users {
-			if u.UserType == domain.UserTypeInternal {
-				internal = append(internal, u)
+			visible, err := s.userVisibleToScope(ctx, scope, u.UserType, u.Email)
+			if err != nil {
+				return domain.SearchUsersResponse{}, err
+			}
+			if visible {
+				visibleUsers = append(visibleUsers, u)
 			}
 		}
-		users = internal
+		users = visibleUsers
 	}
 
 	return domain.SearchUsersResponse{
