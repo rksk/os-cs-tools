@@ -41,9 +41,11 @@ func TestGetUser_ExternalAccountStatus_AppendedForExternalContacts(t *testing.T)
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"contact@example.com","userType":"external"}`), nil
 		},
-	}, testDirectory(t), false, "")
+	}, testDirectory(t), false, "").WithAccessGuard(NewAccessGuard(testAccessConfig()))
 
-	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
+	// A user-management caller; others never get externalAccount (see
+	// users_scope_test.go).
+	r := withCsEngineerUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
 	w := httptest.NewRecorder()
 	h.GetUser(w, r)
