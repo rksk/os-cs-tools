@@ -24,38 +24,33 @@
 package entitycases
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/httpsec"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/entityhttp"
 )
 
-// tokenFetchTimeout is the HTTP client timeout for token-endpoint requests.
-// Overridden in tests to keep them fast.
-var tokenFetchTimeout = 10 * time.Second
+// requestTimeout bounds every request this client makes.
+const requestTimeout = 25 * time.Second
 
-// Config holds this client's configuration.
+// Config holds this client's configuration. Transport, when set, is a
+// shared entityhttp transport; when nil the client builds its own from the
+// credential fields (see internal/ledger.Config).
 type Config struct {
 	BaseURL      string
 	TokenURL     string
 	ClientID     string
 	ClientSecret string
 	Scopes       []string
+	Transport    http.RoundTripper
 }
 
-// Client is a narrow HTTP client for entity-service's case-search endpoint.
-// Mirrors internal/ledger.Client's shape exactly (same OAuth2 client
-// credentials grant, same httpsec guards) — see that package's own doc
-// comment for why this isn't just a second method set on Client there.
+// Client is a narrow HTTP client for entity-service's case-search endpoint
+// — see this package's doc comment for why this isn't just a second method
+// set on internal/ledger.Client.
 type Client struct {
 	http    *http.Client
 	baseURL string
@@ -66,65 +61,18 @@ type Client struct {
 // http is allowed for local development — see httpsec.RequireSecureURL)
 // since both carry credentials or a bearer token.
 func NewClient(cfg Config) (*Client, error) {
-	if err := httpsec.RequireSecureURL(cfg.TokenURL); err != nil {
-		return nil, fmt.Errorf("entitycases: token URL: %w", err)
+	httpClient, err := entityhttp.ClientFor(cfg.Transport, entityhttp.Credentials{
+		TokenURL: cfg.TokenURL, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, Scopes: cfg.Scopes,
+	}, cfg.BaseURL, requestTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("entitycases: %w", err)
 	}
-	if err := httpsec.RequireSecureURL(cfg.BaseURL); err != nil {
-		return nil, fmt.Errorf("entitycases: base URL: %w", err)
-	}
-
-	cc := clientcredentials.Config{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		TokenURL:     cfg.TokenURL,
-		Scopes:       cfg.Scopes,
-	}
-
-	tokenHTTPClient := &http.Client{Timeout: tokenFetchTimeout}
-	httpsec.RejectInsecureRedirects(tokenHTTPClient)
-	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
-	httpClient := cc.Client(tokenCtx)
-	httpClient.Timeout = 25 * time.Second
-	httpsec.RejectInsecureRedirects(httpClient)
-
-	return &Client{
-		http:    httpClient,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-	}, nil
+	return &Client{http: httpClient, baseURL: entityhttp.TrimBase(cfg.BaseURL)}, nil
 }
 
-// do executes an authenticated HTTP request against entity-service and
-// returns the raw JSON response body, or an *apierror.Error for a non-2xx
-// status.
+// do executes an authenticated request — see entityhttp.Do.
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
-	var reqBody io.Reader
-	if len(body) > 0 {
-		reqBody = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("entitycases: build request %s %s: %w", method, path, err)
-	}
-	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("entitycases: %s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("entitycases: read response body: %w", err)
-	}
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(respBody)}
-	}
-	return respBody, nil
+	return entityhttp.Do(ctx, c.http, c.baseURL, "entitycases", method, path, body)
 }
 
 // Case is the report-relevant subset of entity-service's case-search result
