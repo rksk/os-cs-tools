@@ -144,7 +144,7 @@ func RedactInlineImages(access *AccessGuard, next http.HandlerFunc) http.Handler
 			w.Header().Del("Content-Length")
 		}
 		w.WriteHeader(bw.status)
-		_, _ = w.Write(body) // #nosec G705 -- the wrapped handler set Content-Type; SecurityHeaders adds nosniff
+		_, _ = w.Write(body)
 	}
 }
 
