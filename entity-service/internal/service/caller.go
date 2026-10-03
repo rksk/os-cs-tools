@@ -21,7 +21,6 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
@@ -58,15 +57,6 @@ func optionalCallerEmail(ctx context.Context) (string, error) {
 		return "", &apierror.ServiceUnavailableError{Msg: "the caller cannot be identified: no verified identity on this request"}
 	}
 	return id.UserEmail, nil
-}
-
-// callerUser resolves the caller (see callerEmail) to its platform user row.
-func callerUser(ctx context.Context, users repository.UserRepository) (domain.User, error) {
-	email, err := callerEmail(ctx)
-	if err != nil {
-		return domain.User{}, err
-	}
-	return users.GetUserByEmail(ctx, email)
 }
 
 // resolveCallerScope returns the caller's AccessScope. It goes through access
