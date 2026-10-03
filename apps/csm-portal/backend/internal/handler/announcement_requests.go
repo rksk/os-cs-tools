@@ -47,6 +47,21 @@ type entityAnnouncementRequestClient interface {
 	ListAnnouncementRequestUpdates(ctx context.Context, id string) ([]byte, error)
 	RecordAnnouncementRequestDeliveries(ctx context.Context, id string, body []byte) ([]byte, error)
 	ListAnnouncementRequestDeliveries(ctx context.Context, id string) ([]byte, error)
+	GetUserMe(ctx context.Context) ([]byte, error)
+}
+
+// resolveActorID returns the caller's platform user id (see
+// resolvePlatformUserID) for the createdBy/actorId fields an announcement
+// request records. Those columns hold platform user ids, so the token's own
+// user id claim, an identifier from the identity provider's space, is never
+// used. When the id cannot be resolved it writes a 500 and returns false.
+func (h *AnnouncementRequestHandler) resolveActorID(w http.ResponseWriter, r *http.Request, user *middleware.UserInfo) (string, bool) {
+	id := resolvePlatformUserID(r.Context(), h.entity.GetUserMe, user)
+	if id == "" {
+		writeError(w, http.StatusInternalServerError, "Failed to resolve the current user.")
+		return "", false
+	}
+	return id, true
 }
 
 // AnnouncementRequestHandler handles HTTP requests for the Phase 2
@@ -134,6 +149,10 @@ func (h *AnnouncementRequestHandler) CreateAnnouncementRequest(w http.ResponseWr
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		Kind                   string          `json:"kind"`
 		Subject                string          `json:"subject"`
@@ -148,7 +167,7 @@ func (h *AnnouncementRequestHandler) CreateAnnouncementRequest(w http.ResponseWr
 		Description:            req.Description,
 		IsSecurityAnnouncement: req.IsSecurityAnnouncement,
 		AudienceDefinition:     req.AudienceDefinition,
-		CreatedBy:              user.UserID,
+		CreatedBy:              actorID,
 		CreatedByEmail:         user.Email,
 	})
 	if err != nil {
@@ -245,6 +264,10 @@ func (h *AnnouncementRequestHandler) UpdateAnnouncementRequest(w http.ResponseWr
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		Subject                *string         `json:"subject,omitempty"`
 		Description            *string         `json:"description,omitempty"`
@@ -256,7 +279,7 @@ func (h *AnnouncementRequestHandler) UpdateAnnouncementRequest(w http.ResponseWr
 		Description:            req.Description,
 		IsSecurityAnnouncement: req.IsSecurityAnnouncement,
 		AudienceDefinition:     req.AudienceDefinition,
-		ActorID:                user.UserID,
+		ActorID:                actorID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
@@ -306,10 +329,14 @@ func (h *AnnouncementRequestHandler) RecordAnnouncementRequestDryRun(w http.Resp
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		CaseID  string `json:"caseId"`
 		ActorID string `json:"actorId"`
-	}{CaseID: req.CaseID, ActorID: user.UserID})
+	}{CaseID: req.CaseID, ActorID: actorID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -370,11 +397,15 @@ func (h *AnnouncementRequestHandler) ScheduleAnnouncementRequest(w http.Response
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		ActorID      string  `json:"actorId"`
 		ScheduledFor *string `json:"scheduledFor"`
 		ActorEmail   string  `json:"actorEmail,omitempty"`
-	}{ActorID: user.UserID, ScheduledFor: req.ScheduledFor, ActorEmail: user.Email})
+	}{ActorID: actorID, ScheduledFor: req.ScheduledFor, ActorEmail: user.Email})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -427,11 +458,15 @@ func (h *AnnouncementRequestHandler) PublishAnnouncementRequest(w http.ResponseW
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		ActorID    string   `json:"actorId"`
 		CaseIDs    []string `json:"caseIds"`
 		ActorEmail string   `json:"actorEmail,omitempty"`
-	}{ActorID: user.UserID, CaseIDs: req.CaseIDs, ActorEmail: user.Email})
+	}{ActorID: actorID, CaseIDs: req.CaseIDs, ActorEmail: user.Email})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -482,11 +517,15 @@ func (h *AnnouncementRequestHandler) CreateAnnouncementRequestUpdate(w http.Resp
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		Content    string `json:"content"`
 		ActorID    string `json:"actorId"`
 		ActorEmail string `json:"actorEmail,omitempty"`
-	}{Content: req.Content, ActorID: user.UserID, ActorEmail: user.Email})
+	}{Content: req.Content, ActorID: actorID, ActorEmail: user.Email})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -578,10 +617,14 @@ func (h *AnnouncementRequestHandler) RecordAnnouncementRequestDeliveries(w http.
 		}
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	upstreamBody, err := json.Marshal(struct {
 		ActorID    string                             `json:"actorId"`
 		Deliveries []announcementRequestDeliveryInput `json:"deliveries"`
-	}{ActorID: user.UserID, Deliveries: req.Deliveries})
+	}{ActorID: actorID, Deliveries: req.Deliveries})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -640,10 +683,14 @@ func (h *AnnouncementRequestHandler) actorOnlyTransition(
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	body, err := json.Marshal(struct {
 		ActorID    string `json:"actorId"`
 		ActorEmail string `json:"actorEmail,omitempty"`
-	}{ActorID: user.UserID, ActorEmail: user.Email})
+	}{ActorID: actorID, ActorEmail: user.Email})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
@@ -885,11 +932,15 @@ func (h *AnnouncementRequestHandler) SubmitAnnouncementRequest(w http.ResponseWr
 		return
 	}
 
+	actorID, ok := h.resolveActorID(w, r, user)
+	if !ok {
+		return
+	}
 	body, err := json.Marshal(struct {
 		ResolvedProjectIDs []string `json:"resolvedProjectIds"`
 		ActorID            string   `json:"actorId"`
 		ActorEmail         string   `json:"actorEmail,omitempty"`
-	}{ResolvedProjectIDs: projectIDs, ActorID: user.UserID, ActorEmail: user.Email})
+	}{ResolvedProjectIDs: projectIDs, ActorID: actorID, ActorEmail: user.Email})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
