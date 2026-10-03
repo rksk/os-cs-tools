@@ -155,3 +155,45 @@ func TestCommentVisibility_WorkNotesAndDeletedComments(t *testing.T) {
 		}
 	})
 }
+
+// A comment whose author's address is on two "user" rows is still one row on
+// the page. Skipped without CASE_STATS_TEST_DSN.
+func TestCommentVisibility_DuplicateAuthorEmailIsOneRow(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedRLSScopedRemaining(t, pool)
+	caseID := rsWorkItems[4] // project B
+	sys := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	const (
+		userA  = "7a000000-0000-4000-8000-0000000000f1"
+		userB  = "7a000000-0000-4000-8000-0000000000f2"
+		author = "dup.author@example.com"
+	)
+	cleanup := func() {
+		_, _ = scoped.Exec(sys, `DELETE FROM comment WHERE work_item_id = $1`, caseID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE id IN ($1, $2)`, userA, userB)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := pool.Exec(context.Background(), `INSERT INTO "user" (id, created_on, updated_on, user_name, email, name) VALUES
+		($1, now(), now(), 'dup-author-1', $3, 'Jane Doe'), ($2, now(), now(), 'dup-author-2', upper($3), 'Jane Doe')`,
+		userA, userB, author); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := scoped.Exec(sys, `INSERT INTO comment (id, created_on, created_by, type, work_item_id, content)
+		VALUES (gen_random_uuid(), now(), $1, 'COMMENT', $2, 'one comment')`, author, caseID); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	got, total, err := repository.NewCaseRepository(scoped).SearchCaseComments(rsInternal(),
+		domain.SearchCaseCommentsRequest{CaseID: caseID, Pagination: domain.Pagination{Limit: 50}})
+	if err != nil {
+		t.Fatalf("SearchCaseComments: %v", err)
+	}
+	if len(got) != 1 || total != 1 {
+		t.Fatalf("got %d rows (total %d), want 1 and 1", len(got), total)
+	}
+	if got[0].CreatedBy == nil || got[0].CreatedBy.ID == nil || *got[0].CreatedBy.ID != userA {
+		t.Errorf("author = %+v, want the lowest matching user id %s", got[0].CreatedBy, userA)
+	}
+}
