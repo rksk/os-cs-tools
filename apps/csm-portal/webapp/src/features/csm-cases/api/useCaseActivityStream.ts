@@ -84,7 +84,7 @@ function usePageVisible(): boolean {
  *
  * Token acquisition goes through useAuthTokens — the same recovery path
  * useAuthApiClient uses for every other backend call — rather than calling
- * useAsgardeo() directly: a genuinely dead refresh token then gets the same
+ * the identity SDK hook directly: a genuinely dead refresh token then gets the same
  * silent-reauth-then-sign-in-redirect treatment as the rest of the app,
  * instead of this hook just retrying forever with no way to ever recover
  * and no visible signal that anything's wrong.
