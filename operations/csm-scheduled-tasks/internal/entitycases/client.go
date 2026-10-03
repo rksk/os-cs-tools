@@ -271,8 +271,11 @@ func (c *Client) searchCases(ctx context.Context, filters []caseFieldFilter) ([]
 			all = append(all, c)
 		}
 
-		offset += searchPageSize
-		if len(resp.Cases) == 0 || offset >= resp.Total {
+		// Advance by what actually came back, not by what was asked for: a
+		// server that returns a short non-final page (a lowered page cap)
+		// would otherwise have the rows in between skipped silently.
+		offset += len(resp.Cases)
+		if entityhttp.PageDone(len(resp.Cases), offset, resp.Total, searchPageSize) {
 			return all, nil
 		}
 		if page == maxSearchPages-1 {

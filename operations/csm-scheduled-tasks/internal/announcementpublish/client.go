@@ -162,8 +162,8 @@ func (c *Client) SearchDueIDs(ctx context.Context) ([]string, error) {
 			ids = append(ids, r.ID)
 		}
 
-		offset += searchPageSize
-		if len(resp.Requests) == 0 || offset >= resp.Total {
+		offset += len(resp.Requests)
+		if entityhttp.PageDone(len(resp.Requests), offset, resp.Total, searchPageSize) {
 			return ids, nil
 		}
 		if page == maxSearchPages-1 {

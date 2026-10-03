@@ -102,6 +102,26 @@ func TestDoReturnsAPIErrorOnNon2xx(t *testing.T) {
 	}
 }
 
+func TestPageDone(t *testing.T) {
+	cases := []struct {
+		name                         string
+		got, offset, total, pageSize int
+		want                         bool
+	}{
+		{"empty page", 0, 50, 100, 50, true},
+		{"full page, more to come", 50, 50, 120, 50, false},
+		{"reached total", 20, 120, 120, 50, true},
+		{"short non-final page keeps going", 30, 30, 120, 50, false},
+		{"no total, full page keeps going", 50, 50, 0, 50, false},
+		{"no total, short page ends", 10, 60, 0, 50, true},
+	}
+	for _, tc := range cases {
+		if got := PageDone(tc.got, tc.offset, tc.total, tc.pageSize); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestInsecureURLsAreRejected(t *testing.T) {
 	if _, err := NewTransport(Credentials{TokenURL: "http://example.invalid/token"}); err == nil {
 		t.Error("a plaintext non-loopback token URL must be rejected")
