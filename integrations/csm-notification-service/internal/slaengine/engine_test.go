@@ -303,7 +303,7 @@ func TestEngine_Tick_AlertsOnlyNewlyCrossedTier(t *testing.T) {
 
 // TestEngine_Tick_AlertsEveryTierCrossedSinceLastPoll verifies that a clock
 // whose percentage jumped past more than one checkpoint between polls (a
-// slow ticker interval, or a burst of ServiceNow sync activity) still fires
+// slow ticker interval, or a burst of backing-data-source sync activity) still fires
 // an alert for each intermediate tier, not just the highest one reached —
 // in ascending order.
 func TestEngine_Tick_AlertsEveryTierCrossedSinceLastPoll(t *testing.T) {

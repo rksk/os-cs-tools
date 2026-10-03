@@ -35,7 +35,7 @@ import (
 // UNLIKE EVERY OTHER HANDLER HERE, it does not resolve recipients or build a
 // subject. csm-flow-service's cr_approval_notice flow does both before
 // publishing: the audience comes from an approval group or a project's
-// contacts, and the subject reproduces ServiceNow's per-branch wording
+// contacts, and the subject reproduces the legacy ticketing system's per-branch wording
 // verbatim. Re-deriving either here would mean maintaining a second copy of
 // logic that only exists to match a system being decommissioned.
 //
@@ -98,7 +98,7 @@ func (d *Dispatcher) handleCRApprovalRequested(ctx context.Context, record event
 
 	// A customer audience goes in BCC, an internal one in To.
 	//
-	// ServiceNow sent one email per recipient, so nobody ever saw who else was
+	// The legacy ticketing system sent one email per recipient, so nobody ever saw who else was
 	// notified. Collapsing that into one message is right -- the notice is
 	// identical for everyone -- but it must not also publish a customer's
 	// contact list to itself: a project's contacts routinely span several
@@ -126,7 +126,7 @@ func (d *Dispatcher) handleCRApprovalRequested(ctx context.Context, record event
 // rejecting one (customer audience).
 //
 // Same division of labour as handleCRApprovalRequested — the flow resolves the
-// recipients and builds the subject, both reproduced from ServiceNow verbatim,
+// recipients and builds the subject, both reproduced verbatim from the legacy ticketing system,
 // and this service renders and sends. The audience decides two things here:
 // which portal the link points at, and whether the recipient list is visible.
 func (d *Dispatcher) handleCRPlanDateNotice(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
@@ -169,7 +169,7 @@ func (d *Dispatcher) handleCRPlanDateNotice(ctx context.Context, record eventbus
 	})
 
 	// Customer contacts go in BCC for the same reason as the approval notice:
-	// a project's contacts span organisations, and ServiceNow sent these one
+	// a project's contacts span organisations, and the legacy ticketing system sent these one
 	// per person so nobody ever saw the rest of the list.
 	to, bcc := recipients, []string(nil)
 	if p.Audience == crAudienceCustomer {

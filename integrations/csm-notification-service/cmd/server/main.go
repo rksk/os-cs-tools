@@ -426,7 +426,7 @@ func main() {
 	// this replaced, it is no longer a Kafka consumer at all — see
 	// internal/slaengine's own CLAUDE.md section ("SLA breach alerting")
 	// for the full redesign: it polls entity-service's GET /sla-status
-	// (backed by the real, ServiceNow-synced "sla" table, not a value this
+	// (backed by the real, data-source-synced "sla" table, not a value this
 	// service used to compute itself) on a plain ticker instead.
 	//
 	// REDIS_URL (a rediss://:<password>@<host>:<port> connection string,
