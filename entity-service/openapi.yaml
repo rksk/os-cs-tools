@@ -81,6 +81,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found (membership ingest only — the project or account the membership refers to is not in this database).
           content:
@@ -457,8 +469,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -487,8 +517,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -521,6 +569,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Row not found.
           content:
@@ -529,6 +589,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1497,8 +1563,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CloudStatusSweepResult'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1518,8 +1602,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PendingCloudStatusWebhooks'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1555,6 +1657,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: No such webhook.
           content:
@@ -1563,6 +1677,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1595,6 +1715,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -1603,6 +1735,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1633,6 +1771,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -1641,6 +1791,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1674,6 +1830,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -1682,6 +1850,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1726,6 +1900,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: No such run, or the claim is no longer active.
           content:
@@ -1734,6 +1920,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1766,6 +1958,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "409":
           description: alertNumber is already mapped to an incident.
           content:
@@ -1774,6 +1978,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -1806,8 +2016,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -2288,6 +2516,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Account not found.
           content:
@@ -2296,6 +2536,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -2333,6 +2579,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Account not found.
           content:
@@ -2341,6 +2599,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -2370,6 +2634,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Team not found.
           content:
@@ -2378,6 +2654,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -2409,8 +2691,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -2447,6 +2747,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Account not found.
           content:
@@ -2455,6 +2767,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -3124,6 +3442,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 'The caller has no access to any project.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Contact not found on this project.
           content:
@@ -3132,6 +3462,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -3330,6 +3666,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller has no access to any project.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Project not found.
           content:
@@ -3338,6 +3686,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -3798,6 +4152,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: No GitHub repository is mapped for this product.
           content:
@@ -3806,6 +4172,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7241,8 +7613,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7284,6 +7668,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Time card not found.
           content:
@@ -7292,6 +7682,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7331,6 +7727,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Time card not found.
           content:
@@ -7339,6 +7741,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7374,6 +7782,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Task SLA not found.
           content:
@@ -7382,6 +7796,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7416,8 +7836,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7743,6 +8175,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Incident not found.
           content:
@@ -7751,6 +8189,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7791,6 +8235,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Incident not found.
           content:
@@ -7799,6 +8249,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7844,8 +8300,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7892,6 +8360,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Incident not found.
           content:
@@ -7908,6 +8382,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7942,6 +8422,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Referenced resource not found (e.g. caller, service, or assignment group).
           content:
@@ -7950,6 +8436,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -7984,8 +8476,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8016,8 +8520,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8052,6 +8574,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'On the PostgreSQL data sources, the caller is not an internal caller; this write is only available to internal callers there.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Referenced resource not found (e.g. configuration item or incident).
           content:
@@ -8066,6 +8594,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8208,6 +8742,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'On the PostgreSQL data sources, the caller is not an internal caller; this write is only available to internal callers there.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Outage, configuration item, or incident not found.
           content:
@@ -8228,6 +8768,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8511,6 +9057,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'On the PostgreSQL data sources, the caller is not an internal caller; this write is only available to internal callers there.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Outage not found.
           content:
@@ -8525,6 +9077,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8608,6 +9166,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: A referenced record was not found (origin case or primary incident).
           content:
@@ -8616,6 +9180,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8650,8 +9220,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8682,8 +9264,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8719,6 +9319,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Problem not found.
           content:
@@ -8727,6 +9333,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8769,6 +9381,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Problem, assignedToId, or assignmentGroupId not found.
           content:
@@ -8783,6 +9401,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8817,8 +9441,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -8845,6 +9481,18 @@ paths:
                 $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: 'No resolvable caller: neither a valid user token nor an authorized internal client credential.'
           content:
             application/json:
               schema:
@@ -8892,6 +9540,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Incident task not found.
           content:
@@ -8900,6 +9554,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
@@ -9817,12 +10477,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/lifecycle:
     get:
       summary: The lifecycle stage catalogue.
@@ -9847,12 +10519,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/users/search:
     post:
       summary: Search PLG CS engineers.
@@ -9883,12 +10567,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/organizations/search:
     post:
       summary: Search organisations.
@@ -9919,12 +10615,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/organizations/{organizationId}:
     get:
       summary: One organisation with its platform cards.
@@ -9957,6 +10665,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -9969,6 +10683,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       summary: "Set the organisation's CS owner."
       description: "Stores what it is told. The rule that an organisation may not be left unassigned is a PLG lifecycle rule and lives in the BFF, which rejects an empty `ownerId` before this is called."
@@ -10006,6 +10726,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10018,6 +10744,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/organizations/{organizationId}/products/{productCode}:
     get:
       summary: One pairing.
@@ -10056,6 +10788,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10068,6 +10806,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       summary: "Move a pairing's stage, health, tier or trial dates."
       description: "All axes apply in ONE transaction, so a request cannot half-apply. This is a GUARDED WRITE. The decision travels inside the statement as a `WHERE` clause rather than being read first, because a lock cannot span an HTTP boundary. `rowsAffected: 0` means the precondition no longer held; deciding what that means (usually `409`) is the caller's job, not this service's. Send `expectedStage` to make the stage move conditional. A reason is required for any tracked axis and is checked here as well as in the BFF \u2014 without it a missing reason surfaces as a `NOT NULL` violation, which is a true statement about the database and a useless one about the request. Stages move forward only, enforced by a trigger. Every attributed write carries `actorId`, a `user` id the caller has already resolved. This service has no notion of \"the current user\"."
@@ -10111,6 +10855,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10123,6 +10873,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/organizations/{organizationId}/products/{productCode}/playbook-runs:
     post:
       summary: Attach a playbook to a pairing.
@@ -10167,6 +10923,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10179,6 +10941,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/organizations/{organizationId}/products/{productCode}/notes:
     post:
       summary: Append a note to a pairing.
@@ -10223,6 +10991,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10235,6 +11009,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbook-runs/{playbookRunId}:
     delete:
       summary: Detach a playbook run.
@@ -10267,6 +11047,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10279,6 +11065,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbook-run-tasks/{taskId}:
     patch:
       summary: "Record a task's value."
@@ -10317,6 +11109,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10329,6 +11127,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbook-run-tasks/{taskId}/shape:
     get:
       summary: "A task's declared value type and options."
@@ -10361,6 +11165,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10373,6 +11183,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/notes/{noteId}:
     patch:
       summary: Correct a note, keeping the superseded body.
@@ -10411,6 +11227,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10423,6 +11245,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/pairings/{orgPlatformId}/location:
     get:
       summary: Which organisation and platform a pairing belongs to.
@@ -10455,6 +11283,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10467,6 +11301,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/registrations/search:
     post:
       summary: Search registrations.
@@ -10497,12 +11337,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/registrations/{orgPlatformId}/acknowledge:
     post:
       summary: Claim a registration.
@@ -10541,6 +11393,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10553,6 +11411,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbooks:
     get:
       summary: Playbook templates.
@@ -10584,12 +11448,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbooks/{playbookId}:
     get:
       summary: One playbook template.
@@ -10622,6 +11498,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10634,6 +11516,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       summary: "Update a template's name, stage, kind or active flag."
       description: "Validation of what a playbook may BE \u2014 bookends, task codes, option lists \u2014 lives in the BFF, not here. This stores what it is told, subject to the schema's own constraints."
@@ -10671,6 +11559,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10683,6 +11577,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       summary: Delete a template.
       description: A foreign key refuses this while any run references the template. Deactivating is the usual answer.
@@ -10714,6 +11614,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10726,6 +11632,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/products/{productCode}/playbooks:
     post:
       summary: Create a playbook template.
@@ -10763,6 +11675,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10775,6 +11693,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/playbooks/{playbookId}/tasks:
     put:
       summary: "Replace a template's tasks."
@@ -10813,6 +11737,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found.
           content:
@@ -10825,6 +11755,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/registrations/ingest:
     post:
       summary: Land a batch of registrations.
@@ -10859,12 +11795,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/ingest-failures:
     post:
       summary: Record a registration that could not be landed.
@@ -10898,12 +11846,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/analytics/dashboard:
     get:
       summary: Dashboard aggregates.
@@ -10943,12 +11903,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /plg/work-queue/search:
     post:
       summary: The work queue and its tiles.
@@ -10979,12 +11951,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   securitySchemes:
