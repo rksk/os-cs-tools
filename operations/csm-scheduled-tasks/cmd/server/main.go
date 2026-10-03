@@ -420,6 +420,19 @@ func main() {
 		}
 	}
 
+	// DRIVER_INTERVAL is the one value here that must match an external
+	// setting (the Choreo trigger), and everything retry-related is derived
+	// from it: a task's default retry backoff and the ledger's orphan
+	// window. A schedule tighter than the driver can never be honoured, and
+	// worse, a failed period of such a task is superseded by its next period
+	// before its retry ever comes due — so the mismatch is fatal at startup
+	// rather than a silently wrong retry policy in production.
+	if err := engine.ValidateCadence(tasks, driverInterval, time.Now()); err != nil {
+		slog.Error("DRIVER_INTERVAL is incompatible with the registered schedules; refusing to start",
+			"driverInterval", driverInterval.String(), "err", err)
+		os.Exit(1)
+	}
+
 	// A non-empty audience with no EMAIL_BASE_URL configured would otherwise
 	// only surface the first time some task actually fails and tries to
 	// send, as an opaque "invalid URL" error from a relative "/send-email"
@@ -435,6 +448,13 @@ func main() {
 	}
 
 	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients, alertsEnabled)
+	// How many handlers may run at once. The engine starts tasks shortest-
+	// interval first regardless, so the five-minute outage/status tasks are
+	// never queued behind a slow daily one; a second worker additionally
+	// keeps a single slow handler (one announcement auto-publish can take
+	// minutes) from holding the rest of the tick. 1 makes the tick strictly
+	// sequential if that ever proves necessary.
+	eng.Concurrency = envInt("TASK_CONCURRENCY", 2)
 
 	// No app-level execution timeout here — Choreo's own Scheduled Task
 	// execution-time limit already bounds how long one invocation can run.
@@ -573,6 +593,21 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// envInt returns the given environment variable parsed as a positive
+// integer, or def if unset, malformed, or less than 1.
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		slog.Warn("environment variable is not a positive integer; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return n
 }
 
 // envDuration returns the given environment variable parsed with

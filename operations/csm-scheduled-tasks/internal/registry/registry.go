@@ -55,6 +55,14 @@ type Task struct {
 	// zero (see cmd/server/main.go) — there is no point backing off
 	// shorter than how often this process even runs.
 	RetryBackoff time.Duration
+	// Timeout bounds one Handler call. Zero means "derive it from the
+	// schedule": the shortest gap between two consecutive firings, capped
+	// (see engine.handlerTimeout) — a task that is still running when its
+	// own next period comes due has already lost. Set it explicitly only
+	// for a handler whose single-run budget is genuinely unrelated to its
+	// cadence. The engine also widens the ledger's orphaned-claim window to
+	// cover this, so a long-running handler is not reclaimed mid-run.
+	Timeout time.Duration
 	// To/Cc are additional recipients emailed when this specific task
 	// fails, on top of the standing ALERT_RECIPIENTS audience every task
 	// already alerts (see engine.Engine.AlertRecipients' own doc comment)
