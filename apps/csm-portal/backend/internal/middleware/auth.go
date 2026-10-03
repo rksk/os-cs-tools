@@ -181,10 +181,13 @@ func (t *x5cStrippingTransport) RoundTrip(req *http.Request) (*http.Response, er
 		return resp, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamResponseBytes+1))
 	_ = resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read JWKS response body: %w", err)
+	}
+	if len(body) > maxUpstreamResponseBytes {
+		return nil, fmt.Errorf("read JWKS response body: response exceeds %d bytes", maxUpstreamResponseBytes)
 	}
 
 	var jwks struct {

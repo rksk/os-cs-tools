@@ -117,9 +117,12 @@ func (c *Client) TableQueryWithHeaders(ctx context.Context, table string, params
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamResponseBytes+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("servicenow: read response body: %w", err)
+	}
+	if len(respBody) > maxUpstreamResponseBytes {
+		return nil, nil, fmt.Errorf("servicenow: read response body: response exceeds %d bytes", maxUpstreamResponseBytes)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -218,9 +221,12 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("servicenow: read response body: %w", err)
+	}
+	if len(respBody) > maxUpstreamResponseBytes {
+		return nil, fmt.Errorf("servicenow: read response body: response exceeds %d bytes", maxUpstreamResponseBytes)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
