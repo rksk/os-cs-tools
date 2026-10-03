@@ -53,6 +53,11 @@ const notBeforeWaitSlice = 10 * time.Second
 // idle consumer prove it is alive without a record arriving.
 const defaultPollTimeout = 30 * time.Second
 
+// DefaultDrainTimeout is how long, once shutdown starts, an in-flight
+// record's handler, dead-letter/park publish and offset commit may still
+// run before their context is cancelled too. See drainContext.
+const DefaultDrainTimeout = 20 * time.Second
+
 // Record is the eventbus-agnostic view of a consumed message that Handle
 // receives — deliberately not the underlying Kafka client's own message
 // type, so dispatch (and any future caller) never needs to import
@@ -120,7 +125,10 @@ type Consumer struct {
 	policy      RetryPolicy
 	park        ParkFunc
 	pollTimeout time.Duration
+	drain       time.Duration
 	stats       Stats
+	// done is closed when Run returns; see Done.
+	done chan struct{}
 
 	// Liveness, for Status: state is one of the state* constants;
 	// lastActivity (unix nanoseconds) is the last moment Run proved it was
@@ -221,6 +229,17 @@ func WithParking(park ParkFunc) Option {
 	return func(c *Consumer) { c.park = park }
 }
 
+// WithDrainTimeout sets how long in-flight work may continue after
+// shutdown starts (see DefaultDrainTimeout). Non-positive keeps the
+// default.
+func WithDrainTimeout(d time.Duration) Option {
+	return func(c *Consumer) {
+		if d > 0 {
+			c.drain = d
+		}
+	}
+}
+
 // NewConsumer constructs a Consumer that joins groupID and consumes
 // cfg.Topic. Auto-commit is not used: offsets are committed explicitly by
 // Run, only after a record has been handled (or exhausted its retries) —
@@ -260,6 +279,8 @@ func NewConsumer(cfg Config, groupID string, opts ...Option) *Consumer {
 		group:       groupID,
 		policy:      DefaultRetryPolicy,
 		pollTimeout: defaultPollTimeout,
+		drain:       DefaultDrainTimeout,
+		done:        make(chan struct{}),
 	}
 	c.touch()
 	for _, opt := range opts {
@@ -348,12 +369,51 @@ type Handle func(context.Context, Record) error
 // tier to fall back to either.
 type OnExhausted func(ctx context.Context, record Record, handleErr error) error
 
+// Done is closed once Run has returned — after any in-flight record has
+// drained (see Run). A Consumer whose Run was never started never closes
+// it.
+func (c *Consumer) Done() <-chan struct{} { return c.done }
+
+// drainContext returns the context in-flight work runs under: it ignores
+// stop's cancellation (so a shutdown signal does not abort an HTTP send
+// half-way, which would leave a notification delivered but its offset
+// uncommitted and redelivered after restart), but is cancelled grace after
+// stop is, so draining is bounded. Not a per-record timeout: in normal
+// operation a handler keeps the full time its own HTTP timeouts allow.
+func drainContext(stop context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	work, cancel := context.WithCancel(context.WithoutCancel(stop))
+	go func() {
+		select {
+		case <-stop.Done():
+			timer := time.NewTimer(grace)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				cancel()
+			case <-work.Done():
+			}
+		case <-work.Done():
+		}
+	}()
+	return work, cancel
+}
+
 // Run polls for records and calls handle for each one, committing its offset
 // once handle succeeds or its retries are exhausted. Run blocks until ctx is
 // canceled or the Consumer is closed; call it from its own goroutine. Once
 // it returns the consumer is "exited" (see Status) and nothing restarts
 // it: a health check that reports that is how the process gets restarted.
+//
+// Shutdown is a drain, not an abort: cancelling ctx stops fetching and any
+// retry backoff or not-before wait, but a handler call already in flight
+// runs to completion (bounded by the drain timeout — see drainContext),
+// and so do the dead-letter/park publish and the offset commit that follow
+// it. Only then does Run return and Done close; the caller should wait on
+// Done before Close.
 func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhausted) {
+	defer close(c.done)
+	work, cancelWork := drainContext(ctx, c.drain)
+	defer cancelWork()
 	c.state.Store(stateRunning)
 	c.touch()
 	for {
@@ -411,13 +471,16 @@ func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhaust
 			// whatever remains of the same absolute instant.
 			continue
 		}
-		if !c.processRecord(ctx, record, handle, onExhausted) {
+		if !c.processRecordUntil(ctx, work, record, handle, onExhausted) {
 			// ctx was canceled mid-retry-wait (shutdown) — skip the commit,
 			// same as the fetch loop above; the next FetchMessage call will
 			// see ctx.Err() != nil and return.
 			continue
 		}
-		if cerr := c.reader.CommitMessages(ctx, msg); cerr != nil {
+		// The commit runs on the drain context: a record that finished
+		// just as shutdown began must not lose its commit to the signal,
+		// or it is redelivered and its notifications sent again.
+		if cerr := c.reader.CommitMessages(work, msg); cerr != nil {
 			slog.ErrorContext(ctx, "eventbus: commit failed", "consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cerr)
 		} else {
 			c.touch()
@@ -486,6 +549,15 @@ func waitUntil(ctx context.Context, t time.Time, tick func()) bool {
 // only when ctx was canceled mid-retry-wait (a shutdown in progress), so a
 // record that was never actually finished being handled isn't marked done.
 func (c *Consumer) processRecord(ctx context.Context, record Record, handle Handle, onExhausted OnExhausted) bool {
+	return c.processRecordUntil(ctx, ctx, record, handle, onExhausted)
+}
+
+// processRecordUntil is processRecord with the two contexts Run uses kept
+// apart: stop ends waiting (backoff between attempts), ctx is what handle,
+// onExhausted and the park run under — the drain context, which outlives
+// stop by the drain timeout. So a shutdown lets the attempt in flight
+// finish and be committed, but never starts another one.
+func (c *Consumer) processRecordUntil(stop, ctx context.Context, record Record, handle Handle, onExhausted OnExhausted) bool {
 	attempts := c.policy.MaxAttempts
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -507,7 +579,7 @@ func (c *Consumer) processRecord(ctx context.Context, record Record, handle Hand
 			slog.InfoContext(ctx, "eventbus: retrying record after backoff",
 				"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset,
 				"nextAttempt", attempt+1, "delay", delay)
-			if !waitUntil(ctx, time.Now().Add(delay), c.touch) {
+			if !waitUntil(stop, time.Now().Add(delay), c.touch) {
 				return false
 			}
 		}
