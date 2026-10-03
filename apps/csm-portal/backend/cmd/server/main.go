@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -183,6 +184,9 @@ func main() {
 	// being retired.
 	viewerEnabled, viewerCfg := loadViewerConfig()
 	var viewerHandlers *viewerHandlerSet
+	// closeOnShutdown holds resources released after the HTTP server has
+	// drained (e.g. the risk store's connection pool).
+	var closeOnShutdown []io.Closer
 	if viewerEnabled {
 		salesEntityClient := entity.NewSalesEntityClient(entity.SalesEntityConfig{
 			BaseURL:      viewerCfg.salesEntityBaseURL,
@@ -219,6 +223,7 @@ func main() {
 			slog.Error("failed to connect to SPL_RISK_MYSQL_DSN", "err", err)
 			os.Exit(1)
 		}
+		closeOnShutdown = append(closeOnShutdown, riskClient)
 
 		// Accounts/projects/cases/team-members read/search/comment paths used
 		// to have their own Postgres translation layer here, wrapping
@@ -648,12 +653,15 @@ func main() {
 		route("GET /customer-health/action-items/{actionItemId}/comments", handler.PermViewerAccess, viewerHandlers.customerHealth.GetActionItemComments)
 	}
 
-	// Built once: Auth() does a real JWKS fetch at startup when
-	// TokenValidatorEnabled is on.
-	authMiddleware := middleware.Auth(authCfg)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Built once: Auth does a real JWKS fetch at startup when
+	// TokenValidatorEnabled is on. Its background key refresh is bound to
+	// authCtx, cancelled once the server has shut down.
+	authCtx, cancelAuth := context.WithCancel(context.Background())
+	defer cancelAuth()
+	authMiddleware := middleware.AuthWithContext(authCtx, authCfg)
 
 	// PLG Customer Success Portal. Its config, entity-service client, services,
 	// handlers, identity middleware and 26 plg/* routes are all assembled in
@@ -739,6 +747,12 @@ func main() {
 	var srvErr error
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		srvErr = err
+	}
+	cancelAuth()
+	for _, c := range closeOnShutdown {
+		if err := c.Close(); err != nil {
+			slog.Error("failed to close a resource on shutdown", "err", err)
+		}
 	}
 	if srvErr != nil {
 		slog.Error("graceful shutdown failed", "err", srvErr)
