@@ -72,6 +72,32 @@ type Config struct {
 type Client struct {
 	http    *http.Client
 	baseURL string
+	// probe is a plain, unauthenticated client for the entity service's public
+	// GET /health, so a reachability check never fetches or spends a token.
+	probe *http.Client
+}
+
+// healthProbeTimeout bounds one reachability probe of the entity service.
+const healthProbeTimeout = 5 * time.Second
+
+// Health reports whether the entity service answers its public GET /health
+// with a 2xx. It is a reachability check only: no token is sent and the
+// response body is ignored.
+func (c *Client) Health(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return fmt.Errorf("entity: build health request: %w", err)
+	}
+	resp, err := c.probe.Do(req)
+	if err != nil {
+		return fmt.Errorf("entity: health: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return &apierror.Error{StatusCode: resp.StatusCode}
+	}
+	return nil
 }
 
 // NewClient constructs a Client that authenticates against the entity service
@@ -93,6 +119,7 @@ func NewClient(cfg Config) *Client {
 	return &Client{
 		http:    httpClient,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		probe:   &http.Client{Timeout: healthProbeTimeout},
 	}
 }
 
