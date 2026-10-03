@@ -338,7 +338,12 @@ func main() {
 	// Every route's response also passes through RedactInlineImages, which
 	// strips inline image data from JSON for a caller without the attachment
 	// download permission (a no-op pass-through for one who holds it).
+	// A POST .../search route's body additionally has its pagination bounds
+	// clamped (ClampSearchPagination) before the handler reads it.
 	route := func(pattern string, perm handler.Permission, h http.HandlerFunc) {
+		if handler.IsSearchRoute(pattern) {
+			h = handler.ClampSearchPagination(h)
+		}
 		mux.HandleFunc(pattern, accessGuard.Require(perm, handler.RedactInlineImages(accessGuard, h)))
 	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
