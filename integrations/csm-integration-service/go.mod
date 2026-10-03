@@ -1,4 +1,4 @@
-module github.com/wso2-open-operations/cs-tools/operations/csm-integration-service
+module github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service
 
 go 1.26.6
 

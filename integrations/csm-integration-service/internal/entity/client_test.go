@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/apierror"
 )
 
 // tokenServer returns an httptest.Server that always issues a client-credentials

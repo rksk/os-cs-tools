@@ -19,9 +19,9 @@ package main
 import (
 	"net/http"
 
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/handler"
-	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/handler"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-integration-service/internal/middleware"
 )
 
 // Operation scopes. Every route except GET /health requires exactly one of

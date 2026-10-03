@@ -44,10 +44,11 @@ type CaseHandler struct {
 	// entity-service's AddCaseTagRequest.ActorEmail. It must match an entry
 	// in entity-service's M2M_TRUSTED_ACTOR_EMAILS allowlist or every call
 	// 403s. Never accepted from the caller — that would defeat the point of
-	// the allowlist being server-configured rather than client-asserted. An
-	// empty value here is a deploy-time misconfiguration, not something this
-	// handler special-cases; the resulting entity-service 403 surfaces
-	// normally. Despite the name (a holdover from this field's original,
+	// the allowlist being server-configured rather than client-asserted. The
+	// server refuses to start without a valid value (see cmd/server's
+	// actorEmail); a value that is set but not on the allowlist still
+	// surfaces normally as the entity service's 403. Despite the name (a
+	// holdover from this field's original,
 	// UMT-specific introduction), it is now this service's single generic
 	// M2M actor identity, used by any caller of these generic case
 	// operations — renaming it is out of scope for the current change.
