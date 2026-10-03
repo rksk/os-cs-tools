@@ -130,7 +130,7 @@ type SLAEngineRepository interface {
 	// FindPolicyByPattern is sla_policy_resolver.go's last-resort fallback,
 	// tried only once FindPolicyByName has failed under both plan labels --
 	// see resolve's own doc comment for why. Real ServiceNow tenants outside
-	// prod (confirmed on wso2sndev.service-now.com's synced data) don't all
+	// prod (confirmed on the dev instance's synced data) don't all
 	// follow the "P{n} - {Type} ({Plan})" naming convention prod's policies
 	// were verified against, e.g. "P2 - IR - Resolution (Open Source)"
 	// instead of "P2 - Resolution (Open Source)" -- an exact-name lookup
