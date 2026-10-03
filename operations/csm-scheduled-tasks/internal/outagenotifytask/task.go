@@ -71,7 +71,7 @@ func phaseWord(kind string) string {
 // visible; it is just not silently repaired by re-mailing everyone.
 //
 // One bad recipient does not abandon the rest: every decision is attempted and
-// the failures are joined, the same rule internal/allocationreminder uses.
+// the failures are joined, the same rule internal/announcementpublish uses.
 //
 // emailsEnabled is ALERTS_ENABLED. As with every other task here, false — or
 // an empty `to` — skips the sweep entirely rather than sweeping and

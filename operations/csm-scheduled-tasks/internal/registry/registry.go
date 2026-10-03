@@ -89,9 +89,9 @@ type Task struct {
 	// cmd/server/main.go's SUB_CRON_RECIPIENTS config (via
 	// recipientsFor), not hardcoded here — see this component's own
 	// CLAUDE.md, "Adding a sub-cron." Both nil is the common case: this
-	// task has no audience beyond ALERT_RECIPIENTS. There is no separate
-	// success email yet — see "Future: per-task report emails" in that
-	// same doc.
+	// task has no audience beyond ALERT_RECIPIENTS. Report-style tasks send
+	// their own success e-mail from inside the handler instead — see
+	// "Per-task report emails" in that same doc.
 	To []string
 	Cc []string
 }

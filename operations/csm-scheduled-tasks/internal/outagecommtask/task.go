@@ -54,7 +54,7 @@ type EmailSender interface {
 // silently repaired by re-mailing everyone.
 //
 // One bad recipient does not abandon the rest: every decision is attempted
-// and the failures are joined, the same rule internal/allocationreminder uses.
+// and the failures are joined, the same rule internal/announcementpublish uses.
 //
 // emailsEnabled is ALERTS_ENABLED. As everywhere else here, false — or an
 // empty `to` — skips the sweep ENTIRELY rather than sweeping and discarding.
