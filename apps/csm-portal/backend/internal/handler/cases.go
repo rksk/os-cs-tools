@@ -194,20 +194,27 @@ func (h *CaseHandler) WithInlineImageProcessor(p *InlineImageProcessor) *CaseHan
 // gating on it fail closed rather than falling back to an id that can never
 // match.
 func (h *CaseHandler) resolveCurrentUserID(r *http.Request, user *middleware.UserInfo) string {
-	raw, err := h.entity.GetUserMe(r.Context())
+	return resolvePlatformUserID(r.Context(), h.entity.GetUserMe, user)
+}
+
+// resolvePlatformUserID is resolveCurrentUserID's shared body: the caller's
+// platform user id from getMe (the entity service's GET /users/me), or "" when
+// the lookup fails or yields no id.
+func resolvePlatformUserID(ctx context.Context, getMe func(context.Context) ([]byte, error), user *middleware.UserInfo) string {
+	raw, err := getMe(ctx)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUserMe failed while resolving the caller's platform user id", "userID", user.UserID, "err", summarizeErr(err))
+		slog.ErrorContext(ctx, "entity GetUserMe failed while resolving the caller's platform user id", "userID", user.UserID, "err", summarizeErr(err))
 		return ""
 	}
 	var me struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &me); err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed while resolving the caller's platform user id", "userID", user.UserID, "err", summarizeErr(err))
+		slog.ErrorContext(ctx, "entity GetUserMe: parse response failed while resolving the caller's platform user id", "userID", user.UserID, "err", summarizeErr(err))
 		return ""
 	}
 	if me.ID == "" {
-		slog.ErrorContext(r.Context(), "entity GetUserMe returned an empty id while resolving the caller's platform user id", "userID", user.UserID)
+		slog.ErrorContext(ctx, "entity GetUserMe returned an empty id while resolving the caller's platform user id", "userID", user.UserID)
 	}
 	return me.ID
 }
