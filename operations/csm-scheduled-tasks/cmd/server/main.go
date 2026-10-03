@@ -440,9 +440,11 @@ func main() {
 	// execution-time limit already bounds how long one invocation can run.
 	// signal.NotifyContext instead cancels this context the moment Choreo
 	// sends SIGTERM (whether that's from its own timeout firing, a
-	// redeploy, or a manual stop), so in-flight HTTP calls to entity-service
-	// abort promptly and this process can log/exit cleanly, rather than
-	// being cut off mid-request with no chance to react.
+	// redeploy, or a manual stop), so the in-flight handler aborts promptly
+	// and no further task is claimed. The engine's own record-back and
+	// alert calls do NOT run on this context — they run on a short,
+	// detached one (engine.bookkeepingContext), so the interrupted run is
+	// still recorded as failed and the alert still goes out.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
