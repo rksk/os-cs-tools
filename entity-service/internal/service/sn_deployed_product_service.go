@@ -317,7 +317,11 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 		productSysid := uuidToSysid(req.ID)
 		deploymentSysid := uuidToSysid(*req.DeploymentID)
 		found := false
-		for offset := 0; !found; offset += scopePageSize {
+		// Advance by the rows actually returned (see
+		// verifyCallRequestBelongsToCase for why), bounded by
+		// maxOwnershipScanPages.
+		offset := 0
+		for page := 0; !found && page < maxOwnershipScanPages; page++ {
 			searchPayload := snDeployedProductSearchPayload{
 				Filters:    snDeployedProductFilters{DeploymentIDs: []string{deploymentSysid}},
 				Pagination: snProjectPagination{Limit: scopePageSize, Offset: offset},
@@ -336,9 +340,10 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 					break
 				}
 			}
-			if offset+len(searchResp.DeployedProducts) >= searchResp.TotalRecords {
+			if found || len(searchResp.DeployedProducts) == 0 || offset+len(searchResp.DeployedProducts) >= searchResp.TotalRecords {
 				break
 			}
+			offset += len(searchResp.DeployedProducts)
 		}
 		if !found {
 			return domain.UpdateDeployedProductResponse{}, &apierror.NotFoundError{Msg: "deployed product not found for the given deployment"}
