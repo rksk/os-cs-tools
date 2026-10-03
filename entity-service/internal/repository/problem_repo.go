@@ -573,7 +573,6 @@ func updateProblemFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateProb
 		}
 		problemSets = append(problemSets, fmt.Sprintf("due_on = $%d", idx))
 		problemArgs = append(problemArgs, t)
-		idx++
 	}
 	if len(problemSets) > 0 {
 		tag, err := tx.Exec(ctx, `UPDATE problem SET `+strings.Join(problemSets, ", ")+` WHERE id = $1`, problemArgs...)
@@ -594,7 +593,6 @@ func updateProblemFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateProb
 	if req.AssignedToID != nil {
 		wiSets = append(wiSets, fmt.Sprintf("assigned_to_id = $%d::uuid", widx))
 		wiArgs = append(wiArgs, *req.AssignedToID)
-		widx++
 	}
 
 	var updatedOn time.Time

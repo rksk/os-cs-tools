@@ -2932,7 +2932,6 @@ func updateCaseFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateCaseReq
 	if req.RelatedCaseID != nil {
 		caseSets = append(caseSets, fmt.Sprintf("related_case_id = $%d::uuid", idx))
 		caseArgs = append(caseArgs, *req.RelatedCaseID)
-		idx++
 	}
 	if len(caseSets) > 0 {
 		tag, err := tx.Exec(ctx, `UPDATE "case" SET `+strings.Join(caseSets, ", ")+` WHERE id = $1`, caseArgs...)
@@ -2992,7 +2991,6 @@ func updateCaseFieldsTx(ctx context.Context, tx pgx.Tx, req domain.UpdateCaseReq
 		if *req.WorkaroundProvided {
 			wiSets = append(wiSets, fmt.Sprintf("workaround_provided_on = NOW(), workaround_provided_by_user_id = $%d::uuid", widx))
 			wiArgs = append(wiArgs, actorID)
-			widx++
 		} else {
 			// Recalling the workaround clears both fields -- see
 			// domain.UpdateCaseRequest.WorkaroundProvided's own doc comment:

@@ -443,9 +443,8 @@ func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.I
 			return nil, 0, fmt.Errorf("scan instance usage: %w", err)
 		}
 
-		entry, ok := entryByInstance[instanceID]
-		if !ok {
-			entry = &domain.InstanceUsageEntry{
+		if _, ok := entryByInstance[instanceID]; !ok {
+			entryByInstance[instanceID] = &domain.InstanceUsageEntry{
 				InstanceID:      instanceID,
 				InstanceKey:     nodeID,
 				Project:         buildOptionalRef(projID, projName),
@@ -453,7 +452,6 @@ func (r *instanceRepo) SearchInstanceUsage(ctx context.Context, filters domain.I
 				Product:         buildOptionalRef(prodID, prodName),
 				DeployedProduct: buildOptionalRef(dprodID, dprodName),
 			}
-			entryByInstance[instanceID] = entry
 			summaryByInstance[instanceID] = map[string]*domain.InstanceSummary{}
 			order = append(order, instanceID)
 		}
