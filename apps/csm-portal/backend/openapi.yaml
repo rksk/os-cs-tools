@@ -1714,7 +1714,9 @@ paths:
         internal (WSO2 staff) target, `roles` is replaced with the same portal-role
         vocabulary `GET /users/me` reports (sourced from that user's own SCIM role
         assignment, not entity-service's own role data); an external contact's `roles`
-        is left as entity-service returned it.
+        is left as entity-service returned it. `projectAccess` and `externalAccount` for an
+        external contact are returned only to callers holding the `write` permission (user
+        management); other callers receive the profile without them.
       operationId: getUserById
       parameters:
         - name: id
@@ -2047,6 +2049,10 @@ paths:
         Returns a paginated list of users. When the entity-service data source is
         ServiceNow the response uses SNUser (name, timeZone, active, roles); for
         the postgres data source it uses User (firstName, lastName, userType).
+        For a caller without the `write` permission (user management) the search is
+        limited to staff accounts: with no `filters.roleIds` the staff roles
+        (`internal`, `agent`, `admin`) are applied, and a `roleIds` value other than those
+        or `timecard_approver` is refused with `403`.
       operationId: postUsersSearch
       requestBody:
         description: User search payload
