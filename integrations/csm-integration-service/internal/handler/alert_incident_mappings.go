@@ -18,8 +18,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 )
@@ -57,19 +55,8 @@ func NewAlertIncidentMappingHandler(entity entityAlertIncidentMappingClient) *Al
 // verbatim; the entity service enforces its own field validation and 400s
 // otherwise, so this handler does not re-validate that.
 func (h *AlertIncidentMappingHandler) CreateAlertIncidentMapping(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 
@@ -90,19 +77,8 @@ func (h *AlertIncidentMappingHandler) CreateAlertIncidentMapping(w http.Response
 // otherwise, so this handler does not re-validate that. An empty match
 // returns 200 with an empty `mappings` array, not 404.
 func (h *AlertIncidentMappingHandler) LookupAlertIncidentMappings(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	if !json.Valid(body) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	body, ok := readJSONBody(w, r, bodyRequired)
+	if !ok {
 		return
 	}
 

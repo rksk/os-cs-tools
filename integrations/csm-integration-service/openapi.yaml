@@ -15,6 +15,12 @@ info:
     scope claim of the caller token the gateway forwards. A request with no
     usable token is answered 401; one whose token lacks the operation's
     scope is answered 403, before anything is forwarded upstream.
+
+    Request bodies: every body is capped at 1 MiB (413 above that) and must
+    be valid JSON (400 otherwise). An operation whose requestBody is marked
+    required rejects an empty body with 400; the read-only searches marked
+    required: false (contacts, opportunities, invoices, project-opportunity
+    links) treat an empty body as "no filters".
 servers:
   - url: "{server}:{port}/"
     variables:
@@ -169,7 +175,8 @@ paths:
             type: string
             format: uuid
       requestBody:
-        description: Account contact search payload
+        description: Account contact search payload. Optional; an empty body means no filters.
+        required: false
         content:
           application/json:
             schema:
@@ -446,7 +453,8 @@ paths:
             type: string
             format: uuid
       requestBody:
-        description: Project contact search payload
+        description: Project contact search payload. Optional; an empty body means no filters.
+        required: false
         content:
           application/json:
             schema:
