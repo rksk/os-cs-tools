@@ -648,11 +648,8 @@ func main() {
 		route("GET /customer-health/action-items/{actionItemId}/comments", handler.PermViewerAccess, viewerHandlers.customerHealth.GetActionItemComments)
 	}
 
-	// Built once and reused on both listeners below: Auth() does a real JWKS
-	// fetch (when TokenValidatorEnabled), so calling it a second time would
-	// duplicate that startup network round-trip and double the chance of a
-	// transient JWKS hiccup aborting startup, for no benefit — both
-	// listeners validate the exact same tokens the exact same way.
+	// Built once: Auth() does a real JWKS fetch at startup when
+	// TokenValidatorEnabled is on.
 	authMiddleware := middleware.Auth(authCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -700,8 +697,8 @@ func main() {
 		// this is a no-op there; it matters when the gateway isn't in the
 		// path (local development, where the browser calls this listener
 		// directly). CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
-		// unset allows any origin (see middleware.CORS on why that's safe
-		// here).
+		// unset allows no cross-origin browser request (middleware.CORS is
+		// fail-closed).
 		// Recover sits directly inside SecurityHeaders so a panic anywhere
 		// further down still yields a logged 500 with the standard envelope
 		// (and the security headers) instead of a dropped connection.
