@@ -340,10 +340,17 @@ func main() {
 	firstTier := []eventbus.Option{eventbus.WithRetryPolicy(mainRetry), eventbus.WithParking(park)}
 	deadLetterTier := []eventbus.Option{eventbus.WithRetryPolicy(dlqRetry), eventbus.WithParking(park)}
 
+	// /health reflects the consumers, not just the HTTP server: 503 once
+	// any consumer's Run has exited or has made no progress for
+	// CONSUMER_STALL_TIMEOUT (see healthHandler), so the platform restarts
+	// a pod whose consumers are dead instead of leaving it to silently
+	// deliver nothing. The window must comfortably exceed one poll (30 s)
+	// plus the longest single handler attempt; a quiet topic never trips
+	// it, since an error-free empty poll counts as progress.
+	consumers := &consumerRegistry{}
+	stallTimeout := envDuration("CONSUMER_STALL_TIMEOUT", 5*time.Minute)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("GET /health", healthHandler(consumers.statuses, stallTimeout, time.Now))
 
 	addr := ":" + mustPort("PORT", "8080")
 
@@ -380,18 +387,18 @@ func main() {
 		}
 	}()
 
-	mainConsumers := startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter, firstTier...)
-	dlqConsumers := startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil, deadLetterTier...)
+	mainConsumers := consumers.add(startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter, firstTier...))
+	dlqConsumers := consumers.add(startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 	// Same dispatcher as the case consumers: it already routes on the
 	// envelope's Type, and these two only ever receive change_request.* since
 	// that is all their topic carries.
-	crConsumers := startConsumers(ctx, "cr", crCfg, crConsumerGroup, crConsumerCount, dispatcher.Handle, crToDeadLetter, firstTier...)
-	crDLQConsumers := startConsumers(ctx, "cr-dlq", crDLQCfg, crDLQConsumerGroup, crDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...)
+	crConsumers := consumers.add(startConsumers(ctx, "cr", crCfg, crConsumerGroup, crConsumerCount, dispatcher.Handle, crToDeadLetter, firstTier...))
+	crDLQConsumers := consumers.add(startConsumers(ctx, "cr-dlq", crDLQCfg, crDLQConsumerGroup, crDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 	// And the same for project_contact.invited: the one dispatcher routes
 	// on the envelope's Type already, and these two only ever receive the
 	// onboarding events since that is all their topic carries.
-	projectConsumers := startConsumers(ctx, "project", projectCfg, projectConsumerGroup, projectConsumerCount, dispatcher.Handle, projectToDeadLetter, firstTier...)
-	projectDLQConsumers := startConsumers(ctx, "project-dlq", projectDLQCfg, projectDLQConsumerGroup, projectDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...)
+	projectConsumers := consumers.add(startConsumers(ctx, "project", projectCfg, projectConsumerGroup, projectConsumerCount, dispatcher.Handle, projectToDeadLetter, firstTier...))
+	projectDLQConsumers := consumers.add(startConsumers(ctx, "project-dlq", projectDLQCfg, projectDLQConsumerGroup, projectDLQConsumerCount, dispatcher.Handle, nil, deadLetterTier...))
 
 	// The SLA breach-alerting engine is optional per deployment, gated on
 	// REDIS_ADDR or REDIS_URL being set — unset means this engine never
@@ -502,7 +509,7 @@ func main() {
 	timeCardEngine := timecardengine.NewEngine()
 	timeCardConsumerGroup := envOrDefault("TIME_CARD_CONSUMER_GROUP", "csm-notification-service-time-card")
 	timeCardConsumerCount := envInt("TIME_CARD_CONSUMER_COUNT", 1)
-	timeCardConsumers := startConsumers(ctx, "time-card", eventBusCfg, timeCardConsumerGroup, timeCardConsumerCount, timeCardEngine.Handle, toDeadLetter, firstTier...)
+	timeCardConsumers := consumers.add(startConsumers(ctx, "time-card", eventBusCfg, timeCardConsumerGroup, timeCardConsumerCount, timeCardEngine.Handle, toDeadLetter, firstTier...))
 
 	<-ctx.Done()
 	stop()
