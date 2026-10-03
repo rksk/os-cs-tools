@@ -106,7 +106,7 @@ type onboardingStepRecorder interface {
 
 // OnboardingConfig is everything handleProjectContactInvited needs beyond
 // what NewDispatcher already takes — supplied via Dispatcher.WithOnboarding
-// rather than as yet more positional NewDispatcher parameters, since the
+// rather than as more NewDispatcher Config fields, since the
 // whole feature is optional per deployment (both flags default off) and
 // every other event type is untouched by it.
 //
@@ -254,22 +254,49 @@ type recordState struct {
 	unhealthy bool
 }
 
-// NewDispatcher constructs a Dispatcher. See Dispatcher.emailSendingEnabled's,
-// Dispatcher.emailDebugMode's, and Dispatcher.callSendingEnabled's doc
-// comments for what those three controls do, and
-// Dispatcher.defaultOnCallNumber's doc comment for the call fallback value.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled bool, emailDebugMode bool, emailDebugRecipients []string, callSendingEnabled bool, defaultOnCallNumber string, defaultCSMEmailCC []string) *Dispatcher {
+// Deps are the Dispatcher's outbound collaborators: the three channels and
+// the per-recipient portal-link resolver.
+type Deps struct {
+	Email      emailSender
+	GoogleChat googleChatSender
+	Call       callSender
+	Links      linkResolver
+}
+
+// Config are the Dispatcher's switches and defaults, named rather than
+// positional so three adjacent booleans cannot be passed in the wrong
+// order. The zero value sends nothing by email or call; see the
+// Dispatcher field each one sets for what it controls.
+type Config struct {
+	// EmailSendingEnabled is EMAIL_SENDING_ENABLED (Dispatcher.emailSendingEnabled).
+	EmailSendingEnabled bool
+	// EmailDebugMode/EmailDebugRecipients are EMAIL_DEBUG_MODE/
+	// EMAIL_DEBUG_RECIPIENTS (Dispatcher.emailDebugMode).
+	EmailDebugMode       bool
+	EmailDebugRecipients []string
+	// CallSendingEnabled is CALL_SENDING_ENABLED (Dispatcher.callSendingEnabled).
+	CallSendingEnabled bool
+	// DefaultOnCallNumber is INCIDENT_DEFAULT_CALL_TO
+	// (Dispatcher.defaultOnCallNumber).
+	DefaultOnCallNumber string
+	// DefaultCSMEmailCC is DEFAULT_CSM_EMAIL_CC (Dispatcher.defaultCSMEmailCC).
+	DefaultCSMEmailCC []string
+}
+
+// NewDispatcher constructs a Dispatcher from its collaborators and
+// configuration.
+func NewDispatcher(deps Deps, cfg Config) *Dispatcher {
 	return &Dispatcher{
-		email:                email,
-		googleChat:           googleChat,
-		call:                 call,
-		links:                links,
-		emailSendingEnabled:  emailSendingEnabled,
-		emailDebugMode:       emailDebugMode,
-		emailDebugRecipients: emailDebugRecipients,
-		callSendingEnabled:   callSendingEnabled,
-		defaultOnCallNumber:  defaultOnCallNumber,
-		defaultCSMEmailCC:    defaultCSMEmailCC,
+		email:                deps.Email,
+		googleChat:           deps.GoogleChat,
+		call:                 deps.Call,
+		links:                deps.Links,
+		emailSendingEnabled:  cfg.EmailSendingEnabled,
+		emailDebugMode:       cfg.EmailDebugMode,
+		emailDebugRecipients: cfg.EmailDebugRecipients,
+		callSendingEnabled:   cfg.CallSendingEnabled,
+		defaultOnCallNumber:  cfg.DefaultOnCallNumber,
+		defaultCSMEmailCC:    cfg.DefaultCSMEmailCC,
 		done:                 make(map[string]bool),
 		records:              make(map[string]*recordState),
 		identityExisted:      make(map[string]bool),
