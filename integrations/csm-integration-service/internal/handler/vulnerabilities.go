@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -64,6 +65,24 @@ func (h *VulnerabilityHandler) SyncProductVulnerabilities(w http.ResponseWriter,
 
 	if !json.Valid(body) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	// The sync is a full replace: whatever is absent from the submitted set is
+	// deleted downstream. A body that is not an array can never be a valid set,
+	// and an empty array would be a request to delete every record, so both are
+	// refused here rather than forwarded. An intentional wipe is not something
+	// this operation offers.
+	var records []json.RawMessage
+	trimmed := bytes.TrimSpace(body)
+	// json.Unmarshal accepts "null" into a slice without error, so the array
+	// check has to look at the first byte itself.
+	if len(trimmed) == 0 || trimmed[0] != '[' || json.Unmarshal(trimmed, &records) != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgSyncNotArray)
+		return
+	}
+	if len(records) == 0 {
+		writeError(w, http.StatusBadRequest, ErrMsgSyncEmpty)
 		return
 	}
 
