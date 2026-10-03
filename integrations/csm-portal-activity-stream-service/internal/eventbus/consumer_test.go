@@ -185,3 +185,16 @@ func TestNewConsumer_BatchesCommits(t *testing.T) {
 		t.Errorf("CommitInterval = %v, want %v (batched, not per-record synchronous)", got, commitInterval)
 	}
 }
+
+func TestConsumerRun_PassesRecordTime(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	c := &Consumer{reader: &fakeReader{msgs: []kafka.Message{{Offset: 1, Time: at}}, final: io.EOF}}
+	var got time.Time
+	_ = c.Run(context.Background(), func(_ context.Context, rec Record) error {
+		got = rec.Time
+		return nil
+	})
+	if !got.Equal(at) {
+		t.Errorf("Record.Time = %v, want %v", got, at)
+	}
+}

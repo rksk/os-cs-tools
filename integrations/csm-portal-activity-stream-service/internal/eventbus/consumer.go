@@ -38,6 +38,9 @@ type Record struct {
 	Offset    int64
 	Key       []byte
 	Value     []byte
+	// Time is the record's timestamp on the topic (zero if the broker
+	// supplied none).
+	Time time.Time
 }
 
 // Handle processes a single record. Unlike csm-notification-service's own
@@ -182,6 +185,7 @@ func (c *Consumer) Run(ctx context.Context, handle Handle) error {
 			Offset:    msg.Offset,
 			Key:       msg.Key,
 			Value:     msg.Value,
+			Time:      msg.Time,
 		}
 		if err := handle(ctx, record); err != nil {
 			slog.ErrorContext(ctx, "eventbus: handler failed", "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", err)

@@ -21,8 +21,10 @@ paths:
       summary: Live case-activity updates.
       description: >
         Opens a long-lived Server-Sent Events connection. Emits a
-        `case_updated` event (data: a compact JSON object, at minimum
-        `{caseId, type, timestamp}` — never comment text or field values)
+        `case_updated` event (data: a compact JSON object
+        `{caseId, type, timestamp}` — never comment text or field values;
+        `timestamp` is the event's time on the topic in RFC 3339 UTC and is
+        omitted if unknown)
         whenever the case gets a new comment or its status changes; a
         comment-only `: ping` heartbeat every 15s otherwise. Returns 503
         when Event Hub isn't configured on the service, since there would
