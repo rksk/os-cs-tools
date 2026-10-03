@@ -108,10 +108,17 @@ func (l *stringList) UnmarshalJSON(b []byte) error {
 // When Config.TokenValidatorEnabled is false the token is only decoded without
 // signature verification — safe for local development only.
 func Auth(cfg Config) func(http.Handler) http.Handler {
+	return AuthWithContext(context.Background(), cfg)
+}
+
+// AuthWithContext is Auth with the JWKS background refresh bound to ctx: it
+// stops when ctx is cancelled (the server passes a context it cancels on
+// shutdown).
+func AuthWithContext(ctx context.Context, cfg Config) func(http.Handler) http.Handler {
 	var keyFunc jwt.Keyfunc
 	if cfg.TokenValidatorEnabled {
 		client := &http.Client{Transport: &x5cStrippingTransport{base: http.DefaultTransport}}
-		jwks, err := keyfunc.NewDefaultOverrideCtx(context.Background(), []string{cfg.JWKSEndpoint}, keyfunc.Override{Client: client})
+		jwks, err := keyfunc.NewDefaultOverrideCtx(ctx, []string{cfg.JWKSEndpoint}, keyfunc.Override{Client: client})
 		if err != nil {
 			// Misconfigured auth must not silently pass — fail at startup.
 			panic("auth: failed to initialise JWKS from " + cfg.JWKSEndpoint + ": " + err.Error())
