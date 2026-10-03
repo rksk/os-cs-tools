@@ -92,9 +92,7 @@ func TestLogger_CallerID(t *testing.T) {
 		handler := Logger(auth.Middleware(v)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})))
-		var out string
-		out = captureLog(t, func() { handler.ServeHTTP(w, r) })
-		return out
+		return captureLog(t, func() { handler.ServeHTTP(w, r) })
 	}
 
 	t.Run("a human caller logs the stable userid claim, not sub", func(t *testing.T) {

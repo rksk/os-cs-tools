@@ -66,16 +66,11 @@ func decodeRequestWithLimit[T any](w http.ResponseWriter, r *http.Request, dst *
 	return true
 }
 
-// decodeErrMsg converts a JSON decode error into a human-readable message that
-// is safe to return to the caller. Infrastructure details (e.g. raw Go type
-// names) are replaced with user-friendly descriptions.
-func decodeErrMsg(err error) string {
-	return decodeErrMsgWithLimit(err, "request body too large")
-}
-
-// decodeErrMsgWithLimit behaves like decodeErrMsg but lets the caller supply
-// an endpoint-specific message for the body-too-large case, so a handler with
-// a raised size cap (see decodeRequestWithLimit) can tell the caller what the
+// decodeErrMsgWithLimit converts a JSON decode error into a human-readable
+// message that is safe to return to the caller. Infrastructure details (e.g.
+// raw Go type names) are replaced with user-friendly descriptions. The caller
+// supplies the message for the body-too-large case, so a handler with a
+// raised size cap (see decodeRequestWithLimit) can tell the caller what the
 // actual limit is instead of the generic message.
 func decodeErrMsgWithLimit(err error, tooLargeMsg string) string {
 	var maxBytes *http.MaxBytesError
