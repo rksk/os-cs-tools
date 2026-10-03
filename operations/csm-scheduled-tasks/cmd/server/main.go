@@ -42,6 +42,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/cloudstatus"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/engine"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/entitycases"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/entityhttp"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/housekeeping"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/ledger"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/notify"
@@ -82,12 +83,29 @@ func main() {
 	// email client below.
 	entityServiceBaseURL := mustEnv("CUSTOMER_ENTITY_SERVICE_BASE_URL")
 	entityServiceScopes := splitComma(os.Getenv("CUSTOMER_ENTITY_SERVICE_SCOPES"))
+
+	// One authenticated transport for every entity-service client below:
+	// they share the credentials and the scopes, so they share the token —
+	// one client-credentials grant per invocation instead of one per client.
+	// Each client still applies its own request timeout on top.
+	entityTransport, err := entityhttp.NewTransport(entityhttp.Credentials{
+		TokenURL:     oauthTokenURL,
+		ClientID:     oauthClientID,
+		ClientSecret: oauthClientSecret,
+		Scopes:       entityServiceScopes,
+	})
+	if err != nil {
+		slog.Error("failed to construct entity-service transport", "err", err)
+		os.Exit(1)
+	}
+
 	ledgerClient, err := ledger.NewClient(ledger.Config{
 		BaseURL:      entityServiceBaseURL,
 		TokenURL:     oauthTokenURL,
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
 		Scopes:       entityServiceScopes,
+		Transport:    entityTransport,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service client", "err", err)
@@ -103,6 +121,7 @@ func main() {
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
 		Scopes:       entityServiceScopes,
+		Transport:    entityTransport,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service case-search client", "err", err)
@@ -118,6 +137,7 @@ func main() {
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
 		Scopes:       entityServiceScopes,
+		Transport:    entityTransport,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service outage-notification client", "err", err)
@@ -134,6 +154,7 @@ func main() {
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
 		Scopes:       entityServiceScopes,
+		Transport:    entityTransport,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service outage-communication client", "err", err)
@@ -152,6 +173,7 @@ func main() {
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
 		Scopes:       entityServiceScopes,
+		Transport:    entityTransport,
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service announcement-publish client", "err", err)
@@ -175,6 +197,7 @@ func main() {
 			ClientID:     oauthClientID,
 			ClientSecret: oauthClientSecret,
 			Scopes:       entityServiceScopes,
+			Transport:    entityTransport,
 		})
 		if err != nil {
 			slog.Error("failed to construct entity-service cloud-status client", "err", err)
@@ -239,6 +262,10 @@ func main() {
 	// startup if EMAIL_BASE_URL is set but not https. Authenticates with
 	// the same shared OAUTH2_* credentials as ledgerClient above, not its
 	// own — only BaseURL/Scopes/FromAddress are specific to this client.
+	//
+	// Its own transport, not entityTransport: EMAIL_SCOPES is a separate
+	// scope set, so it needs its own token — the second (and last) grant per
+	// invocation.
 	emailClient, err := notify.NewClient(notify.Config{
 		BaseURL:      emailBaseURL,
 		TokenURL:     oauthTokenURL,
@@ -327,8 +354,8 @@ func main() {
 			Handler: opencases.SendReport(entityCasesClient, emailClient,
 				reportguard.New(ledgerClient, openCasesTaskName),
 				openCasesTo, openCasesCc, alertsEnabled),
-			To:       openCasesTo,
-			Cc:       openCasesCc,
+			To: openCasesTo,
+			Cc: openCasesCc,
 		},
 		// The first sub-cron here that does real, per-row, multi-step,
 		// partial-failure-tolerant work rather than a bulk delete or a
