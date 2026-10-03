@@ -1696,7 +1696,7 @@ func crRecord(audience, projectID string) eventbus.Record {
 }
 
 // TestDispatcher_Handle_CRApprovalRequested_UsesTheFlowsSubject: the flow
-// reproduces ServiceNow's per-branch wording, so this service must send that
+// reproduces the legacy ticketing system's per-branch wording, so this service must send that
 // subject verbatim rather than building one of its own.
 func TestDispatcher_Handle_CRApprovalRequested_UsesTheFlowsSubject(t *testing.T) {
 	mock := &mockEmailSender{}
@@ -1830,7 +1830,7 @@ func TestDispatcher_Handle_CRPlanDateNotice_DebugMode(t *testing.T) {
 }
 
 // TestDispatcher_Handle_CRApprovalRequested_CustomerAudienceIsBCC guards a real
-// exposure. ServiceNow sent one email per recipient, so no customer contact
+// exposure. The legacy ticketing system sent one email per recipient, so no customer contact
 // ever saw who else was notified; collapsing that into one message must not
 // publish a project's contact list to itself. Project contacts routinely span
 // several organisations, so a visible To would disclose addresses across
@@ -1937,7 +1937,7 @@ func TestDispatcher_Handle_CRPlanDateNotice(t *testing.T) {
 }
 
 // TestDispatcher_Handle_CRPlanDateNotice_WordingPerKind pins the three body
-// texts, reproduced from ServiceNow including its own awkward grammar.
+// texts, reproduced from the legacy ticketing system including its own awkward grammar.
 func TestDispatcher_Handle_CRPlanDateNotice_WordingPerKind(t *testing.T) {
 	tests := []struct{ kind, audience, want string }{
 		{"customer_proposed", "internal", "Customer has updated the plan start date. Please review the change."},
