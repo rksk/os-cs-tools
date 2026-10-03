@@ -79,8 +79,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "429":
+          description: >
+            TooManyRequests: the caller already holds the maximum number of
+            concurrently open streams on this replica. Carries Retry-After.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "503":
-          description: ServiceUnavailable
+          description: >
+            ServiceUnavailable: live updates are not configured on the
+            service, or this replica is at its concurrent-stream capacity
+            (then with Retry-After).
           content:
             application/json:
               schema:
