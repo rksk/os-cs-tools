@@ -87,7 +87,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 - `internal/apierror` — typed upstream error (mirrors csm-portal-backend/internal/apierror)
 - `internal/events` — `Envelope` + event types (hand-synced copy; keep in sync with csm-notification-service's and entity-service's own copies)
 - `internal/eventbus` — `Consumer` (simple: no retry/DLQ; commit after Handle; `LatestOffset`; per-replica group suffix)
-- `internal/stream` — `BroadcastHub` (in-process pub-sub per case ID; `subscriberBuffer=4`; non-blocking publish)
+- `internal/stream` — `BroadcastHub` (in-process pub-sub per case ID; `subscriberBuffer=4`; non-blocking publish; `CloseAll` is registered as the stream server's `RegisterOnShutdown` hook so SIGTERM ends every stream with a terminal `event: shutdown` and `Server.Shutdown` completes within its grace period)
 - `internal/caseevents` — `Handler` (consumes events, fans to BroadcastHub for the two SSE types)
 - `internal/entity` — minimal `CustomerEntityClient` (only `GetCase`, OAuth2 client-credentials, forwards `x-user-id-token` + correlation ID)
 - `internal/middleware` — `Auth`, `CORS`, `CorrelationID`, `Logger`, `SecurityHeaders` (mirrors csm-portal-backend)
