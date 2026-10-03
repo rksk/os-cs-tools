@@ -362,10 +362,10 @@ func NewIncidentHandler(entity entityIncidentClient) *IncidentHandler {
 }
 
 // WithAccessGuard wires the same guard that authorises every route into this
-// handler, so every read response can redact an embedded raw base64 inline
-// image (see redactRawBase64Images's own doc comment) for a caller who
-// lacks PermDownloadAttachment. Returns h for chaining at the construction
-// site.
+// handler. Inline-image redaction for a caller without
+// PermDownloadAttachment is applied to every route's response by the
+// RedactInlineImages wrapper (cmd/server/main.go), not here. Returns h for
+// chaining at the construction site.
 func (h *IncidentHandler) WithAccessGuard(g *AccessGuard) *IncidentHandler {
 	h.access = g
 	return h
@@ -406,9 +406,6 @@ func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request
 		slog.ErrorContext(r.Context(), "entity SearchIncidents failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search incidents.")
 		return
-	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
 	}
 
 	// TODO: Unmarshal result and filter to only the fields required by the frontend.
@@ -514,9 +511,6 @@ func (h *IncidentHandler) GetIncident(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "entity GetIncident failed", "userID", user.UserID, "incidentID", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve incident.")
 		return
-	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -663,9 +657,6 @@ func (h *IncidentHandler) SearchIncidentActivities(w http.ResponseWriter, r *htt
 		mapUpstreamErrorGeneric(w, err, "Failed to search incident activities.")
 		return
 	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
-	}
 
 	writeJSON(w, http.StatusOK, result)
 }
@@ -714,9 +705,6 @@ func (h *IncidentHandler) SearchIncidentComments(w http.ResponseWriter, r *http.
 		slog.ErrorContext(r.Context(), "entity SearchComments failed", "userID", user.UserID, "incidentID", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search incident comments.")
 		return
-	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
 	}
 
 	writeJSON(w, http.StatusOK, result)

@@ -63,10 +63,10 @@ func NewChangeRequestHandler(entity entityChangeRequestClient) *ChangeRequestHan
 }
 
 // WithAccessGuard wires the same guard that authorises every route into this
-// handler, so every read response can redact an embedded raw base64 inline
-// image (see redactRawBase64Images's own doc comment) for a caller who
-// lacks PermDownloadAttachment. Returns h for chaining at the construction
-// site.
+// handler. Inline-image redaction for a caller without
+// PermDownloadAttachment is applied to every route's response by the
+// RedactInlineImages wrapper (cmd/server/main.go), not here. Returns h for
+// chaining at the construction site.
 func (h *ChangeRequestHandler) WithAccessGuard(g *AccessGuard) *ChangeRequestHandler {
 	h.access = g
 	return h
@@ -167,9 +167,6 @@ func (h *ChangeRequestHandler) GetChangeRequest(w http.ResponseWriter, r *http.R
 		slog.ErrorContext(r.Context(), "entity GetChangeRequest failed", "userID", user.UserID, "id", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve change request.")
 		return
-	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -299,9 +296,6 @@ func (h *ChangeRequestHandler) SearchChangeRequestComments(w http.ResponseWriter
 		mapUpstreamErrorGeneric(w, err, "Failed to search change request comments.")
 		return
 	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
-	}
 
 	writeJSON(w, http.StatusOK, result)
 }
@@ -386,9 +380,6 @@ func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *ht
 		slog.ErrorContext(r.Context(), "entity SearchChangeRequests failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search change requests.")
 		return
-	}
-	if shouldRedactInlineImages(h.access, user.Roles) {
-		result = redactRawBase64Images(result)
 	}
 
 	writeJSON(w, http.StatusOK, result)
