@@ -18,12 +18,15 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
@@ -34,6 +37,37 @@ var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 // comment-only SSE ping to keep the connection alive through intermediate
 // proxies that would otherwise time out an idle response.
 const caseActivityStreamHeartbeat = 15 * time.Second
+
+// Defaults for the stream-lifetime bounds. Overridable per StreamHandler via
+// WithMaxLifetime / WithReauthInterval (wired to STREAM_MAX_LIFETIME and
+// STREAM_REAUTH_INTERVAL in cmd/server/main.go).
+const (
+	// DefaultMaxStreamLifetime caps how long one connection may stay open
+	// even when the caller's token outlives it. A client that still wants
+	// updates reconnects with a fresh token; the browser hook does this on
+	// its own.
+	DefaultMaxStreamLifetime = time.Hour
+	// DefaultReauthInterval is how often the connect-time case authorization
+	// (the upstream GetCase call) is repeated for an open stream.
+	DefaultReauthInterval = 10 * time.Minute
+)
+
+// SSE event names and close reasons written by StreamCaseActivities besides
+// the `case_updated` data event. EventStreamClosed is terminal: it is the
+// last thing written before the server ends the response, so a client can
+// tell a deliberate server-side close from a dropped connection. Its data
+// is `{"reason": "<reason>"}`.
+const (
+	EventStreamClosed = "stream_closed"
+
+	// ReasonTokenExpired: the token that opened the stream reached its exp.
+	ReasonTokenExpired = "token_expired"
+	// ReasonMaxLifetime: the configured maximum stream lifetime elapsed.
+	ReasonMaxLifetime = "max_lifetime"
+	// ReasonAccessRevoked: a periodic re-authorization found the caller can
+	// no longer read the case (upstream answered 401/403/404).
+	ReasonAccessRevoked = "access_revoked"
+)
 
 // StreamHandler handles GET /cases/{id}/activities/stream: a long-lived
 // Server-Sent Events connection that emits a `case_updated` event whenever
@@ -55,6 +89,16 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 // This is unrelated to internal/caseevents.Handler, which is a server-internal
 // component with no external caller and legitimately sees every event system-wide.
 //
+// Lifetime. Identity and case access are checked at connect, but a stream can
+// outlive both — the token expires, the user signs out elsewhere, or loses
+// access to the case — so the handler bounds itself: the request context gets
+// a deadline at min(token exp, now + maxLifetime), and the GetCase check is
+// repeated every reauthInterval. Either bound ending the stream is announced
+// with a terminal EventStreamClosed event so the client can reconnect (with a
+// fresh token) or stop, as appropriate. A transient upstream failure during
+// re-authorization (5xx, network) is logged and the stream kept open; only a
+// definitive 401/403/404 closes it — the lifetime cap bounds the worst case.
+//
 // Known limitation, not yet addressed: there is no per-user or per-replica
 // cap on how many of these a single caller can hold open concurrently, and
 // the dedicated :9092 listener runs with WriteTimeout/IdleTimeout disabled
@@ -65,8 +109,10 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 // limit) or confirm and document an enforced platform-level limit before
 // relying on this in a hostile-client environment.
 type StreamHandler struct {
-	entityClient entityCaseClient
-	hub          *stream.BroadcastHub
+	entityClient   entityCaseClient
+	hub            *stream.BroadcastHub
+	maxLifetime    time.Duration
+	reauthInterval time.Duration
 }
 
 // entityCaseClient is the minimal interface StreamHandler needs from the
@@ -75,10 +121,42 @@ type entityCaseClient interface {
 	GetCase(ctx context.Context, caseID string) ([]byte, error)
 }
 
+// Option configures a StreamHandler beyond its required dependencies.
+type Option func(*StreamHandler)
+
+// WithMaxLifetime overrides DefaultMaxStreamLifetime. Non-positive values are
+// ignored.
+func WithMaxLifetime(d time.Duration) Option {
+	return func(h *StreamHandler) {
+		if d > 0 {
+			h.maxLifetime = d
+		}
+	}
+}
+
+// WithReauthInterval overrides DefaultReauthInterval. Non-positive values are
+// ignored.
+func WithReauthInterval(d time.Duration) Option {
+	return func(h *StreamHandler) {
+		if d > 0 {
+			h.reauthInterval = d
+		}
+	}
+}
+
 // NewStreamHandler constructs a StreamHandler. hub may be nil —
 // StreamCaseActivities checks for that before registering.
-func NewStreamHandler(entityClient entityCaseClient, hub *stream.BroadcastHub) *StreamHandler {
-	return &StreamHandler{entityClient: entityClient, hub: hub}
+func NewStreamHandler(entityClient entityCaseClient, hub *stream.BroadcastHub, opts ...Option) *StreamHandler {
+	h := &StreamHandler{
+		entityClient:   entityClient,
+		hub:            hub,
+		maxLifetime:    DefaultMaxStreamLifetime,
+		reauthInterval: DefaultReauthInterval,
+	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // StreamCaseActivities handles GET /cases/{id}/activities/stream.
@@ -117,6 +195,17 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Bound the stream to the credential that opened it (see the type's doc
+	// comment). ExpiresAt is zero only when signature validation is off.
+	deadline := time.Now().Add(h.maxLifetime)
+	closeReason := ReasonMaxLifetime
+	if !user.ExpiresAt.IsZero() && user.ExpiresAt.Before(deadline) {
+		deadline = user.ExpiresAt
+		closeReason = ReasonTokenExpired
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), deadline)
+	defer cancel()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -129,17 +218,36 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 	ch := h.hub.Register(caseID)
 	defer h.hub.Unregister(caseID, ch)
 
-	ctx := r.Context()
 	ticker := time.NewTicker(caseActivityStreamHeartbeat)
 	defer ticker.Stop()
+	reauth := time.NewTicker(h.reauthInterval)
+	defer reauth.Stop()
 
-	slog.InfoContext(ctx, "case activity stream connected", "userID", user.UserID, "caseID", caseID)
+	slog.InfoContext(ctx, "case activity stream connected", "userID", user.UserID, "caseID", caseID, "deadline", deadline)
 
 	for {
 		select {
 		case <-ctx.Done():
-			slog.InfoContext(ctx, "case activity stream disconnected", "userID", user.UserID, "caseID", caseID)
+			if r.Context().Err() != nil {
+				// The client went away (or the server is shutting the
+				// connection down) — nothing left to write to.
+				slog.InfoContext(ctx, "case activity stream disconnected", "userID", user.UserID, "caseID", caseID)
+				return
+			}
+			// Our own deadline: the client is still connected, so tell it
+			// why the stream is ending before closing.
+			writeTerminalEvent(w, flusher, EventStreamClosed, closeReason)
+			slog.InfoContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", closeReason)
 			return
+		case <-reauth.C:
+			if _, err := h.entityClient.GetCase(ctx, caseID); err != nil {
+				if isAccessDenied(err) {
+					writeTerminalEvent(w, flusher, EventStreamClosed, ReasonAccessRevoked)
+					slog.WarnContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", ReasonAccessRevoked, "err", err)
+					return
+				}
+				slog.WarnContext(ctx, "case activity stream re-authorization failed transiently; keeping stream open", "userID", user.UserID, "caseID", caseID, "err", err)
+			}
 		case <-ticker.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
@@ -160,4 +268,26 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 			flusher.Flush()
 		}
 	}
+}
+
+// isAccessDenied reports whether err is a definitive upstream answer that the
+// caller may not read the case (as opposed to a transient failure).
+func isAccessDenied(err error) bool {
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return false
+}
+
+// writeTerminalEvent writes a named SSE event whose data is {"reason": reason}
+// and flushes it. Write errors are ignored: the caller returns right after,
+// and a failed write just means the client is already gone.
+func writeTerminalEvent(w io.Writer, flusher http.Flusher, event, reason string) {
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: {\"reason\":%q}\n\n", event, reason)
+	flusher.Flush()
 }
