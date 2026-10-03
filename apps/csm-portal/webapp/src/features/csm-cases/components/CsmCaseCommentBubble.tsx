@@ -148,7 +148,7 @@ export default function CsmCaseCommentBubble({
   // A chatbot (Novera) message body is Markdown; render it to HTML first. Every
   // other comment body is already rich-text HTML and goes through the same
   // code-wrapper/label-stripping pipeline the customer portal uses, since bot
-  // replies never carry ServiceNow's [code] wrapper tags or the "Customer
+  // replies never carry the backing system's [code] wrapper tags or the "Customer
   // comment added" label.
   const preprocessed = useMemo(() => {
     if (isBot) return markdownToHtml(comment.bodyHtml);
@@ -605,7 +605,7 @@ export default function CsmCaseCommentBubble({
               color: "text.secondary",
             }),
             // Newly generated comments no longer carry a per-run
-            // `white-space: pre-wrap` inline style (digiops-cs#2933) — this
+            // `white-space: pre-wrap` inline style — this
             // container declares it once instead, so multi-space runs and
             // leading/trailing spaces the user typed still aren't collapsed.
             // Older comments still carry their own inline style and are

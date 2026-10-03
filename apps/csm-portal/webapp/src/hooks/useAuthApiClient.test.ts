@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const POLL_INTERVAL_MS = 700;
 const POLL_BUDGET_MS = 8_000;
 
-const ASGARDEO_UNAUTHENTICATED_CODE = "SPA-AUTH_CLIENT-VM-IV02";
+const IDP_UNAUTHENTICATED_CODE = "SPA-AUTH_CLIENT-VM-IV02";
 
 const getAccessTokenMock = vi.fn();
 const getIdTokenMock = vi.fn();
@@ -57,7 +57,7 @@ vi.mock("@hooks/useLogger", () => ({
 
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
-const TOKEN_EXPIRED_ERROR = { code: ASGARDEO_UNAUTHENTICATED_CODE, message: "unauthenticated" };
+const TOKEN_EXPIRED_ERROR = { code: IDP_UNAUTHENTICATED_CODE, message: "unauthenticated" };
 
 function jsonResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
