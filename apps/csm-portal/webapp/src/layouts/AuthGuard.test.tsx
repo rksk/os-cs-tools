@@ -565,9 +565,9 @@ describe("AuthGuard bare mode", () => {
   // not render the real <Outlet /> — and let its widgets start firing
   // their own authenticated queries — before /users/me has confirmed this
   // caller is actually entitled to the portal, not just signed in to
-  // Asgardeo. Same gate AuthorizedAppShell already applies to every other
+  // identity provider. Same gate AuthorizedAppShell already applies to every other
   // route, rendered here without any AppLayout chrome.
-  it("shows BareAuthLoader (not the routed page) while /users/me is still resolving, even after Asgardeo sign-in", async () => {
+  it("shows BareAuthLoader (not the routed page) while /users/me is still resolving, even after identity provider sign-in", async () => {
     asgardeoState.isSignedIn = true;
     currentUserState.isLoading = true;
     let rerender!: ReturnType<typeof renderBareAuthGuard>["rerender"];
@@ -595,7 +595,7 @@ describe("AuthGuard bare mode", () => {
     expect(screen.queryByTestId("app-layout")).not.toBeInTheDocument();
   });
 
-  it("shows a chrome-free not-authorized page (not the routed page) when /users/me comes back 401, even after Asgardeo sign-in", async () => {
+  it("shows a chrome-free not-authorized page (not the routed page) when /users/me comes back 401, even after identity provider sign-in", async () => {
     asgardeoState.isSignedIn = true;
     currentUserState.isError = true;
     currentUserState.error = new ApiError(401, "Unauthorized");
@@ -629,7 +629,7 @@ describe("AuthGuard bare mode", () => {
   // through to the routed outlet — entitlement is unknown, not confirmed,
   // and this route has no one watching to notice or retry. Holds on
   // BareAuthLoader instead, same as the still-loading state.
-  it("shows BareAuthLoader (not the routed page) when /users/me fails with a non-auth error, even after Asgardeo sign-in", async () => {
+  it("shows BareAuthLoader (not the routed page) when /users/me fails with a non-auth error, even after identity provider sign-in", async () => {
     asgardeoState.isSignedIn = true;
     currentUserState.isError = true;
     currentUserState.error = new ApiError(500, "Internal Server Error");
