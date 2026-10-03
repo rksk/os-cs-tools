@@ -150,6 +150,30 @@ func TestOperationalRoutesAreInternalOnly(t *testing.T) {
 	}
 }
 
+// TestGuardedOperationsDeclareTheirRefusals: every operation registered
+// through internalOnly or projectMemberOnly can answer 401 (no resolvable
+// caller) and 403 (a caller the guard refuses), so the published contract must
+// say so -- a consumer reading the spec otherwise treats them as generic
+// failures.
+func TestGuardedOperationsDeclareTheirRefusals(t *testing.T) {
+	published := publishedOperations(t)
+	guarded := guardedRoutes(t)
+	if len(guarded) == 0 || len(published) == 0 {
+		t.Fatal("parsed nothing; the parser is broken, not the routes or the contract")
+	}
+	for route := range guarded {
+		op, ok := published[route]
+		if !ok {
+			continue // TestEveryRegisteredRouteIsPublished reports this
+		}
+		for _, code := range []string{"401", "403"} {
+			if !op.responses[code] {
+				t.Errorf("%s is guarded by %s but openapi.yaml does not declare %s", route, guarded[route], code)
+			}
+		}
+	}
+}
+
 var (
 	handleFuncRE = regexp.MustCompile(`mux\.HandleFunc\("([A-Z]+) (/[^"]*)"`)
 	guardedRE    = regexp.MustCompile(`mux\.HandleFunc\("([A-Z]+) (/[^"]*)",\s*(internalOnly|projectMemberOnly)\(`)
