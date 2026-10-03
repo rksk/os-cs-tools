@@ -3018,15 +3018,19 @@ func (r *caseRepo) SetCaseWatchList(ctx context.Context, caseID string, userIDs 
 			return fmt.Errorf("clear case watch list: %w", err)
 		}
 
-		for _, userID := range userIDs {
+		// One statement for the whole list. ON CONFLICT: a user id listed twice
+		// is one watcher, not a unique-violation 500.
+		if len(userIDs) > 0 {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO work_item_watcher (id, work_item_id, user_id) VALUES (gen_random_uuid(), $1, $2)`,
-				caseID, userID,
+				`INSERT INTO work_item_watcher (id, work_item_id, user_id)
+				 SELECT gen_random_uuid(), $1, u FROM unnest($2::uuid[]) AS u
+				 ON CONFLICT (work_item_id, user_id) DO NOTHING`,
+				caseID, userIDs,
 			); err != nil {
 				if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23503" {
 					return &apierror.ValidationError{Msg: "one or more watch list user IDs do not exist: " + pgErr.Detail}
 				}
-				return fmt.Errorf("insert case watcher: %w", err)
+				return fmt.Errorf("insert case watchers: %w", err)
 			}
 		}
 
