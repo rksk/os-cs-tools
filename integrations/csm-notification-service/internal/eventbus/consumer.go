@@ -28,6 +28,8 @@ import (
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 )
 
 // HeaderNotBefore is the record header a dead-letter publish stamps with
@@ -573,7 +575,7 @@ func (c *Consumer) processRecordUntil(stop, ctx context.Context, record Record, 
 		c.stats.FailedAttempts.Add(1)
 		slog.ErrorContext(ctx, "eventbus: handler failed",
 			"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset,
-			"attempt", attempt, "maxAttempts", attempts, "err", err)
+			"attempt", attempt, "maxAttempts", attempts, "err", apierror.Summary(err))
 		if attempt < attempts {
 			delay := c.policy.Delay(attempt)
 			slog.InfoContext(ctx, "eventbus: retrying record after backoff",
@@ -591,7 +593,7 @@ func (c *Consumer) processRecordUntil(stop, ctx context.Context, record Record, 
 			return true
 		}
 		slog.ErrorContext(ctx, "eventbus: dead-letter publish also failed; parking the record instead",
-			"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "handleErr", err, "onExhaustedErr", dlqErr)
+			"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "handleErr", apierror.Summary(err), "onExhaustedErr", apierror.Summary(dlqErr))
 		// The DLQ publish itself failed, so — unlike the ordinary
 		// exhaustion case above NoMoreRetries deliberately stays false
 		// for — there is truly no future delivery of this content
@@ -607,7 +609,7 @@ func (c *Consumer) processRecordUntil(stop, ctx context.Context, record Record, 
 		record.NoMoreRetries = true
 		if cleanupErr := handle(ctx, record); cleanupErr != nil {
 			slog.ErrorContext(ctx, "eventbus: final cleanup handle call after dead-letter failure returned an error (ignored — record is being parked)",
-				"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cleanupErr)
+				"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", apierror.Summary(cleanupErr))
 		}
 	}
 	c.parkOrDrop(ctx, record, err)
@@ -627,11 +629,11 @@ func (c *Consumer) parkOrDrop(ctx context.Context, record Record, handleErr erro
 			slog.ErrorContext(ctx, "eventbus: record exhausted every retry tier and was parked; manual replay required", attrs...)
 			return
 		}
-		attrs = append(attrs, "parkErr", parkErr)
+		attrs = append(attrs, "parkErr", apierror.Summary(parkErr))
 	}
 	c.stats.Dropped.Add(1)
 	slog.ErrorContext(ctx, "eventbus: record exhausted every retry tier and could not be parked; dropping it (unrecoverable outside the topic's retention window)",
-		append(attrs, "handleErr", handleErr)...)
+		append(attrs, "handleErr", apierror.Summary(handleErr))...)
 }
 
 // Close leaves the consumer group and closes the underlying connection.

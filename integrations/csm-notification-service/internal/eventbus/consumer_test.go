@@ -17,14 +17,19 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 )
 
 // testPolicy keeps the pauses between attempts to a millisecond so
@@ -642,4 +647,28 @@ func TestConsumer_DoneClosesWhenRunReturns(t *testing.T) {
 		t.Errorf("State = %q after Run returned, want exited", st.State)
 	}
 	c.Close()
+}
+
+// TestProcessRecord_LogsNoUpstreamBody: the per-attempt and give-up log
+// lines describe an upstream failure by status only; the response excerpt
+// (which can echo a recipient address) never reaches the log.
+func TestProcessRecord_LogsNoUpstreamBody(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	upstream := fmt.Errorf("dispatch: send email: %w", &apierror.Error{StatusCode: 422, Body: `{"error":"invalid recipient jane.doe@example.com"}`})
+	handle := func(ctx context.Context, r Record) error { return upstream }
+	onExhausted := func(ctx context.Context, record Record, handleErr error) error { return upstream }
+	park := func(ctx context.Context, record Record, handleErr error) error { return upstream }
+	testConsumer(testPolicy, park).processRecord(context.Background(), Record{}, handle, onExhausted)
+
+	out := buf.String()
+	if strings.Contains(out, "example.com") {
+		t.Fatalf("log output carries the upstream body:\n%s", out)
+	}
+	if !strings.Contains(out, "upstream returned 422") {
+		t.Errorf("log output lacks the status summary:\n%s", out)
+	}
 }

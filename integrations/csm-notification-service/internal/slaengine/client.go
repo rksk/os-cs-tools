@@ -120,7 +120,14 @@ func (c *EntityClient) do(ctx context.Context, method, path string, body []byte)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(respBody)}
+		// Capped like every other upstream client here: the excerpt is for
+		// diagnosis, and an unbounded body has no place in an error value.
+		const maxErrBody = 256
+		excerpt := respBody
+		if len(excerpt) > maxErrBody {
+			excerpt = excerpt[:maxErrBody]
+		}
+		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
 	}
 	return respBody, nil
 }
