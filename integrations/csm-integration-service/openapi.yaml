@@ -1010,8 +1010,11 @@ paths:
         This is a full-replace sync, not an incremental delta: the caller must
         submit the complete current set of product-vulnerability records on
         every call. The entity service's downstream ServiceNow-backed operation
-        deletes any existing record not present in the submitted set. The
-        request body is forwarded to the entity service verbatim.
+        deletes any existing record not present in the submitted set. Because
+        of that, the body must be a non-empty JSON array: an empty array (which
+        would delete every record) or a body that is not an array is rejected
+        with 400 and never forwarded. A valid, non-empty array is forwarded to
+        the entity service verbatim.
       operationId: syncProductVulnerabilities
       security:
         - oauth2ClientCredentials:
@@ -1031,7 +1034,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProductVulnerabilitySyncResponse'
         "400":
-          description: BadRequest
+          description: >
+            BadRequest — the body is not valid JSON, is not an array, or is an
+            empty array (an empty set is never accepted because it would remove
+            every record); or the upstream rejected a record.
           content:
             application/json:
               schema:
@@ -2338,9 +2344,12 @@ components:
 
     ProductVulnerabilitySyncPayload:
       type: array
+      minItems: 1
       description: >
         The complete current set of product-vulnerability records. Any record
-        omitted from this array is treated as removed by the downstream sync.
+        omitted from this array is treated as removed by the downstream sync,
+        which is why the array may not be empty: an empty set is rejected with
+        400 rather than forwarded.
       items:
         type: object
         additionalProperties: true

@@ -181,7 +181,7 @@ curl -X POST http://localhost:8080/accounts/<id>/contacts/search -d '{}'
 curl -X POST http://localhost:8080/projects/search -d '{}'
 curl http://localhost:8080/projects/<id>
 curl -X POST http://localhost:8080/projects/<id>/contacts/search -d '{}'
-curl -X POST http://localhost:8080/vulnerabilities/sync -d '[]'
+curl -X POST http://localhost:8080/vulnerabilities/sync -d '[{"wso2Id":"<id>"}]'   # an empty array is rejected: full-replace sync
 curl -X PATCH http://localhost:8080/cases/<id> -d '{"state":"closed"}'
 curl -X POST http://localhost:8080/cases/<id>/comments -d '{"type":"comment","content":"hi"}'
 curl -X POST http://localhost:8080/opportunities/search -d '{}'
