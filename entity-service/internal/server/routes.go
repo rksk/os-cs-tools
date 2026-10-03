@@ -1215,7 +1215,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	mux.HandleFunc("GET /health", handler.HealthCheck)
 
 	if salesforceEventHandler != nil {
-		mux.HandleFunc("POST /salesforce/events", salesforceEventHandler.HandleEvent)
+		mux.HandleFunc("POST /salesforce/events", internalOnly(accessSvc, salesforceEventHandler.HandleEvent))
 	}
 	if salesforcePartnerHandler != nil {
 		mux.HandleFunc("POST /salesforce/accounts/{sfId}/refresh-partners", salesforcePartnerHandler.RefreshPartners)
@@ -1233,9 +1233,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// registry below, these are registered only when a pool exists. With no
 	// database they 404 rather than panicking on a nil pool.
 	if eventPublishFailureHandler != nil {
-		mux.HandleFunc("POST /event-publish-failures", eventPublishFailureHandler.CreateEventPublishFailure)
-		mux.HandleFunc("POST /event-publish-failures/search", eventPublishFailureHandler.SearchEventPublishFailures)
-		mux.HandleFunc("POST /event-publish-failures/{id}/resolve", eventPublishFailureHandler.ResolveEventPublishFailure)
+		mux.HandleFunc("POST /event-publish-failures", internalOnly(accessSvc, eventPublishFailureHandler.CreateEventPublishFailure))
+		mux.HandleFunc("POST /event-publish-failures/search", internalOnly(accessSvc, eventPublishFailureHandler.SearchEventPublishFailures))
+		mux.HandleFunc("POST /event-publish-failures/{id}/resolve", internalOnly(accessSvc, eventPublishFailureHandler.ResolveEventPublishFailure))
 	}
 	if slaStatusHandler != nil {
 		mux.HandleFunc("GET /sla-status", slaStatusHandler.SearchActiveSLAStatuses)
@@ -1246,14 +1246,14 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 
 	if scheduledTaskRunHandler != nil {
-		mux.HandleFunc("POST /scheduled-tasks/attempts", scheduledTaskRunHandler.AttemptScheduledTaskRun)
-		mux.HandleFunc("PATCH /scheduled-tasks/attempts/{id}", scheduledTaskRunHandler.UpdateScheduledTaskRunAttempt)
-		mux.HandleFunc("GET /scheduled-tasks/attempts", scheduledTaskRunHandler.ListScheduledTaskRuns)
-		mux.HandleFunc("DELETE /scheduled-tasks/attempts", scheduledTaskRunHandler.DeleteScheduledTaskRuns)
+		mux.HandleFunc("POST /scheduled-tasks/attempts", internalOnly(accessSvc, scheduledTaskRunHandler.AttemptScheduledTaskRun))
+		mux.HandleFunc("PATCH /scheduled-tasks/attempts/{id}", internalOnly(accessSvc, scheduledTaskRunHandler.UpdateScheduledTaskRunAttempt))
+		mux.HandleFunc("GET /scheduled-tasks/attempts", internalOnly(accessSvc, scheduledTaskRunHandler.ListScheduledTaskRuns))
+		mux.HandleFunc("DELETE /scheduled-tasks/attempts", internalOnly(accessSvc, scheduledTaskRunHandler.DeleteScheduledTaskRuns))
 	}
 	if alertIncidentMappingHandler != nil {
-		mux.HandleFunc("POST /alert-incident-mappings", alertIncidentMappingHandler.CreateAlertIncidentMapping)
-		mux.HandleFunc("POST /alert-incident-mappings/lookup", alertIncidentMappingHandler.LookupAlertIncidentMappings)
+		mux.HandleFunc("POST /alert-incident-mappings", internalOnly(accessSvc, alertIncidentMappingHandler.CreateAlertIncidentMapping))
+		mux.HandleFunc("POST /alert-incident-mappings/lookup", internalOnly(accessSvc, alertIncidentMappingHandler.LookupAlertIncidentMappings))
 	}
 	if scheduleHandler != nil {
 		mux.HandleFunc("GET /team-schedule/catalogue", scheduleHandler.GetScheduleCatalogue)
@@ -1324,7 +1324,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("PATCH /accounts/{id}", internalOnly(accessSvc, accountHandler.PatchAccountTeams))
 	}
 	if teamHandler != nil {
-		mux.HandleFunc("GET /teams/{id}/members", teamHandler.GetTeamMembers)
+		mux.HandleFunc("GET /teams/{id}/members", internalOnly(accessSvc, teamHandler.GetTeamMembers))
 	}
 	mux.HandleFunc("POST /accounts/{id}/contacts/search", internalOnly(accessSvc, accountContactHandler.SearchAccountContacts))
 	if opportunityHandler != nil {
@@ -1377,7 +1377,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	if db != nil {
 		productRepoMappingHandler := handler.NewProductRepoMappingHandler(
 			service.NewProductRepoMappingService(repository.NewProductRepoMappingRepository(db)))
-		mux.HandleFunc("GET /products/github-repo", productRepoMappingHandler.Get)
+		mux.HandleFunc("GET /products/github-repo", internalOnly(accessSvc, productRepoMappingHandler.Get))
 	}
 	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
 	mux.HandleFunc("POST /deployments/search", deploymentHandler.SearchDeployments)
@@ -1534,12 +1534,20 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 
 	if outageHandler != nil {
-		mux.HandleFunc("POST /outages", outageHandler.CreateOutage)
+		// The Postgres-backed outage writes have no row-level security and
+		// no per-project scope, so they are internal-only on the route; the
+		// other data source authorizes its own writes with the forwarded
+		// user token, exactly as before.
+		writeGate := func(h http.HandlerFunc) http.HandlerFunc { return h }
+		if cfg.DataSource != config.DataSourceServiceNow {
+			writeGate = func(h http.HandlerFunc) http.HandlerFunc { return internalOnly(accessSvc, h) }
+		}
+		mux.HandleFunc("POST /outages", writeGate(outageHandler.CreateOutage))
 		mux.HandleFunc("POST /outages/search", outageHandler.SearchOutages)
 		mux.HandleFunc("GET /outages/metadata", outageHandler.GetOutageMetadata)
 		mux.HandleFunc("GET /outages/{id}", outageHandler.GetOutage)
-		mux.HandleFunc("PATCH /outages/{id}", outageHandler.PatchOutage)
-		mux.HandleFunc("POST /outages/{id}/communications", outageHandler.AddOutageCommunication)
+		mux.HandleFunc("PATCH /outages/{id}", writeGate(outageHandler.PatchOutage))
+		mux.HandleFunc("POST /outages/{id}/communications", writeGate(outageHandler.AddOutageCommunication))
 		mux.HandleFunc("POST /outages/{id}/communications/search", outageHandler.SearchOutageCommunications)
 	}
 
@@ -1559,9 +1567,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("POST /internal/availability/sweep", internalOnly(accessSvc, availabilityHandler.Sweep))
 	}
 	if cloudStatusHandler != nil {
-		mux.HandleFunc("POST /internal/cloud-status/sweep", cloudStatusHandler.Sweep)
-		mux.HandleFunc("GET /internal/cloud-status/pending", cloudStatusHandler.Pending)
-		mux.HandleFunc("POST /internal/cloud-status/{id}/delivery", cloudStatusHandler.RecordDelivery)
+		mux.HandleFunc("POST /internal/cloud-status/sweep", internalOnly(accessSvc, cloudStatusHandler.Sweep))
+		mux.HandleFunc("GET /internal/cloud-status/pending", internalOnly(accessSvc, cloudStatusHandler.Pending))
+		mux.HandleFunc("POST /internal/cloud-status/{id}/delivery", internalOnly(accessSvc, cloudStatusHandler.RecordDelivery))
 	}
 
 	mux.HandleFunc("POST /problems", internalOnly(accessSvc, problemHandler.CreateProblem))
@@ -1641,7 +1649,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// query of every PLG request. Not registering means those paths 404, which
 	// is the truthful answer where PLG has no data to serve.
 	if db != nil {
-		registerPLGRoutes(mux, db)
+		registerPLGRoutes(mux, db, accessSvc, userSvc, cfg.AuthInternalClientIDs)
 	}
 
 	return middleware.CorrelationID(
