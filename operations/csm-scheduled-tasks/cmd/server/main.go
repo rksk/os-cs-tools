@@ -146,7 +146,7 @@ func main() {
 	}
 
 	// Outage COMMUNICATION -- the SRE-facing declaration/resolution pair,
-	// and a different ServiceNow flow from the stakeholder notifier above.
+	// and a different legacy workflow from the stakeholder notifier above.
 	// Its own client because it is its own endpoint; the two sweeps answer
 	// different questions and will diverge.
 	outageCommClient, err := outagecomm.NewClient(outagecomm.Config{
@@ -212,10 +212,10 @@ func main() {
 
 	// Cloud status: a fifth entity-service client, and the first outbound
 	// integration this component has -- see internal/cloudstatus's package
-	// doc. cloudStatusEnabled is the double-fire guard: ServiceNow's
-	// `Cloud Status Event Notification Flow` is still live, and two systems
+	// doc. cloudStatusEnabled is the double-fire guard: the legacy cloud
+	// status notification workflow is still live, and two systems
 	// posting the same event to a PUBLIC status page is the most visible
-	// possible way to get a cutover wrong. It stays false until that flow is
+	// possible way to get a cutover wrong. It stays false until that workflow is
 	// deactivated, and turning it on is a paired change with deactivating it.
 	cloudStatusEnabled := envBool("CLOUD_STATUS_ENABLED", false)
 	var cloudStatusClient *cloudstatus.Client
@@ -418,9 +418,9 @@ func main() {
 		// sweeping marks decisions as sent and would consume notices nobody
 		// receives.
 		//
-		// NOT yet a paired ServiceNow deactivation. Registering this is a
-		// paired change with turning off `Internal Stakeholders Email
-		// Notification - Outage Communication`, per the double-fire rule.
+		// NOT yet paired with retiring the legacy workflow. Registering this
+		// is a paired change with turning off the legacy internal-stakeholder
+		// outage e-mail, per the double-fire rule.
 		{
 			Name:     outageNotifyTaskName,
 			Schedule: scheduleFor(scheduleOverrides, outageNotifyTaskName, "*/5 * * * *"),
