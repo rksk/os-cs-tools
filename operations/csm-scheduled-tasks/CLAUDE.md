@@ -261,7 +261,7 @@ row per decision, and those rows are the port's idempotency guard, so
 sweeping with nowhere to deliver would mark outages as announced to nobody
 and they would never be announced again.
 
-**It is also inert until digiops-cs mirrors `outage.outage_communication`.**
+**It is also inert until the upstream data mirror exposes `outage.outage_communication`.**
 Without that column the repository degrades to "nothing to send" rather than
 failing the sweep — narrow on purpose, so only `undefined_column` is
 swallowed.

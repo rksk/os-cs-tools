@@ -442,7 +442,8 @@ func main() {
 		// with nowhere to deliver would mark outages as announced to nobody
 		// and they would never be announced again.
 		//
-		// It is also inert until digiops-cs maps outage.outage_communication:
+		// It is also inert until the upstream data mirror exposes
+		// outage.outage_communication:
 		// without that column the repository degrades to "nothing to send".
 		{
 			Name:     outageCommTaskName,
