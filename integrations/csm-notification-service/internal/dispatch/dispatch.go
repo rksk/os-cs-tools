@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/chataudience"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
@@ -1991,7 +1992,7 @@ func (d *Dispatcher) writeOnboardingStep(ctx context.Context, req entity.Onboard
 	defer cancel()
 	if err := d.onboarding.Steps.RecordOnboardingStep(recordCtx, req); err != nil {
 		slog.ErrorContext(ctx, "dispatch: failed to record onboarding step; continuing",
-			"membershipSfId", req.MembershipSfID, "step", req.Step, "status", req.Status, "err", err)
+			"membershipSfId", req.MembershipSfID, "step", req.Step, "status", req.Status, "err", apierror.Summary(err))
 		return
 	}
 	slog.InfoContext(ctx, "dispatch: onboarding step recorded", "membershipSfId", req.MembershipSfID, "step", req.Step, "status", req.Status)
