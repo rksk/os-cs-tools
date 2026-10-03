@@ -20,8 +20,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,8 +43,15 @@ import (
 const HeaderNotBefore = "x-retry-not-before"
 
 // notBeforeWaitSlice bounds each sleep while waiting on a record's
-// NotBefore, so a shutdown is noticed promptly.
+// NotBefore (or a retry backoff), so a shutdown is noticed promptly and the
+// consumer's activity timestamp (see Status) keeps moving while it waits.
 const notBeforeWaitSlice = 10 * time.Second
+
+// defaultPollTimeout bounds one FetchMessage call. A poll that returns
+// nothing within it is an ordinary empty poll on a quiet topic — healthy —
+// unless the reader reported errors meanwhile; see Run. It is what lets an
+// idle consumer prove it is alive without a record arriving.
+const defaultPollTimeout = 30 * time.Second
 
 // Record is the eventbus-agnostic view of a consumed message that Handle
 // receives — deliberately not the underlying Kafka client's own message
@@ -93,17 +102,38 @@ type Record struct {
 	NoMoreRetries bool
 }
 
+// Consumer lifecycle states, as reported by Status.
+const (
+	stateCreated int32 = iota
+	stateRunning
+	stateExited
+)
+
 // Consumer reads records from a topic as a member of a named consumer group,
 // so multiple running instances of this service split the topic's partitions
 // between them instead of each seeing every record.
 type Consumer struct {
-	reader *kafka.Reader
-	name   string
-	topic  string
-	group  string
-	policy RetryPolicy
-	park   ParkFunc
-	stats  Stats
+	reader      *kafka.Reader
+	name        string
+	topic       string
+	group       string
+	policy      RetryPolicy
+	park        ParkFunc
+	pollTimeout time.Duration
+	stats       Stats
+
+	// Liveness, for Status: state is one of the state* constants;
+	// lastActivity (unix nanoseconds) is the last moment Run proved it was
+	// making progress — a record fetched, an attempt finished, an offset
+	// committed, a backoff slice elapsed, or an empty poll on a quiet topic
+	// with no reader errors behind it. A consumer whose lastActivity stops
+	// moving is stuck or disconnected even if its goroutine is alive.
+	state        atomic.Int32
+	lastActivity atomic.Int64
+	fetchErrors  atomic.Int64
+	mu           sync.Mutex
+	lastError    string
+	exitReason   string
 }
 
 // Stats are a Consumer's lifetime counters, readable while it runs.
@@ -120,6 +150,54 @@ type Stats struct {
 	// neither dead-lettered nor parked — the one outcome that loses the
 	// record; it is always logged at ERROR as well.
 	Dropped atomic.Uint64
+}
+
+// ConsumerStatus is a point-in-time snapshot of one Consumer, for health
+// reporting (see Check).
+type ConsumerStatus struct {
+	Name  string `json:"name"`
+	Topic string `json:"topic"`
+	Group string `json:"group"`
+	// State is "created" (Run not yet called), "running" or "exited".
+	State      string `json:"state"`
+	ExitReason string `json:"exitReason,omitempty"`
+	// LastActivity is the last time Run made observable progress — see
+	// Consumer.lastActivity; Idle is now minus that, for a human reader.
+	LastActivity time.Time `json:"lastActivity"`
+	Idle         string    `json:"idle"`
+	// LastError is the most recent fetch-side error (not a handler error),
+	// cleared by the next successful fetch.
+	LastError      string `json:"lastError,omitempty"`
+	FetchErrors    int64  `json:"fetchErrors"`
+	Handled        uint64 `json:"handled"`
+	FailedAttempts uint64 `json:"failedAttempts"`
+	DeadLettered   uint64 `json:"deadLettered"`
+	Parked         uint64 `json:"parked"`
+	Dropped        uint64 `json:"dropped"`
+}
+
+// Check reports why the consumer should be considered unhealthy at now, or
+// nil when it should not: it has exited (nothing restarts a Run goroutine,
+// so the process must be restarted), or — when stallAfter is positive — it
+// has shown no activity for longer than stallAfter, whether because Run
+// was never started or because every poll since has failed. A quiet topic
+// does not trip this: an empty poll with no reader errors counts as
+// activity (see Run).
+func (s ConsumerStatus) Check(now time.Time, stallAfter time.Duration) error {
+	if s.State == "exited" {
+		return fmt.Errorf("consumer %s exited (%s)", s.Name, s.ExitReason)
+	}
+	if stallAfter <= 0 {
+		return nil
+	}
+	idle := now.Sub(s.LastActivity)
+	if idle <= stallAfter {
+		return nil
+	}
+	if s.State == "created" {
+		return fmt.Errorf("consumer %s never started (created %s ago)", s.Name, idle.Round(time.Second))
+	}
+	return fmt.Errorf("consumer %s: no successful poll, handle or commit for %s (limit %s); last error: %s", s.Name, idle.Round(time.Second), stallAfter, s.LastError)
 }
 
 // Option configures a Consumer at construction.
@@ -177,11 +255,13 @@ func NewConsumer(cfg Config, groupID string, opts ...Option) *Consumer {
 			// every partition in the group instead of only the ones actually
 			// moving. Not a concern for a single running instance.
 		}),
-		name:   cfg.Topic,
-		topic:  cfg.Topic,
-		group:  groupID,
-		policy: DefaultRetryPolicy,
+		name:        cfg.Topic,
+		topic:       cfg.Topic,
+		group:       groupID,
+		policy:      DefaultRetryPolicy,
+		pollTimeout: defaultPollTimeout,
 	}
+	c.touch()
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -193,6 +273,55 @@ func (c *Consumer) Name() string { return c.name }
 
 // Stats exposes the consumer's counters.
 func (c *Consumer) Stats() *Stats { return &c.stats }
+
+// Status snapshots the consumer for health reporting.
+func (c *Consumer) Status() ConsumerStatus {
+	c.mu.Lock()
+	lastError, exitReason := c.lastError, c.exitReason
+	c.mu.Unlock()
+	last := time.Unix(0, c.lastActivity.Load())
+	state := "created"
+	switch c.state.Load() {
+	case stateRunning:
+		state = "running"
+	case stateExited:
+		state = "exited"
+	}
+	return ConsumerStatus{
+		Name:           c.name,
+		Topic:          c.topic,
+		Group:          c.group,
+		State:          state,
+		ExitReason:     exitReason,
+		LastActivity:   last,
+		Idle:           time.Since(last).Round(time.Second).String(),
+		LastError:      lastError,
+		FetchErrors:    c.fetchErrors.Load(),
+		Handled:        c.stats.Handled.Load(),
+		FailedAttempts: c.stats.FailedAttempts.Load(),
+		DeadLettered:   c.stats.DeadLettered.Load(),
+		Parked:         c.stats.Parked.Load(),
+		Dropped:        c.stats.Dropped.Load(),
+	}
+}
+
+// touch records that Run just made progress — see Consumer.lastActivity.
+func (c *Consumer) touch() {
+	c.lastActivity.Store(time.Now().UnixNano())
+}
+
+func (c *Consumer) setLastError(msg string) {
+	c.mu.Lock()
+	c.lastError = msg
+	c.mu.Unlock()
+}
+
+func (c *Consumer) exit(reason string) {
+	c.mu.Lock()
+	c.exitReason = reason
+	c.mu.Unlock()
+	c.state.Store(stateExited)
+}
 
 // Handle processes a single record. A non-nil error causes Run to retry (see
 // RetryPolicy).
@@ -221,17 +350,53 @@ type OnExhausted func(ctx context.Context, record Record, handleErr error) error
 
 // Run polls for records and calls handle for each one, committing its offset
 // once handle succeeds or its retries are exhausted. Run blocks until ctx is
-// canceled or the Consumer is closed; call it from its own goroutine.
+// canceled or the Consumer is closed; call it from its own goroutine. Once
+// it returns the consumer is "exited" (see Status) and nothing restarts
+// it: a health check that reports that is how the process gets restarted.
 func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhausted) {
+	c.state.Store(stateRunning)
+	c.touch()
 	for {
-		msg, err := c.reader.FetchMessage(ctx)
+		// Bounded per poll so an idle consumer still proves it is alive:
+		// a timeout with no reader errors behind it is a healthy empty
+		// poll. The reader's own fetch loop is independent of this
+		// context, so cancelling it drops nothing — a message that arrives
+		// as the deadline fires stays queued for the next call.
+		pollCtx, cancelPoll := context.WithTimeout(ctx, c.pollTimeout)
+		msg, err := c.reader.FetchMessage(pollCtx)
+		cancelPoll()
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, io.EOF) {
+			switch {
+			case ctx.Err() != nil:
+				c.exit("stopped")
 				return
+			case errors.Is(err, io.EOF):
+				c.exit("reader closed")
+				return
+			case errors.Is(err, context.DeadlineExceeded):
+				// Stats() returns the counters accumulated since its last
+				// call, so this is exactly "errors during this poll window".
+				if st := c.reader.Stats(); st.Errors > 0 {
+					c.fetchErrors.Add(st.Errors)
+					c.setLastError(fmt.Sprintf("reader reported %d errors during the last poll window", st.Errors))
+					slog.WarnContext(ctx, "eventbus: poll window ended with reader errors", "consumer", c.name, "errors", st.Errors)
+				} else {
+					c.touch()
+				}
+				continue
+			default:
+				c.fetchErrors.Add(1)
+				c.setLastError(err.Error())
+				slog.ErrorContext(ctx, "eventbus: fetch error", "consumer", c.name, "err", err)
+				continue
 			}
-			slog.ErrorContext(ctx, "eventbus: fetch error", "consumer", c.name, "err", err)
-			continue
 		}
+		// A fetched record is progress whatever the reader counted on the
+		// way to it; drain the window's counters so they don't count
+		// against the next empty poll.
+		_ = c.reader.Stats()
+		c.setLastError("")
+		c.touch()
 		record := Record{
 			Topic:     msg.Topic,
 			Partition: msg.Partition,
@@ -240,7 +405,7 @@ func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhaust
 			Value:     msg.Value,
 			NotBefore: notBeforeOf(msg.Headers),
 		}
-		if !waitUntil(ctx, record.NotBefore) {
+		if !waitUntil(ctx, record.NotBefore, c.touch) {
 			// Shutdown while waiting out the record's NotBefore — skip the
 			// commit; it is redelivered after restart and waits out
 			// whatever remains of the same absolute instant.
@@ -254,6 +419,8 @@ func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhaust
 		}
 		if cerr := c.reader.CommitMessages(ctx, msg); cerr != nil {
 			slog.ErrorContext(ctx, "eventbus: commit failed", "consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cerr)
+		} else {
+			c.touch()
 		}
 	}
 }
@@ -282,9 +449,11 @@ func NotBeforeHeader(t time.Time) string {
 }
 
 // waitUntil blocks until t (immediately when t is zero or past), returning
-// false if ctx is canceled first. Sleeps in notBeforeWaitSlice pieces so a
-// shutdown is noticed promptly however far off t is.
-func waitUntil(ctx context.Context, t time.Time) bool {
+// false if ctx is canceled first. Sleeps in notBeforeWaitSlice pieces,
+// calling tick (when non-nil) after each, so a shutdown is noticed
+// promptly and the caller's activity timestamp keeps moving however far
+// off t is.
+func waitUntil(ctx context.Context, t time.Time, tick func()) bool {
 	for {
 		remaining := time.Until(t)
 		if remaining <= 0 {
@@ -299,6 +468,9 @@ func waitUntil(ctx context.Context, t time.Time) bool {
 			timer.Stop()
 			return false
 		case <-timer.C:
+			if tick != nil {
+				tick()
+			}
 		}
 	}
 }
@@ -320,7 +492,9 @@ func (c *Consumer) processRecord(ctx context.Context, record Record, handle Hand
 		record.Attempt = attempt
 		record.IsFinalAttempt = attempt == attempts
 		record.NoMoreRetries = record.IsFinalAttempt && onExhausted == nil
-		if err = handle(ctx, record); err == nil {
+		err = handle(ctx, record)
+		c.touch()
+		if err == nil {
 			c.stats.Handled.Add(1)
 			return true
 		}
@@ -333,10 +507,8 @@ func (c *Consumer) processRecord(ctx context.Context, record Record, handle Hand
 			slog.InfoContext(ctx, "eventbus: retrying record after backoff",
 				"consumer", c.name, "topic", record.Topic, "partition", record.Partition, "offset", record.Offset,
 				"nextAttempt", attempt+1, "delay", delay)
-			select {
-			case <-ctx.Done():
+			if !waitUntil(ctx, time.Now().Add(delay), c.touch) {
 				return false
-			case <-time.After(delay):
 			}
 		}
 	}
