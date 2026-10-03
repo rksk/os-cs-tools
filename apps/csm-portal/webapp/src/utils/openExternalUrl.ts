@@ -29,7 +29,6 @@ export function openExternalUrl(url: string | null | undefined): boolean {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  // eslint-disable-next-line no-restricted-syntax -- the one sanctioned window.open call site
   window.open(parsed.toString(), "_blank", "noopener,noreferrer");
   return true;
 }
