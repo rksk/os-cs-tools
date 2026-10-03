@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
@@ -192,8 +193,17 @@ type fakeLinkResolver struct{}
 
 func (fakeLinkResolver) CSMLink(caseID string) string { return "https://example.test/cases/" + caseID }
 
+// testNow pins the engine's clock to a weekday afternoon in IST, outside
+// both the overnight and weekend coverage windows chataudience.Resolve
+// adds the "Americas" and "Incident Monitor" audiences for — so the
+// audience assertions below hold whatever the wall clock says when the
+// suite runs.
+func testNow() time.Time {
+	return time.Date(2026, time.September, 30, 12, 0, 0, 0, time.FixedZone("IST", 5*3600+1800))
+}
+
 func newTestEngine(entity statusLister, store tierStore, pub eventPublisher) *Engine {
-	return &Engine{entity: entity, store: store, pub: pub, chat: &fakeChatSender{}, links: fakeLinkResolver{}}
+	return &Engine{entity: entity, store: store, pub: pub, chat: &fakeChatSender{}, links: fakeLinkResolver{}, now: testNow}
 }
 
 func TestTierForStatus(t *testing.T) {
