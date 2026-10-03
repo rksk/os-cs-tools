@@ -160,3 +160,19 @@ func TestConsumerRegistry_DrainAndCloseIsBounded(t *testing.T) {
 		t.Errorf("drainAndClose took %v with a 50ms budget", elapsed)
 	}
 }
+
+// TestTimeCardTier_ParksInsteadOfUsingTheCaseDLQ: the time-card consumer is
+// its own last tier. A non-nil OnExhausted here would publish to some
+// dead-letter topic; the only one it could reach is the case DLQ, whose
+// consumer acknowledges time-card events without handling them.
+func TestTimeCardTier_ParksInsteadOfUsingTheCaseDLQ(t *testing.T) {
+	park := eventbus.WithParking(func(context.Context, eventbus.Record, error) error { return nil })
+	base := []eventbus.Option{eventbus.WithName("x"), park}
+	onExhausted, opts := timeCardTier(base)
+	if onExhausted != nil {
+		t.Fatal("time-card OnExhausted is set; an exhausted time-card record must be parked, not dead-lettered")
+	}
+	if len(opts) != len(base) {
+		t.Errorf("time-card options = %d, want the first-tier options (retry policy, parking, drain) passed through", len(opts))
+	}
+}

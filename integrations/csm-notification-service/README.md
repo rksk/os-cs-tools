@@ -190,7 +190,7 @@ This engine's own narrow entity-service client talks to the same entity-service 
 
 Always started (no Redis/state dependency, unlike the SLA engine above — it's a plain Kafka consumer). `internal/timecardengine.Engine` consumes `case.billable_status_changed` — published by entity-service's Postgres data source when a case's severity crosses into or out of `LOW` — on its own dedicated consumer group: `eventbus.Consumer` processes one record at a time, fully sequentially, so a future bulk time-card update must not delay unrelated email/Chat delivery on `dispatch.Dispatcher`'s own consumer group.
 
-**Currently log-only.** Entity-service has no `time_cards` table on its Postgres data source yet (time cards are ServiceNow-only there), so there's no bulk-update reaction to perform — and entity-service's own `Publish` call for this event is itself still commented out. This consumer group exists ahead of need: the plumbing (topic wiring, retry/DLQ behavior, schema validation) is in place and ready for when that reaction is built.
+**Currently log-only.** Entity-service has no `time_cards` table on its Postgres data source yet (time cards are ServiceNow-only there), so there's no bulk-update reaction to perform — and entity-service's own `Publish` call for this event is itself still commented out. This consumer group exists ahead of need: the plumbing (topic wiring, retry and parking behavior, schema validation) is in place and ready for when that reaction is built. A record this consumer cannot handle is retried on the main schedule and then parked — never sent to the case dead-letter topic, whose consumer would acknowledge it without handling it.
 
 | Variable | Description |
 |---|---|

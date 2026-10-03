@@ -527,7 +527,8 @@ func main() {
 	timeCardEngine := timecardengine.NewEngine()
 	timeCardConsumerGroup := envOrDefault("TIME_CARD_CONSUMER_GROUP", "csm-notification-service-time-card")
 	timeCardConsumerCount := envInt("TIME_CARD_CONSUMER_COUNT", 1)
-	consumers.add(startConsumers(ctx, "time-card", eventBusCfg, timeCardConsumerGroup, timeCardConsumerCount, timeCardEngine.Handle, toDeadLetter, firstTier...))
+	timeCardExhausted, timeCardOpts := timeCardTier(firstTier)
+	consumers.add(startConsumers(ctx, "time-card", eventBusCfg, timeCardConsumerGroup, timeCardConsumerCount, timeCardEngine.Handle, timeCardExhausted, timeCardOpts...))
 
 	<-ctx.Done()
 	stop()
@@ -827,6 +828,19 @@ func parseGoogleChatAudienceSpaces(raw string) []notifications.GoogleChatAudienc
 		}
 	}
 	return spaces
+}
+
+// timeCardTier is how the time-card consumer gives up on a record: it is
+// its own last tier (no OnExhausted), so after the first-tier retry
+// schedule an exhausted record is parked (opts carry the shared ParkFunc)
+// rather than dead-lettered. It must never dead-letter into the case DLQ:
+// that topic's consumer is the case dispatcher, which acknowledges
+// case.billable_status_changed as "not mine" — the time-card engine would
+// never see the record again and the failure would vanish. There is no
+// time-card DLQ topic to send it to instead; parking keeps the record and
+// the failure for a manual replay onto the case topic.
+func timeCardTier(firstTier []eventbus.Option) (eventbus.OnExhausted, []eventbus.Option) {
+	return nil, firstTier
 }
 
 // deadLetterTo builds the OnExhausted func for a first-tier consumer:
