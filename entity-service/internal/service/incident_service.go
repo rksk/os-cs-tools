@@ -23,7 +23,6 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
@@ -274,13 +273,12 @@ const incidentSystemActorEmail = "system-m2m@wso2.com"
 // server-to-server automation with no end user in the loop at all, so it
 // is not.
 func (s *incidentService) resolveActor(ctx context.Context) (domain.User, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.User{Email: incidentSystemActorEmail}, nil
-	}
-	email, err := emailFromJWT(token)
+	email, err := optionalCallerEmail(ctx)
 	if err != nil {
-		return domain.User{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.User{}, err
+	}
+	if email == "" {
+		return domain.User{Email: incidentSystemActorEmail}, nil
 	}
 	return s.userRepo.GetUserByEmail(ctx, email)
 }
