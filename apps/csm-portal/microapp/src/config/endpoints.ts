@@ -34,6 +34,7 @@ export const USERS_SEARCH_ENDPOINT = "/users/search";
 
 export const CASES_ENDPOINT = "/cases";
 export const CASES_SEARCH_ENDPOINT = "/cases/search";
+export const CASES_AGGREGATE_ENDPOINT = "/cases/aggregate";
 export const CASE_DETAILS_ENDPOINT = (id: string) => `/cases/${id}`;
 export const CASE_COMMENTS_SEARCH_ENDPOINT = (id: string) => `/cases/${id}/comments/search`;
 export const CASE_COMMENTS_ENDPOINT = (id: string) => `/cases/${id}/comments`;
