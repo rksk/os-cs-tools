@@ -65,7 +65,7 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.entity.GetAccount(r.Context(), id)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetAccount failed", "userID", user.UserID, "accountID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetAccount failed", "userID", user.UserID, "accountID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve account.")
 		return
 	}
@@ -99,7 +99,7 @@ func (h *AccountHandler) SearchAccounts(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.entity.SearchAccounts(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchAccounts failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchAccounts failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search accounts.")
 		return
 	}
@@ -141,7 +141,7 @@ func (h *AccountHandler) SearchAccountContacts(w http.ResponseWriter, r *http.Re
 
 	result, err := h.entity.SearchAccountContacts(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchAccountContacts failed", "userID", user.UserID, "accountID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchAccountContacts failed", "userID", user.UserID, "accountID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to search account contacts.")
 		return
 	}
@@ -187,7 +187,7 @@ func (h *AccountHandler) UpdateAccountTeams(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.entity.UpdateAccountTeams(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity UpdateAccountTeams failed", "userID", user.UserID, "accountID", id, "err", err)
+		slog.ErrorContext(r.Context(), "entity UpdateAccountTeams failed", "userID", user.UserID, "accountID", id, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to update account teams.")
 		return
 	}
@@ -295,7 +295,7 @@ func (h *ViewerAccountHandler) GetAccountEscalations(w http.ResponseWriter, r *h
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
-		slog.ErrorContext(r.Context(), "servicenow GetEscalationsByAccount failed", "userID", user.UserID, "accountID", accountID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetEscalationsByAccount failed", "userID", user.UserID, "accountID", accountID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve account escalations.")
 		return
 	}
@@ -355,7 +355,7 @@ func (h *ViewerAccountHandler) EscalateCase(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
-		slog.ErrorContext(r.Context(), "servicenow EscalateCase failed", "userID", user.UserID, "accountID", accountID, "caseID", caseID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow EscalateCase failed", "userID", user.UserID, "accountID", accountID, "caseID", caseID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to escalate case.")
 		return
 	}

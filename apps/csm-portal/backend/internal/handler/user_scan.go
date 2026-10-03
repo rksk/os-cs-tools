@@ -275,14 +275,14 @@ func (h *SplUserScanHandler) ScanUser(w http.ResponseWriter, r *http.Request) {
 
 	contact, err := h.sales.GetContactByEmail(ctx, payload.Email)
 	if err != nil {
-		slog.ErrorContext(ctx, "sales entity GetContactByEmail failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(ctx, "sales entity GetContactByEmail failed", "userID", user.UserID, "err", summarizeErr(err))
 		writeScanError(w, "Error occurred when retrieving contact information")
 		return
 	}
 
 	subscription, err := h.sales.GetSubscriptionByKey(ctx, payload.SubscriptionKey)
 	if err != nil {
-		slog.ErrorContext(ctx, "sales entity GetSubscriptionByKey failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(ctx, "sales entity GetSubscriptionByKey failed", "userID", user.UserID, "err", summarizeErr(err))
 		writeScanError(w, "Error occurred when retrieving subscription information")
 		return
 	}
@@ -354,14 +354,14 @@ func (h *SplUserScanHandler) ScanUser(w http.ResponseWriter, r *http.Request) {
 
 	entityUser, err := h.lookupScanUser(ctx, payload.Email)
 	if err != nil {
-		slog.ErrorContext(ctx, "entity SearchUsers failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(ctx, "entity SearchUsers failed", "userID", user.UserID, "err", summarizeErr(err))
 		writeScanError(w, "Error occurred when retrieving user information")
 		return
 	}
 
 	project, err := h.lookupProjectByKey(ctx, payload.SubscriptionKey)
 	if err != nil {
-		slog.ErrorContext(ctx, "entity SearchProjects failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(ctx, "entity SearchProjects failed", "userID", user.UserID, "err", summarizeErr(err))
 		writeScanError(w, "Error occurred when retrieving project information")
 		return
 	}
@@ -399,7 +399,7 @@ func (h *SplUserScanHandler) ScanUser(w http.ResponseWriter, r *http.Request) {
 			if !payload.ResendInvitation {
 				info.Solution = "Resend the invitation from the project's Contacts tab, or run the scan again with the invitation resend option."
 			} else if _, err := h.entity.ResendProjectContactInvitation(ctx, projectID, payload.Email); err != nil {
-				slog.WarnContext(ctx, "entity ResendProjectContactInvitation failed", "userID", user.UserID, "memberEmail", payload.Email, "err", err)
+				slog.WarnContext(ctx, "entity ResendProjectContactInvitation failed", "userID", user.UserID, "err", summarizeErr(err))
 				info.Solution = "Could not resend the invitation automatically. Resend it manually from the project's Contacts tab."
 			} else {
 				info.Solution = "A fresh invitation email has been sent. Ask the user to check their inbox and accept it."

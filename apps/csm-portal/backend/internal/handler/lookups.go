@@ -52,7 +52,7 @@ func (h *LookupsHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 
 	products, err := h.servicenow.GetProductList(r.Context())
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetProductList failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetProductList failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve products.")
 		return
 	}
@@ -69,7 +69,7 @@ func (h *LookupsHandler) GetABTTeams(w http.ResponseWriter, r *http.Request) {
 
 	teams, err := h.servicenow.GetABTTeamList(r.Context())
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetABTTeamList failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetABTTeamList failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve ABT teams.")
 		return
 	}

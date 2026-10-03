@@ -160,7 +160,7 @@ func (h *CustomerHealthHandler) GetSummary(w http.ResponseWriter, r *http.Reques
 	if healthStatus != "" {
 		resp, err := h.summaryFilteredByHealthStatus(ctx, payload, healthStatus)
 		if err != nil {
-			slog.ErrorContext(ctx, "customer health summary (filtered) failed", "userID", user.UserID, "err", err)
+			slog.ErrorContext(ctx, "customer health summary (filtered) failed", "userID", user.UserID, "err", summarizeErr(err))
 			mapUpstreamErrorGeneric(w, err, "Failed to retrieve customer health summary.")
 			return
 		}
@@ -171,7 +171,7 @@ func (h *CustomerHealthHandler) GetSummary(w http.ResponseWriter, r *http.Reques
 	snResp, err := h.sn.GetCustomerHealthSummary(ctx, payload.Email, payload.Phrase, payload.Risks, payload.Region,
 		payload.Product, payload.AbtTeam, payload.Offset, payload.Limit)
 	if err != nil {
-		slog.ErrorContext(ctx, "servicenow GetCustomerHealthSummary failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(ctx, "servicenow GetCustomerHealthSummary failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve customer health summary.")
 		return
 	}
@@ -335,7 +335,7 @@ func (h *CustomerHealthHandler) GetAccountDetail(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}
-		slog.ErrorContext(r.Context(), "servicenow GetCustomerHealthDetail failed", "userID", user.UserID, "accountId", accountID, "err", err)
+		slog.ErrorContext(r.Context(), "servicenow GetCustomerHealthDetail failed", "userID", user.UserID, "accountId", accountID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve account health detail.")
 		return
 	}
