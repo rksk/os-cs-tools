@@ -232,11 +232,12 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 
 	// A caller with a valid token but no read access to this specific case
 	// must not learn even that it changed. Reuse the same upstream call
-	// GetCase itself uses — the caller's forwarded x-user-id-token is what
-	// ServiceNow enforces the ACL against — before registering the
-	// subscription, so an unauthorized caseID never reaches h.hub.Register.
+	// GetCase itself uses — the entity service resolves the caller's case
+	// access from the forwarded x-user-id-token, whichever data source backs
+	// it — before registering the subscription, so an unauthorized caseID
+	// never reaches h.hub.Subscribe.
 	if _, err := h.entityClient.GetCase(r.Context(), caseID); err != nil {
-		slog.ErrorContext(r.Context(), "entity GetCase failed during stream authorization", "userID", user.UserID, "caseID", caseID, "err", err)
+		slog.ErrorContext(r.Context(), "entity GetCase failed during stream authorization", "caseID", caseID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to open the case activity stream.")
 		return
 	}
@@ -296,7 +297,7 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 	reauth := time.NewTicker(h.reauthInterval)
 	defer reauth.Stop()
 
-	slog.InfoContext(ctx, "case activity stream connected", "userID", user.UserID, "caseID", caseID, "deadline", deadline)
+	slog.InfoContext(ctx, "case activity stream connected", "caseID", caseID, "deadline", deadline)
 
 	for {
 		select {
@@ -304,22 +305,22 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 			if r.Context().Err() != nil {
 				// The client went away (or the server is shutting the
 				// connection down) — nothing left to write to.
-				slog.InfoContext(ctx, "case activity stream disconnected", "userID", user.UserID, "caseID", caseID)
+				slog.InfoContext(ctx, "case activity stream disconnected", "caseID", caseID)
 				return
 			}
 			// Our own deadline: the client is still connected, so tell it
 			// why the stream is ending before closing.
 			writeTerminalEvent(w, flusher, EventStreamClosed, closeReason)
-			slog.InfoContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", closeReason)
+			slog.InfoContext(ctx, "case activity stream closed", "caseID", caseID, "reason", closeReason)
 			return
 		case <-reauth.C:
 			if _, err := h.entityClient.GetCase(ctx, caseID); err != nil {
 				if isAccessDenied(err) {
 					writeTerminalEvent(w, flusher, EventStreamClosed, ReasonAccessRevoked)
-					slog.WarnContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", ReasonAccessRevoked, "err", err)
+					slog.WarnContext(ctx, "case activity stream closed", "caseID", caseID, "reason", ReasonAccessRevoked, "err", err)
 					return
 				}
-				slog.WarnContext(ctx, "case activity stream re-authorization failed transiently; keeping stream open", "userID", user.UserID, "caseID", caseID, "err", err)
+				slog.WarnContext(ctx, "case activity stream re-authorization failed transiently; keeping stream open", "caseID", caseID, "err", err)
 			}
 		case <-ticker.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
@@ -332,7 +333,7 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 				// subscriber is still reading (Unregister runs after this
 				// function returns), i.e. the server is shutting down.
 				writeTerminalEvent(w, flusher, EventShutdown, ReasonShutdown)
-				slog.InfoContext(ctx, "case activity stream closed", "userID", user.UserID, "caseID", caseID, "reason", ReasonShutdown)
+				slog.InfoContext(ctx, "case activity stream closed", "caseID", caseID, "reason", ReasonShutdown)
 				return
 			}
 			if err := writeCaseUpdated(w, ev); err != nil {
