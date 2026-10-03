@@ -18,7 +18,7 @@ info:
     | `download_attachment` | `GET /attachments/{id}/content`, `POST /attachments/{id}/share` | attachment-downloader, cs-engineer, admin |
     | `write` | every other `POST`/`PATCH`/`DELETE`, including case, incident and change-request comments | cs-engineer, admin |
     | `admin` | `POST /users` | admin only |
-    | `security_center` | `POST /products/vulnerabilities/search`, `GET /products/vulnerabilities/{id}`, and a `POST /cases/search`/`GET /cases/{id}` naming case type security_report_analysis | cs-engineer, admin |
+    | `security_center` | `POST /products/vulnerabilities/search`, `GET /products/vulnerabilities/{id}`, and any read of a case whose type is `security_report_analysis`. Without it, `POST /cases/search` and `POST /cases/aggregate` are scoped to the other case types (a request naming that type is refused with `403`), and `GET /cases/{id}`, `POST /cases/{id}/comments/search`, `POST /cases/{id}/activities/search` and `GET /cases/{id}/escalations` return `403` for such a case | cs-engineer, admin |
 security:
   - bearerAuth: []
 servers:
