@@ -66,6 +66,8 @@ try {
 export const clearSession = (): void => {
   accessToken = null;
   idToken = null;
+  inFlightRefresh = null;
+  sessionGeneration += 1;
   useUserStore.getState().clearUser();
   queryClient.clear();
 };
@@ -82,25 +84,22 @@ function isTokenExpiringSoon(token: string | null): boolean {
     return true;
   }
 }
-export const refreshToken = (force = false): Promise<string> => {
-  const currentIdToken = getIdToken();
-  if (!force && !isTokenExpiringSoon(currentIdToken)) {
-    if (!useUserStore.getState().user) {
-      decodeTokenAndStoreUser();
-    }
-    return Promise.resolve(currentIdToken as string);
-  }
+// Every refresh — the launch-time call in App, the request interceptor and the activity stream
+// hook — goes through this single in-flight promise, so overlapping callers share one bridge
+// round trip instead of each re-posting to the host.
+let inFlightRefresh: Promise<string> | null = null;
+// Bumped by clearSession so a refresh that was in flight at sign-out cannot store its tokens.
+let sessionGeneration = 0;
 
-  const idTokenPromise = new Promise<string>((resolve, reject) => {
-    getToken((token) => (token ? resolve(token) : reject("ID Token failed")));
-  });
+const requestTokensFromHost = (): Promise<string> => {
+  const generation = sessionGeneration;
 
-  const accessTokenPromise = new Promise<string>((resolve, reject) => {
-    getAccessTokenFromBridge((token) => (token ? resolve(token) : reject("Access Token failed")));
-  });
-
-  return Promise.all([idTokenPromise, accessTokenPromise])
+  return Promise.all([getToken(), getAccessTokenFromBridge()])
     .then(([newIdToken, newAccessToken]) => {
+      if (!newIdToken) throw new Error("ID Token failed");
+      if (!newAccessToken) throw new Error("Access Token failed");
+      if (generation !== sessionGeneration) throw new Error("Session ended during token refresh");
+
       setIdToken(newIdToken);
       setAccessToken(newAccessToken);
 
@@ -117,6 +116,24 @@ export const refreshToken = (force = false): Promise<string> => {
       Logger.error("Failed to refresh tokens", error);
       throw error;
     });
+};
+
+export const refreshToken = (force = false): Promise<string> => {
+  const currentIdToken = getIdToken();
+  if (!force && !isTokenExpiringSoon(currentIdToken)) {
+    if (!useUserStore.getState().user) {
+      decodeTokenAndStoreUser();
+    }
+    return Promise.resolve(currentIdToken as string);
+  }
+
+  if (!inFlightRefresh) {
+    const refresh = requestTokensFromHost().finally(() => {
+      if (inFlightRefresh === refresh) inFlightRefresh = null;
+    });
+    inFlightRefresh = refresh;
+  }
+  return inFlightRefresh;
 };
 
 /**

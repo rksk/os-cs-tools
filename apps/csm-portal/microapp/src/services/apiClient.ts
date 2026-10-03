@@ -30,9 +30,6 @@ let failedQueue: {
   reject: (reason?: unknown) => void;
 }[] = [];
 
-// Holds the refresh token promise
-let refreshTokenPromise: Promise<string | null> | null = null;
-
 // axios instance
 const apiClient = axios.create({
   baseURL: BACKEND_URL,
@@ -53,16 +50,9 @@ apiClient.interceptors.request.use(
       fullURL: `${config.baseURL || ""}${config.url || ""}`,
     });
 
-    // Use a singleton promise for token refresh
-    if (!refreshTokenPromise) {
-      refreshTokenPromise = refreshToken().finally(() => {
-        // Reset the promise once it's resolved or rejected
-        refreshTokenPromise = null;
-      });
-    }
-
+    // refreshToken() owns the single in-flight refresh shared with every other caller.
     try {
-      const idToken = await refreshTokenPromise;
+      const idToken = await refreshToken();
       const accessToken = getAccessToken();
       if (idToken && accessToken) {
         config.headers.Authorization = `Bearer ${accessToken}`;
