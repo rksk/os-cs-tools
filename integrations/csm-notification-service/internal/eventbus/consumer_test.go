@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -437,14 +438,14 @@ func TestNotBefore_HeaderRoundTrip(t *testing.T) {
 }
 
 func TestWaitUntil(t *testing.T) {
-	if !waitUntil(context.Background(), time.Time{}) {
+	if !waitUntil(context.Background(), time.Time{}, nil) {
 		t.Error("waitUntil(zero) = false, want true immediately")
 	}
-	if !waitUntil(context.Background(), time.Now().Add(-time.Minute)) {
+	if !waitUntil(context.Background(), time.Now().Add(-time.Minute), nil) {
 		t.Error("waitUntil(past) = false, want true immediately")
 	}
 	start := time.Now()
-	if !waitUntil(context.Background(), start.Add(30*time.Millisecond)) {
+	if !waitUntil(context.Background(), start.Add(30*time.Millisecond), nil) {
 		t.Error("waitUntil(near future) = false, want true")
 	}
 	if time.Since(start) < 30*time.Millisecond {
@@ -452,7 +453,7 @@ func TestWaitUntil(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
-	if waitUntil(ctx, time.Now().Add(time.Hour)) {
+	if waitUntil(ctx, time.Now().Add(time.Hour), nil) {
 		t.Error("waitUntil(far future, canceled ctx) = true, want false")
 	}
 }
@@ -489,5 +490,65 @@ func TestParkedRecord_PreservesPayloadAndCoordinates(t *testing.T) {
 	_ = json.Unmarshal(raw, &backBinary)
 	if got := backBinary.Payload(); len(got) != 3 || got[0] != 0xff || got[1] != 0 || got[2] != 'x' {
 		t.Errorf("binary Payload() = %v, want the original bytes", got)
+	}
+}
+
+func TestConsumerStatus_Check(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	const stall = 5 * time.Minute
+	tests := []struct {
+		name    string
+		status  ConsumerStatus
+		wantErr string
+	}{
+		{"running and recently active", ConsumerStatus{State: "running", LastActivity: now.Add(-time.Minute)}, ""},
+		{"running but stalled", ConsumerStatus{State: "running", LastActivity: now.Add(-6 * time.Minute)}, "no successful poll"},
+		{"exited", ConsumerStatus{State: "exited", ExitReason: "reader closed", LastActivity: now}, "exited"},
+		{"created, within the window", ConsumerStatus{State: "created", LastActivity: now.Add(-time.Second)}, ""},
+		{"created, never started", ConsumerStatus{State: "created", LastActivity: now.Add(-stall - time.Second)}, "never started"},
+		{"stall check disabled", ConsumerStatus{State: "running", LastActivity: now.Add(-24 * time.Hour)}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			window := stall
+			if tt.name == "stall check disabled" {
+				window = 0
+			}
+			err := tt.status.Check(now, window)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Check() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Check() = %v, want an error mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestConsumer_Status_ReflectsActivityAndCounters: a record attempt and
+// its outcome move LastActivity forward and show up in the counters, and a
+// consumer that has not run yet reports "created".
+func TestConsumer_Status_ReflectsActivityAndCounters(t *testing.T) {
+	c := testConsumer(testPolicy, nil)
+	c.touch()
+	before := c.Status()
+	if before.State != "created" {
+		t.Errorf("State = %q before Run, want created", before.State)
+	}
+	time.Sleep(2 * time.Millisecond)
+	handle := func(ctx context.Context, r Record) error { return errors.New("no") }
+	c.processRecord(context.Background(), Record{}, handle, nil)
+	after := c.Status()
+	if !after.LastActivity.After(before.LastActivity) {
+		t.Errorf("LastActivity did not advance across a processed record: before %v, after %v", before.LastActivity, after.LastActivity)
+	}
+	if after.FailedAttempts != 3 || after.Dropped != 1 {
+		t.Errorf("counters = failed %d, dropped %d; want 3 and 1", after.FailedAttempts, after.Dropped)
+	}
+	if after.Name != "test" {
+		t.Errorf("Name = %q, want test", after.Name)
 	}
 }
