@@ -1052,7 +1052,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// the flow it is replacing and make the port depend on the system being
 	// decommissioned.
 	// The public status dashboard's reads, consumed by
-	// wso2-enterprise/uptime-dashboard via csm-integration-service. They
+	// the public cloud status dashboard via csm-integration-service. They
 	// replace five ServiceNow Scripted REST APIs and have no
 	// ServiceNow-backed counterpart here.
 	//
