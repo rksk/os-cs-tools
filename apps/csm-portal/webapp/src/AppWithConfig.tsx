@@ -25,6 +25,7 @@ import LoggerProvider from "@context/logger/LoggerProvider";
 import { ThemePreferenceProvider } from "@context/theme/ThemePreferenceContext";
 import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { authConfig } from "@config/authConfig";
+import { registerSignOutCleanup } from "@utils/sessionCleanup";
 
 // React-Query devtools ship from a devDependency and must not enter the
 // production bundle. Dynamic import + DEV check accomplishes both.
@@ -86,6 +87,13 @@ const queryClient: QueryClient = new QueryClient({
     },
   },
 });
+
+// One central sign-out cleanup: clears every app-owned storage key and the
+// query cache whenever `app:signing-out` fires (manual sign-out or idle
+// timeout). Registered once for the lifetime of the page.
+if (typeof window !== "undefined" && !isInsideHiddenAuthIframe) {
+  registerSignOutCleanup(queryClient);
+}
 
 export default function AppWithConfig(): JSX.Element {
   return (
