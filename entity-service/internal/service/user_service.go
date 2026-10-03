@@ -31,7 +31,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/validate"
 )
@@ -335,13 +334,9 @@ func (s *userService) SearchUsers(ctx context.Context, req domain.SearchUsersReq
 // the frontend's team/role resolution is simply a no-op for this data source
 // today.
 func (s *userService) GetMe(ctx context.Context) (domain.GetUserMeResponse, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.GetUserMeResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	email, err := emailFromJWT(token)
+	email, err := callerEmail(ctx)
 	if err != nil {
-		return domain.GetUserMeResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.GetUserMeResponse{}, err
 	}
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {

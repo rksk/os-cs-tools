@@ -90,15 +90,17 @@ func TestUserService_GetMe_RequiresToken(t *testing.T) {
 	}
 }
 
-// TestUserService_GetMe_RejectsMalformedToken proves an undecodable
-// x-user-id-token surfaces as a ValidationError, not an opaque failure.
+// TestUserService_GetMe_RejectsMalformedToken proves a token that identifies
+// no user (the auth middleware rejects a malformed one before the service;
+// one without an email arrives with no user) is a 401, never an opaque
+// failure.
 func TestUserService_GetMe_RejectsMalformedToken(t *testing.T) {
 	svc := NewUserService(stubUserRepo{})
 	ctx := contextWithUserIDToken("not-a-jwt")
 
 	_, err := svc.GetMe(ctx)
-	if _, ok := err.(*apierror.ValidationError); !ok {
-		t.Fatalf("GetMe error = %v (%T), want *apierror.ValidationError", err, err)
+	if _, ok := err.(*apierror.UnauthorizedError); !ok {
+		t.Fatalf("GetMe error = %v (%T), want *apierror.UnauthorizedError", err, err)
 	}
 }
 

@@ -23,7 +23,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
@@ -161,8 +160,11 @@ func (s *pgProjectUpdateService) UpdateProject(ctx context.Context, id string, r
 // resolveUpdatedBy returns the user-token caller's email, or, with no user token,
 // the client id of an allow-listed internal client.
 func (s *pgProjectUpdateService) resolveUpdatedBy(ctx context.Context) (string, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
+	email, err := optionalCallerEmail(ctx)
+	if err != nil {
+		return "", err
+	}
+	if email == "" {
 		if s.access == nil {
 			return "", &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
 		}
@@ -177,10 +179,6 @@ func (s *pgProjectUpdateService) resolveUpdatedBy(ctx context.Context) (string, 
 			return clientID, nil
 		}
 		return "internal-client", nil
-	}
-	email, err := emailFromJWT(token)
-	if err != nil {
-		return "", &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
 	}
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {

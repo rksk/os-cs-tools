@@ -22,7 +22,6 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
@@ -279,13 +278,9 @@ func (s *commentService) CreateComment(ctx context.Context, req domain.CreateCom
 		return domain.CreateCommentResponse{}, &apierror.ValidationError{Msg: `createdBy must be "agent" or omitted`}
 	}
 	if createdBy == "" {
-		token := middleware.UserIDTokenFromContext(ctx)
-		if token == "" {
-			return domain.CreateCommentResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-		}
-		email, err := emailFromJWT(token)
+		email, err := callerEmail(ctx)
 		if err != nil {
-			return domain.CreateCommentResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+			return domain.CreateCommentResponse{}, err
 		}
 		user, err := s.userRepo.GetUserByEmail(ctx, email)
 		if err != nil {
@@ -338,13 +333,9 @@ func (s *commentService) CreateComment(ctx context.Context, req domain.CreateCom
 // NotFoundError -- the same posture CreateComment already takes for its own
 // token resolution above.
 func (s *commentService) resolveCommentActor(ctx context.Context) (email string, isAdmin bool, err error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return "", false, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	email, err = emailFromJWT(token)
+	email, err = callerEmail(ctx)
 	if err != nil {
-		return "", false, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return "", false, err
 	}
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
