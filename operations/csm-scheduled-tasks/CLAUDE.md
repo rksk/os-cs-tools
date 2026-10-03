@@ -273,6 +273,9 @@ report emails" below for why that's not a generic engine feature.
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
 | `SUB_CRON_RECIPIENTS` | No | JSON object `{"<task.Name>": {"to": [...], "cc": [...]}}` giving a registered task its own extra failure-alert audience, on top of `ALERT_RECIPIENTS` — or, for a report-style task, its report's actual recipients (see "Alerting" above for which tasks work which way). A task not mentioned gets no per-task recipients |
 | `HOUSEKEEPING_RETENTION_DAYS` | No (default `30`) | Plain integer number of days of resolved history the `housekeeping_cleanup` sub-cron keeps — see "Housekeeping" above |
+| `CLOUD_STATUS_ENABLED` | No (default `false`) | Registers the `cloud_status_webhooks` task. Off by default, and turning it on is a paired change with retiring the legacy cloud status notification workflow, or every event is posted twice |
+| `CLOUD_STATUS_WEBHOOK_URLS` | Yes when `CLOUD_STATUS_ENABLED` is true (checked at startup) | JSON object of cloud slug to status-dashboard base URL. Empty or unparseable stops startup rather than losing events |
+| `CLOUD_STATUS_WEBHOOK_SECRETS` | Yes when `CLOUD_STATUS_ENABLED` is true (checked at startup) | JSON object of cloud slug to the full `X-Webhook-Signature` header value (`Secret <token>`), with a `default` key covering any cloud without its own entry |
 
 There is no whole-process execution timeout here — Choreo's own Scheduled Task execution-time
 limit bounds how long one invocation can run. Each handler, however, runs under its own
