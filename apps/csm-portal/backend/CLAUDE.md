@@ -116,28 +116,25 @@ different mechanisms, because the feature isn't backed by its own exclusive rout
 - **`/products/vulnerabilities/search` and `/products/vulnerabilities/{id}`** are genuinely
   Security-Center-exclusive, so they're gated the ordinary way: `route(..., handler.PermViewSecurityCenter, ...)`
   in `cmd/server/main.go`.
-- **`POST /cases/search`** is the shared, generic case-search endpoint every case-type tab uses
-  (Support, Operations sub-tabs, Engagements, Security reports) — it stays registered at `PermView`,
-  since narrowing that route-level permission would lock out every other tab too. Instead,
-  `CaseHandler.SearchCases` inspects the request body itself: `caseSearchTargetsSecurityReports`
-  (`internal/handler/cases.go`) reads the generic filter expression (`filters.filters[]`, and each
-  `filters.anyOf[]` branch) for a `{field: "type", op: "in", values: [...]}` predicate naming
-  `security_report_analysis`, and if one is found, additionally requires `PermViewSecurityCenter` via
-  `CaseHandler.access` (wired with `WithAccessGuard`, the same pattern `UsersHandler` uses) —
-  a plain `PermView` caller gets 403 instead of the search running. This only catches an *explicit*
-  request for that type, the same way Security Center's own `caseTypes`-locked search
-  (`CsmIssuesView`, webapp) always sends one; a hypothetical unfiltered "every case type" search that
-  happens to also return security-report rows is a known, narrower gap, not handled here.
-- **`GET /cases/{id}` has no equivalent check, deliberately.** `CaseView.type` (entity-service's own
-  `openapi.yaml`) is only populated for ServiceNow cases — null on Postgres — so there is no reliable
-  way for this handler to tell a security-report case apart from any other by inspecting the response
-  alone, and a check that silently does nothing on one data source would be worse than no check at
-  all (it would look like protection without being any). See `CaseHandler.WithAccessGuard`'s own doc
-  comment for the full reasoning. Practically: since `SearchCases` is now locked down, a non-`cs_engineer`/
-  `admin` caller can no longer *discover* a security-report case's id through the portal at all — the
-  residual gap is a caller who already has one (a pre-existing bookmark, or a guess) fetching it
-  directly by id. Closing that fully needs entity-service itself to resolve and enforce it (it has
-  reliable type data on either data source), not this BFF layer.
+- **`POST /cases/search` and `POST /cases/aggregate`** are the shared, generic case endpoints every
+  case-type tab uses (Support, Operations sub-tabs, Engagements, Security reports) — they stay
+  registered at their route-level view permission, since narrowing it would lock out every other tab
+  too. Instead, for a caller without `PermViewSecurityCenter` (checked via `CaseHandler.access`, wired
+  with `WithAccessGuard` — a handler built without one fails closed), `scopeCaseSearchBody`
+  (`internal/handler/cases.go`) rewrites the body: a `{field: "type", ...}` predicate naming
+  `security_report_analysis` anywhere (top-level `filters.filters[]` or any `filters.anyOf[]` branch)
+  is refused with 403; a top-level type predicate naming only other types is left alone; and when
+  there is no top-level type predicate at all, `{field: "type", op: "in", values: <every other
+  type>}` is appended to `filters.filters[]`. The allow-list (`nonSecurityCaseTypes`) exists because
+  the entity service only accepts `op: in` on `type`, so "not this type" has to be spelled out as
+  "all the others" — keep it in step with the entity service's `validCaseType` set. The rest of the
+  body is carried through as `json.RawMessage`, so nothing else is reshaped.
+- **`GET /cases/{id}`** refuses a loaded case whose `type` is `security_report_analysis` with 403 for
+  such a caller (`caseViewIsSecurityReport`); **`POST /cases/{id}/comments/search`,
+  `POST /cases/{id}/activities/search` and `GET /cases/{id}/escalations`** first load the case through
+  `requireCaseVisibleToCaller` and apply the same test (a holder costs no extra upstream call; a load
+  failure maps like any other upstream error, so an unknown id is still 404). Entity-service populates
+  `CaseView.type` on both data sources, so the check is reliable either way.
 
 ## Redacting raw base64 inline images (`internal/handler/inline_image_redact.go`)
 
