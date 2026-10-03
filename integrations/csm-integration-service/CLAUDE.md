@@ -81,8 +81,8 @@ underlying ServiceNow layer has a deliberate fallback: when no end-user identity
 token is forwarded, it uses a separately-configured M2M ServiceNow credential
 instead of erroring, and only 401s if that fallback credential is itself
 unconfigured in the target environment. A live end-to-end call through this
-exact path against `wso2sndev` on 2026-09-20 succeeded with no 401, creating a
-real incident (`INC0096966`). So whether these two endpoints 401 depends on the
+exact path against a development environment (`<dev-tenant>`) succeeded with no
+401, creating an incident (`<incident-number>`). So whether these two endpoints 401 depends on the
 target ServiceNow environment's M2M credential configuration — it is not an
 unconditional consequence of this service being M2M-only. Treat a 401 from
 either endpoint as a possible outcome that depends on the environment's M2M

@@ -78,7 +78,7 @@ func (h *ProjectHandler) SearchProjects(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
-// UpdateProject handles PATCH /projects/{id}. Targets a ServiceNow-data-source-only
+// UpdateProject handles PATCH /projects/{id}. Targets an external-data-source-only
 // entity-service operation that requires a forwarded end-user identity token — this
 // service is strictly M2M with no mechanism to supply one, so calls here always
 // receive a mapped 401 from upstream. Kept for API-shape completeness (see the
