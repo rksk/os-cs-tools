@@ -51,11 +51,27 @@ type fakeLedger struct {
 	attempts  []string
 	completes []string
 	fails     []failCall
+
+	// ctxSeen records, per record-back call, whether the context it was
+	// given was still live and carried a deadline — the bookkeeping
+	// contract engine.bookkeepingContext promises.
+	ctxSeen []ctxState
 }
 
 type failCall struct {
 	id     string
 	errMsg string
+}
+
+// ctxState is what a fake observed about the context a call arrived on.
+type ctxState struct {
+	live        bool // ctx.Err() == nil at call time
+	hasDeadline bool
+}
+
+func observe(ctx context.Context) ctxState {
+	_, hasDeadline := ctx.Deadline()
+	return ctxState{live: ctx.Err() == nil, hasDeadline: hasDeadline}
 }
 
 func (f *fakeLedger) Attempt(_ context.Context, taskName string, _ time.Time, _ time.Duration) (ledger.Claim, error) {
@@ -71,17 +87,19 @@ func (f *fakeLedger) Attempt(_ context.Context, taskName string, _ time.Time, _ 
 	return ledger.Claim{Allowed: f.allowed, Run: ledger.Run{ID: "run-" + taskName, TaskName: taskName, AttemptCount: 1}}, nil
 }
 
-func (f *fakeLedger) Complete(_ context.Context, id string, _ int) error {
+func (f *fakeLedger) Complete(ctx context.Context, id string, _ int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.completes = append(f.completes, id)
+	f.ctxSeen = append(f.ctxSeen, observe(ctx))
 	return f.completeErr
 }
 
-func (f *fakeLedger) Fail(_ context.Context, id string, _ int, errMsg string, _ time.Time) error {
+func (f *fakeLedger) Fail(ctx context.Context, id string, _ int, errMsg string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fails = append(f.fails, failCall{id: id, errMsg: errMsg})
+	f.ctxSeen = append(f.ctxSeen, observe(ctx))
 	return f.failErr
 }
 
@@ -89,6 +107,7 @@ type sentEmail struct {
 	to, cc  []string
 	subject string
 	body    string
+	ctx     ctxState
 }
 
 type fakeEmail struct {
@@ -97,10 +116,10 @@ type fakeEmail struct {
 	sent    []sentEmail
 }
 
-func (f *fakeEmail) SendEmail(_ context.Context, to, cc []string, subject, htmlBody string) error {
+func (f *fakeEmail) SendEmail(ctx context.Context, to, cc []string, subject, htmlBody string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, sentEmail{to: to, cc: cc, subject: subject, body: htmlBody})
+	f.sent = append(f.sent, sentEmail{to: to, cc: cc, subject: subject, body: htmlBody, ctx: observe(ctx)})
 	return f.sendErr
 }
 
@@ -359,6 +378,99 @@ func TestTick_CancellationMidTickStopsBeforeTheNextTask(t *testing.T) {
 	if strings.Join(l.attempts, ",") != "a" {
 		t.Fatalf("only task a should have been claimed, got %v", l.attempts)
 	}
+}
+
+// ── bookkeeping survives cancellation ──────────────────────────────────
+
+// cancelDuringHandler returns a handler that cancels the tick's context
+// (as SIGTERM would) and then returns ret — simulating a handler
+// interrupted mid-flight.
+func cancelDuringHandler(cancel context.CancelFunc, ret func(ctx context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		cancel()
+		return ret(ctx)
+	}
+}
+
+func TestTick_FailureRecordAndAlertSurviveCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	l := &fakeLedger{allowed: true}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Handler: cancelDuringHandler(cancel, func(ctx context.Context) error { return ctx.Err() })},
+	}, l, m)
+
+	err := eng.Tick(ctx, time.Now())
+	if got := stagesOf(err); !got["a/handler"] || got["a/fail"] || got["a/alert"] {
+		t.Fatalf("expected only the handler failure to be reported, got %v (err: %v)", got, err)
+	}
+	if len(l.fails) != 1 || !l.ctxSeen[0].live || !l.ctxSeen[0].hasDeadline {
+		t.Fatalf("Fail must be called on a live, deadline-bound context after cancellation, got fails=%d ctx=%+v", len(l.fails), l.ctxSeen)
+	}
+	if len(m.sent) != 1 || !m.sent[0].ctx.live || !m.sent[0].ctx.hasDeadline {
+		t.Fatalf("the alert must be sent on a live, deadline-bound context after cancellation, got %d sent, ctx=%+v", len(m.sent), m.sent)
+	}
+}
+
+func TestTick_SuccessRecordSurvivesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	l := &fakeLedger{allowed: true}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Handler: cancelDuringHandler(cancel, func(context.Context) error { return nil })},
+	}, l, &fakeEmail{})
+
+	if err := eng.Tick(ctx, time.Now()); err != nil {
+		t.Fatalf("a handler that finished before noticing the cancellation must still complete cleanly, got %v", err)
+	}
+	if len(l.completes) != 1 || !l.ctxSeen[0].live || !l.ctxSeen[0].hasDeadline {
+		t.Fatalf("Complete must be called on a live, deadline-bound context after cancellation, got completes=%d ctx=%+v", len(l.completes), l.ctxSeen)
+	}
+}
+
+func TestTick_LedgerAlertSurvivesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	l := &fakeLedger{attemptFn: func(string) (ledger.Claim, error) {
+		cancel()
+		return ledger.Claim{}, context.Canceled
+	}}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler}}, l, m)
+
+	err := eng.Tick(ctx, time.Now())
+	if got := stagesOf(err); !got["a/claim"] {
+		t.Fatalf("expected the claim failure, got %v (err: %v)", got, err)
+	}
+	if len(m.sent) != 1 || !m.sent[0].ctx.live || !m.sent[0].ctx.hasDeadline {
+		t.Fatalf("the ledger alert must be sent on a live, deadline-bound context after cancellation, got %d sent", len(m.sent))
+	}
+}
+
+func TestTick_BookkeepingTimeoutIsApplied(t *testing.T) {
+	l := &fakeLedger{allowed: true}
+	eng := newEngine([]registry.Task{{Name: "a", Schedule: "*/5 * * * *", Handler: okHandler}}, l, &fakeEmail{})
+	eng.BookkeepingTimeout = time.Second
+
+	var seen time.Time
+	eng.Ledger = ledgerFunc{onComplete: func(ctx context.Context) {
+		seen, _ = ctx.Deadline()
+	}, fakeLedger: l}
+	before := time.Now()
+	_ = eng.Tick(context.Background(), before)
+	if seen.IsZero() || seen.Sub(before) > 2*time.Second {
+		t.Fatalf("Complete's context deadline should be about BookkeepingTimeout from now, got %v", seen.Sub(before))
+	}
+}
+
+// ledgerFunc wraps a fakeLedger so a test can inspect the context Complete
+// receives without changing the shared fake.
+type ledgerFunc struct {
+	onComplete func(ctx context.Context)
+	*fakeLedger
+}
+
+func (w ledgerFunc) Complete(ctx context.Context, id string, n int) error {
+	w.onComplete(ctx)
+	return w.fakeLedger.Complete(ctx, id, n)
 }
 
 // ── ledger-failure alerting ────────────────────────────────────────────
