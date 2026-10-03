@@ -18,7 +18,7 @@ import { useMemo } from "react";
 import DOMPurify from "dompurify";
 import { useQueries } from "@tanstack/react-query";
 import { attachments } from "@src/services/attachments";
-import { extractIixAttachmentIds, replaceInlineImageSrcs, sysidToUuid } from "./inlineImages";
+import { extractIixAttachmentIds, replaceInlineImageSrcs, compactIdToUuid } from "./inlineImages";
 
 const SAFE_IMAGE_SUBTYPES = /^(png|jpeg|jpg|gif|webp|svg\+xml|bmp|avif)$/i;
 
@@ -64,10 +64,10 @@ export function useResolvedInlineImageHtml(html: string): { resolvedHtml: string
     queries: attachmentIds.map((id) => ({
       queryKey: ["attachment", "inline-preview", id],
       queryFn: async (): Promise<string | null> => {
-        // The extracted id is a bare 32-char sysid; the content endpoint requires the canonical
+        // The extracted id is a bare 32-char hex id; the content endpoint requires the canonical
         // UUID shape (hyphens re-inserted), same as every other attachment id sent to this
         // backend.
-        const blob = await attachments.getContentById(sysidToUuid(id));
+        const blob = await attachments.getContentById(compactIdToUuid(id));
         const mimeType = toSafeMimeType(blob.type);
         if (!mimeType) return null;
         return blobToDataUrl(blob);
