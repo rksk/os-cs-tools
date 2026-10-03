@@ -47,7 +47,7 @@ import {
   resolveDisplayTimeZone,
   zonedInputToUtcIso,
 } from "@utils/dateTime";
-import { sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { sanitizeRichTextHtml, isBlankHtml } from "@utils/sanitizeHtml";
 import {
   DRY_RUN_TAG_LABEL,
   useAnnouncementDryRun,
@@ -111,11 +111,6 @@ function whoWhen(who?: string | null, when?: string | null): string {
   const whenText = when ? formatAbsoluteForUser(when) : null;
   if (who && whenText) return `${who} · ${whenText}`;
   return who ?? whenText ?? "—";
-}
-
-/** The rich-text editor emits `<p></p>` when empty; check the stripped text. */
-function isEmptyHtml(html: string): boolean {
-  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim().length === 0;
 }
 
 /**
@@ -736,7 +731,7 @@ export default function AnnouncementRequestDialog({
                     submittingForApproval ||
                     hasUnsavedChanges ||
                     subject.trim().length === 0 ||
-                    isEmptyHtml(description) ||
+                    isBlankHtml(description) ||
                     !canWrite
                   }
                 >
