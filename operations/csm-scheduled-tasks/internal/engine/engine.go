@@ -27,12 +27,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/ledger"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/notify"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/registry"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/schedule"
+	"golang.org/x/oauth2"
 )
 
 // LedgerClient is the subset of *ledger.Client the engine depends on —
@@ -139,6 +143,7 @@ var ErrInterrupted = errors.New("tick interrupted before every task was evaluate
 // an unbroken row of green over a silent outage.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	var errs []error
+	var ledgerErrs []*TaskError
 	for _, task := range e.Tasks {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			slog.ErrorContext(ctx, "csm-scheduled-tasks: tick interrupted; remaining tasks not evaluated", "nextTask", task.Name, "err", ctxErr)
@@ -147,9 +152,178 @@ func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 		}
 		if err := e.attempt(ctx, task, now); err != nil {
 			errs = append(errs, err)
+			ledgerErrs = append(ledgerErrs, ledgerStageErrors(err)...)
+		}
+	}
+	// Ledger-stage failures get one aggregated alert per tick, sent after
+	// every task has been evaluated — see alertLedgerFailures. The
+	// handler-failure alert (recordFailure) is per task because each
+	// failure is a different story; a dead ledger is one story told six
+	// times, so it is one email.
+	if len(ledgerErrs) > 0 {
+		if err := e.alertLedgerFailures(ctx, now, ledgerErrs); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ledgerStageErrors extracts every *TaskError in err (which may be a joined
+// error) whose stage is a ledger call — claim, complete or fail. Those are
+// the failures recordFailure's own per-task alert never covers: a handler
+// that never ran because the claim failed has no handler error to alert on,
+// and a Complete/Fail that failed leaves the ledger unaware of what the
+// handler just did.
+func ledgerStageErrors(err error) []*TaskError {
+	var out []*TaskError
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if j, ok := e.(interface{ Unwrap() []error }); ok {
+			for _, inner := range j.Unwrap() {
+				walk(inner)
+			}
+			return
+		}
+		var te *TaskError
+		if errors.As(e, &te) {
+			switch te.Stage {
+			case StageClaim, StageComplete, StageFail:
+				out = append(out, te)
+			}
+		}
+	}
+	walk(err)
+	return out
+}
+
+// maxLedgerAlertEntries bounds how many failures one ledger alert lists.
+// Seven tasks are registered today, so this is a guard against a future
+// registry growing past what an email can usefully show, not a limit that
+// bites now; the count beyond it is still reported.
+const maxLedgerAlertEntries = 25
+
+// ledgerAlertTaskName is the Task field of the *TaskError returned when the
+// aggregated ledger alert itself could not be sent.
+const ledgerAlertTaskName = "ledger-alert"
+
+// alertLedgerFailures sends the one-per-tick "LEDGER ERROR" email. The
+// email client does not depend on the ledger, so this still works when
+// entity-service (or the token endpoint, for entity-service's scopes) is
+// what's down. Recipients are the standing AlertRecipients plus every
+// affected task's own To/Cc, de-duplicated — the same audience those
+// tasks' handler failures would have reached. Honours AlertsEnabled like
+// every other email. Returns a *TaskError if the send itself failed, so the
+// exit status reflects that the on-call audience was NOT told.
+func (e *Engine) alertLedgerFailures(ctx context.Context, now time.Time, failures []*TaskError) error {
+	if !e.AlertsEnabled {
+		return nil
+	}
+	affected := map[string]registry.Task{}
+	for _, t := range e.Tasks {
+		affected[t.Name] = t
+	}
+	var to, cc []string
+	to = appendUnique(to, e.AlertRecipients...)
+	for _, f := range failures {
+		if t, ok := affected[f.Task]; ok {
+			to = appendUnique(to, t.To...)
+			cc = appendUnique(cc, t.Cc...)
+		}
+	}
+	if len(to) == 0 {
+		return nil
+	}
+
+	data := notify.LedgerAlertData{TickTime: now.Format(time.RFC3339)}
+	for i, f := range failures {
+		if i >= maxLedgerAlertEntries {
+			data.Omitted = len(failures) - i
+			break
+		}
+		data.Failures = append(data.Failures, notify.LedgerFailure{
+			Task:  f.Task,
+			Stage: string(f.Stage),
+			Error: summarizeError(f.Err),
+		})
+	}
+	// Plain ASCII subject — see recordFailure for why.
+	subject := fmt.Sprintf("[csm-scheduled-tasks] LEDGER ERROR: %d task(s) - %s", len(failures), now.Format(time.RFC3339))
+	if err := e.Email.SendEmail(ctx, to, cc, subject, notify.RenderLedgerAlertEmail(data)); err != nil {
+		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to send ledger error alert", "failures", len(failures), "err", err)
+		return &TaskError{Task: ledgerAlertTaskName, Stage: StageAlert, Err: err}
+	}
+	slog.InfoContext(ctx, "csm-scheduled-tasks: ledger error alert sent", "failures", len(failures), "to", len(to))
+	return nil
+}
+
+// appendUnique appends each of vals to dst unless already present.
+func appendUnique(dst []string, vals ...string) []string {
+	for _, v := range vals {
+		seen := false
+		for _, d := range dst {
+			if d == v {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			dst = append(dst, v)
+		}
+	}
+	return dst
+}
+
+// maxSummaryLen bounds summarizeError's fallback branch.
+const maxSummaryLen = 300
+
+// summarizeError turns a ledger client error into one short, log-safe line
+// for the ledger alert email. The typed failures this component actually
+// produces are named explicitly — an entity-service non-2xx
+// (*apierror.Error, whose Error() already omits the body), a token-endpoint
+// rejection (*oauth2.RetrieveError, whose Error() would otherwise include
+// the token response body), a timeout, a cancellation, or a transport-level
+// failure (*url.Error, whose Error() would otherwise echo the full request
+// URL). Anything else falls back to the error text with whitespace
+// collapsed and length bounded.
+func summarizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *apierror.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("entity-service returned HTTP %d", apiErr.StatusCode)
+	}
+	var tokenErr *oauth2.RetrieveError
+	if errors.As(err, &tokenErr) {
+		if tokenErr.Response != nil {
+			return fmt.Sprintf("token endpoint returned HTTP %d", tokenErr.Response.StatusCode)
+		}
+		return "token endpoint rejected the credentials request"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "request timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "request cancelled (the process was interrupted)"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return fmt.Sprintf("%s request failed: %s", urlErr.Op, collapse(urlErr.Err.Error()))
+	}
+	return collapse(err.Error())
+}
+
+// collapse folds all whitespace runs in s into single spaces and truncates
+// to maxSummaryLen.
+func collapse(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > maxSummaryLen {
+		return s[:maxSummaryLen] + "…"
+	}
+	return s
 }
 
 // staleClaimMargin is how many missed ticks a claim is allowed to go
