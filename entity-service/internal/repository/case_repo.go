@@ -1452,7 +1452,10 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 		typeFilter = fmt.Sprintf(" AND cc.type = $%d::comment_type_enum", len(args))
 	}
 
-	countQuery := `SELECT COUNT(*) FROM comment cc WHERE cc.work_item_id = $1` + typeFilter
+	// A soft-deleted comment (DELETE /comments/{id}, migration 0131) is
+	// retracted: it leaves the case thread for everyone. Internal notes are
+	// hidden from non-internal callers by the comment RLS policy (0179).
+	countQuery := `SELECT COUNT(*) FROM comment cc WHERE cc.work_item_id = $1 AND cc.deleted_at IS NULL` + typeFilter
 	// LEFT JOIN "user" by email match: comment.created_by is a free-text
 	// VARCHAR (see CreateCaseComment above), not a FK, so a real user id/name
 	// is only available when it happens to match a known user's email.
@@ -1461,7 +1464,7 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 		       u.id, COALESCE(u.name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''))
 		FROM comment cc
 		LEFT JOIN "user" u ON LOWER(u.email) = LOWER(cc.created_by)
-		WHERE cc.work_item_id = $1%s
+		WHERE cc.work_item_id = $1 AND cc.deleted_at IS NULL%s
 		ORDER BY cc.created_on DESC, cc.id
 		LIMIT $%d OFFSET $%d`, typeFilter, len(args)+1, len(args)+2)
 
@@ -3205,7 +3208,7 @@ func (r *caseRepo) SearchCaseActivities(ctx context.Context, req domain.SearchCa
 
 	countQuery := `
 		SELECT
-			(SELECT COUNT(*) FROM comment WHERE work_item_id = $1) +
+			(SELECT COUNT(*) FROM comment WHERE work_item_id = $1 AND deleted_at IS NULL) +
 			(SELECT COUNT(*) FROM case_attachment WHERE case_id = $1 AND status = 'complete')`
 	if includeFieldChanges {
 		countQuery += ` + (SELECT COUNT(*) FROM work_item_activity WHERE work_item_id = $1)`
@@ -3238,7 +3241,7 @@ func (r *caseRepo) SearchCaseActivities(ctx context.Context, req domain.SearchCa
 					cm.type
 				FROM comment cm
 				LEFT JOIN "user" u1 ON LOWER(u1.email) = LOWER(cm.created_by)
-				WHERE cm.work_item_id = $1
+				WHERE cm.work_item_id = $1 AND cm.deleted_at IS NULL
 				ORDER BY cm.id, u1.id
 			) c
 
