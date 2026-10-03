@@ -27,8 +27,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
@@ -90,6 +93,11 @@ type Engine struct {
 	// bookkeepingContext — so this is the only thing limiting them. Zero
 	// means defaultBookkeepingTimeout.
 	BookkeepingTimeout time.Duration
+	// Concurrency is how many task attempts Tick runs at once. Tasks are
+	// always started in shortest-interval-first order (see orderTasks);
+	// values above 1 additionally stop one slow handler from holding every
+	// later task. Zero or one means strictly sequential.
+	Concurrency int
 }
 
 // New constructs an Engine.
@@ -148,18 +156,45 @@ var ErrInterrupted = errors.New("tick interrupted before every task was evaluate
 // non-zero and the scheduler's run history shows a failed run rather than
 // an unbroken row of green over a silent outage.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
-	var errs []error
-	var ledgerErrs []*TaskError
-	for _, task := range e.Tasks {
+	ordered := orderTasks(e.Tasks, now)
+
+	workers := e.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	// One result slot per task, in start order, so the joined error and the
+	// ledger alert list tasks deterministically whatever order they finish.
+	results := make([]error, len(ordered))
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var interrupted error
+	for i, task := range ordered {
+		sem <- struct{}{}
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			<-sem
 			slog.ErrorContext(ctx, "csm-scheduled-tasks: tick interrupted; remaining tasks not evaluated", "nextTask", task.Name, "err", ctxErr)
-			errs = append(errs, fmt.Errorf("%w (next task: %s): %v", ErrInterrupted, task.Name, ctxErr))
+			interrupted = fmt.Errorf("%w (next task: %s): %v", ErrInterrupted, task.Name, ctxErr)
 			break
 		}
-		if err := e.attempt(ctx, task, now); err != nil {
+		wg.Add(1)
+		go func(i int, task registry.Task) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[i] = e.attempt(ctx, task, now)
+		}(i, task)
+	}
+	wg.Wait()
+
+	var errs []error
+	var ledgerErrs []*TaskError
+	for _, err := range results {
+		if err != nil {
 			errs = append(errs, err)
 			ledgerErrs = append(ledgerErrs, ledgerStageErrors(err)...)
 		}
+	}
+	if interrupted != nil {
+		errs = append(errs, interrupted)
 	}
 	// Ledger-stage failures get one aggregated alert per tick, sent after
 	// every task has been evaluated — see alertLedgerFailures. The
@@ -340,6 +375,88 @@ func collapse(s string) string {
 // in progress.
 const staleClaimMargin = 2
 
+// maxHandlerTimeout caps the timeout derived from a schedule, so a daily
+// task's handler is bounded to something reasonable rather than a day.
+const maxHandlerTimeout = 30 * time.Minute
+
+// handlerTimeout is the budget for one Handler call: task.Timeout when set,
+// otherwise the schedule's shortest inter-fire gap capped at
+// maxHandlerTimeout — a handler still running when its own next period
+// comes due has already lost that period.
+func handlerTimeout(task registry.Task, now time.Time) time.Duration {
+	if task.Timeout > 0 {
+		return task.Timeout
+	}
+	gap, err := schedule.MinInterval(task.Schedule, now)
+	if err != nil || gap <= 0 || gap > maxHandlerTimeout {
+		return maxHandlerTimeout
+	}
+	return gap
+}
+
+// staleClaimAfter sizes the ledger's orphaned-claim window for one claim:
+// the usual staleClaimMargin driver ticks, widened when the handler's own
+// timeout plus one tick is longer — otherwise a handler legitimately still
+// running could be reclaimed and run a second time concurrently by the
+// next invocation.
+func (e *Engine) staleClaimAfter(timeout time.Duration) time.Duration {
+	window := staleClaimMargin * e.DriverInterval
+	if w := timeout + e.DriverInterval; w > window {
+		window = w
+	}
+	return window
+}
+
+// orderTasks returns tasks sorted by their schedule's MinInterval,
+// shortest first, keeping registration order among equals — so the
+// latency-sensitive five-minute tasks are started before a fifteen-minute
+// or daily one can hold the tick. A schedule that cannot be parsed sorts
+// last (its attempt reports the error).
+func orderTasks(tasks []registry.Task, now time.Time) []registry.Task {
+	type keyed struct {
+		task registry.Task
+		gap  time.Duration
+	}
+	ks := make([]keyed, len(tasks))
+	for i, t := range tasks {
+		gap, err := schedule.MinInterval(t.Schedule, now)
+		if err != nil {
+			gap = time.Duration(math.MaxInt64)
+		}
+		ks[i] = keyed{t, gap}
+	}
+	sort.SliceStable(ks, func(i, j int) bool { return ks[i].gap < ks[j].gap })
+	out := make([]registry.Task, len(ks))
+	for i, k := range ks {
+		out[i] = k.task
+	}
+	return out
+}
+
+// ValidateCadence checks every task's schedule against the driver
+// interval: a schedule whose shortest gap between firings is shorter than
+// driverInterval can never be honoured, and its failed periods would be
+// superseded before their retry (which defaults to driverInterval) came
+// due. Returns an error naming every offending task, or nil.
+func ValidateCadence(tasks []registry.Task, driverInterval time.Duration, now time.Time) error {
+	var bad []string
+	for _, t := range tasks {
+		gap, err := schedule.MinInterval(t.Schedule, now)
+		if err != nil {
+			bad = append(bad, fmt.Sprintf("%s (%v)", t.Name, err))
+			continue
+		}
+		if gap < driverInterval {
+			bad = append(bad, fmt.Sprintf("%s fires every %s", t.Name, gap))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("driver interval %s is longer than the tightest registered schedule; set DRIVER_INTERVAL to the scheduler trigger cadence (and that trigger to at most the tightest schedule): %s",
+			driverInterval, strings.Join(bad, "; "))
+	}
+	return nil
+}
+
 // defaultBookkeepingTimeout is Engine.BookkeepingTimeout when unset: long
 // enough for one entity-service PATCH or one e-mail service POST on a
 // healthy network, short enough that a hung ledger cannot hold a
@@ -375,7 +492,8 @@ func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time)
 		return &TaskError{Task: task.Name, Stage: StageSchedule, Err: err}
 	}
 
-	claim, err := e.Ledger.Attempt(ctx, task.Name, period, staleClaimMargin*e.DriverInterval)
+	timeout := handlerTimeout(task, now)
+	claim, err := e.Ledger.Attempt(ctx, task.Name, period, e.staleClaimAfter(timeout))
 	if err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: claim attempt failed", "task", task.Name, "period", period, "err", err)
 		return &TaskError{Task: task.Name, Stage: StageClaim, Err: err}
@@ -385,8 +503,11 @@ func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time)
 		return nil
 	}
 
-	slog.InfoContext(ctx, "csm-scheduled-tasks: running", "task", task.Name, "period", period, "attempt", claim.Run.AttemptCount)
-	if handlerErr := task.Handler(ctx); handlerErr != nil {
+	slog.InfoContext(ctx, "csm-scheduled-tasks: running", "task", task.Name, "period", period, "attempt", claim.Run.AttemptCount, "timeout", timeout.String())
+	hctx, cancel := context.WithTimeout(ctx, timeout)
+	handlerErr := task.Handler(hctx)
+	cancel()
+	if handlerErr != nil {
 		return e.recordFailure(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount, handlerErr, now)
 	}
 	return e.recordSuccess(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount)
