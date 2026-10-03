@@ -333,6 +333,9 @@ func (h *CaseHandler) GetCaseAttachmentContent(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", "attachment")
+	// Tell the browser to honour the Content-Type above rather than sniff
+	// the bytes for a type of its own choosing.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(content) // #nosec G705 -- Content-Type is allowlisted above; Content-Disposition: attachment prevents inline rendering
 }
 
