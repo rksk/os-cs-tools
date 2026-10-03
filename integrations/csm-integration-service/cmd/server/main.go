@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-integration-service/internal/middleware"
 )
 
@@ -57,9 +58,9 @@ func main() {
 	// deploy-time misconfiguration, not something this service validates
 	// defensively -- the resulting entity-service 403 surfaces normally.
 	umtActorEmail := os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL")
-	health := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	// GET /health reports whether the entity service is reachable (cached; see
+	// handler.HealthHandler), not merely that this process is up.
+	health := handler.NewHealthHandler(entityClient)
 
 	// REQUIRE_OPERATION_SCOPES switches the per-operation scope check (see
 	// cmd/server/routes.go for the route-to-scope table and

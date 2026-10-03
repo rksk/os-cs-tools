@@ -199,13 +199,22 @@ Contacts search and opportunity/invoice/link reads work over M2M only if this se
   upgrade-insecure-requests`, and `Strict-Transport-Security:
   max-age=31536000; includeSubDomains` on every response
 - `CorrelationID` (`internal/middleware/correlation.go`): reads
-  `X-CSM-Correlation-ID` from the incoming request or generates a UUID v4; ensures
+  `X-CSM-Correlation-ID` from the incoming request and keeps it only if it is at
+  most 128 bytes of `[A-Za-z0-9._-]` (otherwise generates a UUID v4); ensures
   the ID carries a `cis-` prefix (CSM Integration Service) either way, without
   double-prefixing an ID that already has it; stores the ID in context for the
   slog handler and for the entity client to forward; echoes the ID in the
   response header
 - `Logger` (`internal/middleware/logger.go`): logs every completed request (method,
-  path, status, elapsed) via slog
+  path, status, elapsed) via slog, recording the first status actually sent;
+  `GET /health` polls are served but not logged
+
+`GET /health` (`internal/handler/health.go`) is a real dependency check: 200
+`{"status":"ok"}` while the entity service's own public `/health` answers 2xx,
+503 `{"status":"unavailable"}` otherwise, with the probe result cached for 15 s
+and one probe in flight at a time. `apierror.Error.Error()` reports the
+upstream status only — never the body — so a wrapped upstream error is safe to
+log; read `Body` explicitly when it is needed.
 - `ScopeGuard` (`internal/middleware/scopes.go`): not in the outer chain but
   wrapped around every route except `GET /health` by `newMux`
   (`cmd/server/routes.go`); rejects a request whose forwarded token lacks the
