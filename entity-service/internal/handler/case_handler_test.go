@@ -787,3 +787,40 @@ func TestActorEmail_RequiresAnAllowlistedInternalClient(t *testing.T) {
 		})
 	}
 }
+
+// contentCaseService serves one attachment's bytes and type.
+type contentCaseService struct {
+	service.CaseService
+	content     []byte
+	contentType string
+}
+
+func (s contentCaseService) GetCaseAttachmentContent(context.Context, string) ([]byte, string, error) {
+	return s.content, s.contentType, nil
+}
+
+// TestGetCaseAttachmentContent_DownloadHeaders pins the headers every download
+// carries: the allow-listed (or fallback) type, attachment disposition, and
+// nosniff so the browser does not second-guess that type.
+func TestGetCaseAttachmentContent_DownloadHeaders(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"text/plain; charset=utf-8", "text/plain"},
+		{"text/html", "application/octet-stream"},
+	} {
+		h := NewCaseHandler(contentCaseService{content: []byte("hello"), contentType: tc.in}, nil, nil)
+		req := httptest.NewRequest(http.MethodGet, "/attachments/a-1/content", nil)
+		req.SetPathValue("id", "a-1")
+		rec := httptest.NewRecorder()
+		h.GetCaseAttachmentContent(rec, req)
+
+		if got := rec.Header().Get("Content-Type"); got != tc.want {
+			t.Errorf("%s: Content-Type = %q, want %q", tc.in, got, tc.want)
+		}
+		if got := rec.Header().Get("Content-Disposition"); got != "attachment" {
+			t.Errorf("%s: Content-Disposition = %q, want attachment", tc.in, got)
+		}
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", tc.in, got)
+		}
+	}
+}
