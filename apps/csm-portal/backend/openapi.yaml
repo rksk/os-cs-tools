@@ -10448,6 +10448,9 @@ paths:
   /files:
     get:
       summary: List files in a Google Drive folder.
+      description: >-
+        Only a configured root folder (GOOGLE_DRIVE_ROOT_FOLDER_IDS) or a folder
+        below one can be listed; any other folderId is answered with 403.
       operationId: listFiles
       parameters:
         - name: folderId
@@ -10492,6 +10495,10 @@ paths:
   /files/search:
     get:
       summary: Find a Google Drive folder by name.
+      description: >-
+        Returns the first folder with that exact name that is a configured root
+        folder (GOOGLE_DRIVE_ROOT_FOLDER_IDS) or lies below one; 404 when there
+        is none.
       operationId: searchFolder
       parameters:
         - name: folderName
