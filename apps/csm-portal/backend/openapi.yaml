@@ -132,11 +132,14 @@ paths:
       parameters:
         - name: id
           in: path
-          description: UUID of the case.
+          description: >-
+            The case's UUID, the legacy data source's 32-character hexadecimal record id,
+            or a case number (2-5 letters followed by 4-12 digits). Any other shape is
+            rejected with 400.
           required: true
           schema:
             type: string
-            format: uuid
+            pattern: '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32}|[A-Za-z]{2,5}[0-9]{4,12})$'
       responses:
         "200":
           description: The enriched case with the given ID.
@@ -187,11 +190,14 @@ paths:
       parameters:
         - name: id
           in: path
-          description: UUID of the case.
+          description: >-
+            The case's UUID, the legacy data source's 32-character hexadecimal record id,
+            or a case number (2-5 letters followed by 4-12 digits). Any other shape is
+            rejected with 400.
           required: true
           schema:
             type: string
-            format: uuid
+            pattern: '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32}|[A-Za-z]{2,5}[0-9]{4,12})$'
       requestBody:
         required: true
         content:

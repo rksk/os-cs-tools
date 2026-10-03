@@ -1252,27 +1252,26 @@ func TestPatchCase(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
-	t.Run("allows non-UUID case ID when x-user-id-token is present", func(t *testing.T) {
+	t.Run("accepts a 32-hex record id", func(t *testing.T) {
 		var capturedID string
 		client := &mockEntityCaseClient{
 			getCaseFn: func(_ context.Context, caseID string) ([]byte, error) {
 				capturedID = caseID
-				return []byte(`{"id":"sn-123","state":"open"}`), nil
+				return []byte(`{"id":"0123456789abcdef0123456789abcdef","state":"open"}`), nil
 			},
 			patchCaseFn: func(_ context.Context, caseID string, _ []byte) ([]byte, error) {
 				capturedID = caseID
-				return []byte(`{"id":"sn-123","state":"work_in_progress"}`), nil
+				return []byte(`{"id":"0123456789abcdef0123456789abcdef","state":"work_in_progress"}`), nil
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/sn-123", strings.NewReader(validPayload)))
-		r.SetPathValue("id", "sn-123")
-		r.Header.Set("x-user-id-token", "token-value")
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/0123456789abcdef0123456789abcdef", strings.NewReader(validPayload)))
+		r.SetPathValue("id", "0123456789abcdef0123456789abcdef")
 		w := httptest.NewRecorder()
 		h.PatchCase(w, r)
 		assertStatus(t, w, http.StatusOK)
-		if capturedID != "sn-123" {
-			t.Errorf("upstream received caseID %q, want %q", capturedID, "sn-123")
+		if capturedID != "0123456789abcdef0123456789abcdef" {
+			t.Errorf("upstream received caseID %q, want %q", capturedID, "0123456789abcdef0123456789abcdef")
 		}
 	})
 
@@ -1801,23 +1800,22 @@ func TestGetCase(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
-	t.Run("allows non-UUID case ID when x-user-id-token is present", func(t *testing.T) {
+	t.Run("accepts a 32-hex record id", func(t *testing.T) {
 		var capturedID string
 		client := &mockEntityCaseClient{
 			getCaseFn: func(_ context.Context, caseID string) ([]byte, error) {
 				capturedID = caseID
-				return []byte(`{"id":"sn-123","state":"open"}`), nil
+				return []byte(`{"id":"0123456789abcdef0123456789abcdef","state":"open"}`), nil
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/sn-123", nil))
-		r.SetPathValue("id", "sn-123")
-		r.Header.Set("x-user-id-token", "token-value")
+		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/0123456789abcdef0123456789abcdef", nil))
+		r.SetPathValue("id", "0123456789abcdef0123456789abcdef")
 		w := httptest.NewRecorder()
 		h.GetCase(w, r)
 		assertStatus(t, w, http.StatusOK)
-		if capturedID != "sn-123" {
-			t.Errorf("upstream received caseID %q, want %q", capturedID, "sn-123")
+		if capturedID != "0123456789abcdef0123456789abcdef" {
+			t.Errorf("upstream received caseID %q, want %q", capturedID, "0123456789abcdef0123456789abcdef")
 		}
 	})
 
@@ -4229,4 +4227,46 @@ func TestSplGetAttachmentsInfo_MissingCaseIDIs400(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetAttachmentsInfo(w, r)
 	assertStatus(t, w, http.StatusBadRequest)
+}
+
+// TestCaseIDValidationIgnoresHeaders: GET and PATCH /cases/{id} validate the id
+// shape whatever headers the request carries.
+func TestCaseIDValidationIgnoresHeaders(t *testing.T) {
+	good := []string{"11111111-1111-1111-1111-111111111111", "0123456789ABCDEF0123456789abcdef", "CS0001234", "cs12345678"}
+	bad := []string{"sn-123", "../admin", "CS12", "1111", "0123456789abcdef0123456789abcde", "CS0001234;x", strings.Repeat("a", 40)}
+	for _, id := range good {
+		if !caseIDRe.MatchString(id) {
+			t.Errorf("caseIDRe rejected %q", id)
+		}
+	}
+	for _, id := range bad {
+		if caseIDRe.MatchString(id) {
+			t.Errorf("caseIDRe accepted %q", id)
+		}
+		called := false
+		h := NewCaseHandler(&mockEntityCaseClient{
+			getCaseFn: func(context.Context, string) ([]byte, error) { called = true; return []byte(`{}`), nil },
+			patchCaseFn: func(context.Context, string, []byte) ([]byte, error) {
+				called = true
+				return []byte(`{}`), nil
+			},
+		})
+		for _, method := range []string{http.MethodGet, http.MethodPatch} {
+			r := withUser(httptest.NewRequest(method, "/cases/x", strings.NewReader(`{"state":"open"}`)))
+			r.SetPathValue("id", id)
+			r.Header.Set("x-user-id-token", "token-value")
+			w := httptest.NewRecorder()
+			if method == http.MethodGet {
+				h.GetCase(w, r)
+			} else {
+				h.PatchCase(w, r)
+			}
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s %q with x-user-id-token: status = %d, want 400", method, id, w.Code)
+			}
+		}
+		if called {
+			t.Errorf("%q: upstream must not be called", id)
+		}
+	}
 }
