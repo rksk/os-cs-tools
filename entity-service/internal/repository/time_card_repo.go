@@ -422,11 +422,11 @@ func (r *timeCardRepo) SearchCaseTimeCards(ctx context.Context, req domain.Searc
 	dataQuery := fmt.Sprintf(`
 		SELECT wi.id, wi.number, wi.subject, wi.created_on, wi.updated_on, wi.created_by, wi.updated_by,
 		       p.id, p.name,
-		       COALESCE(SUM(tc.analyzing_minutes + tc.setting_up_minutes + tc.reproducing_debugging_minutes + tc.providing_solution_minutes + tc.patching_minutes), 0) AS total_minutes,
+		       COALESCE(SUM(`+timeCardMinutesExpr+`), 0) AS total_minutes,
 		       COUNT(tc.id) AS total_count,
-		       COALESCE(SUM(CASE WHEN tc.is_billable THEN tc.analyzing_minutes + tc.setting_up_minutes + tc.reproducing_debugging_minutes + tc.providing_solution_minutes + tc.patching_minutes ELSE 0 END), 0) AS billable_minutes,
+		       COALESCE(SUM(CASE WHEN tc.is_billable THEN `+timeCardMinutesExpr+` ELSE 0 END), 0) AS billable_minutes,
 		       COUNT(*) FILTER (WHERE tc.is_billable) AS billable_count,
-		       COALESCE(SUM(CASE WHEN NOT COALESCE(tc.is_billable, false) THEN tc.analyzing_minutes + tc.setting_up_minutes + tc.reproducing_debugging_minutes + tc.providing_solution_minutes + tc.patching_minutes ELSE 0 END), 0) AS non_billable_minutes,
+		       COALESCE(SUM(CASE WHEN NOT COALESCE(tc.is_billable, false) THEN `+timeCardMinutesExpr+` ELSE 0 END), 0) AS non_billable_minutes,
 		       COUNT(*) FILTER (WHERE NOT COALESCE(tc.is_billable, false)) AS non_billable_count
 		FROM time_card tc
 		JOIN work_item wi ON wi.id = tc.case_id
