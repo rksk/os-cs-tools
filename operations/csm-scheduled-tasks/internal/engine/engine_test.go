@@ -539,6 +539,23 @@ func TestTick_ExplicitTimeoutWinsAndStopsAHungHandler(t *testing.T) {
 	}
 }
 
+func TestTick_HandlerSeesTheClaimedPeriod(t *testing.T) {
+	var got time.Time
+	var ok bool
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "0 3 * * *", Handler: func(ctx context.Context) error {
+			got, ok = registry.PeriodFrom(ctx)
+			return nil
+		}},
+	}, &fakeLedger{allowed: true}, &fakeEmail{})
+
+	now := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
+	_ = eng.Tick(context.Background(), now)
+	if !ok || !got.Equal(time.Date(2026, 10, 2, 3, 0, 0, 0, time.UTC)) {
+		t.Fatalf("the handler must see the period it was claimed for, got %v (set=%v)", got, ok)
+	}
+}
+
 func TestHandlerTimeout(t *testing.T) {
 	now := time.Date(2026, 10, 1, 10, 2, 0, 0, time.UTC)
 	cases := []struct {

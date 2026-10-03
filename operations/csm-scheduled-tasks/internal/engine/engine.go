@@ -504,7 +504,7 @@ func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time)
 	}
 
 	slog.InfoContext(ctx, "csm-scheduled-tasks: running", "task", task.Name, "period", period, "attempt", claim.Run.AttemptCount, "timeout", timeout.String())
-	hctx, cancel := context.WithTimeout(ctx, timeout)
+	hctx, cancel := context.WithTimeout(registry.WithPeriod(ctx, period), timeout)
 	handlerErr := task.Handler(hctx)
 	cancel()
 	if handlerErr != nil {

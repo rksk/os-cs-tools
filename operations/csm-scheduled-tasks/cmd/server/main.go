@@ -52,6 +52,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/outagenotify"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/outagenotifytask"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/registry"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/reportguard"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/stalecases"
 )
 
@@ -342,6 +343,7 @@ func main() {
 			Name:     staleCasesTaskName,
 			Schedule: scheduleFor(scheduleOverrides, staleCasesTaskName, "0 7 * * *"),
 			Handler: stalecases.SendReport(entityCasesClient, emailClient,
+				reportguard.New(ledgerClient, staleCasesTaskName),
 				staleCaseThreshold, staleCasesTo, staleCasesCc, alertsEnabled),
 			To: staleCasesTo,
 			Cc: staleCasesCc,
@@ -355,7 +357,9 @@ func main() {
 		{
 			Name:     openCasesTaskName,
 			Schedule: scheduleFor(scheduleOverrides, openCasesTaskName, "0 8 * * *"),
-			Handler:  opencases.SendReport(entityCasesClient, emailClient, openCasesTo, openCasesCc, alertsEnabled),
+			Handler: opencases.SendReport(entityCasesClient, emailClient,
+				reportguard.New(ledgerClient, openCasesTaskName),
+				openCasesTo, openCasesCc, alertsEnabled),
 			To:       openCasesTo,
 			Cc:       openCasesCc,
 		},
