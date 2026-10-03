@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -122,5 +123,40 @@ func TestConsumerRegistry_AddReturnsAndLists(t *testing.T) {
 	}
 	for _, c := range got {
 		c.Close()
+	}
+}
+
+// TestConsumerRegistry_DrainAndCloseWaitsForRun: drainAndClose returns
+// once every consumer's Run has returned, and closes them.
+func TestConsumerRegistry_DrainAndCloseWaitsForRun(t *testing.T) {
+	reg := &consumerRegistry{}
+	cfg := eventbus.Config{Broker: "127.0.0.1:1", ConnectionString: "x", Topic: "t"}
+	c := eventbus.NewConsumer(cfg, "g", eventbus.WithName("main"), eventbus.WithDrainTimeout(10*time.Millisecond))
+	reg.add([]*eventbus.Consumer{c})
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.Run(ctx, func(context.Context, eventbus.Record) error { return nil }, nil)
+	cancel()
+	start := time.Now()
+	reg.drainAndClose(5 * time.Second)
+	select {
+	case <-c.Done():
+	default:
+		t.Fatal("drainAndClose returned before Run did")
+	}
+	if time.Since(start) > 4*time.Second {
+		t.Errorf("drainAndClose took %v, want it to return as soon as Run did", time.Since(start))
+	}
+}
+
+// TestConsumerRegistry_DrainAndCloseIsBounded: a consumer whose Run never
+// started (so never finishes) does not hold shutdown past the wait.
+func TestConsumerRegistry_DrainAndCloseIsBounded(t *testing.T) {
+	reg := &consumerRegistry{}
+	cfg := eventbus.Config{Broker: "127.0.0.1:1", ConnectionString: "x", Topic: "t"}
+	reg.add([]*eventbus.Consumer{eventbus.NewConsumer(cfg, "g"), eventbus.NewConsumer(cfg, "g")})
+	start := time.Now()
+	reg.drainAndClose(50 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("drainAndClose took %v with a 50ms budget", elapsed)
 	}
 }
