@@ -9321,6 +9321,9 @@ paths:
   # /cases search/detail routes above. Off by default (SPL_ENABLED); see
   # cmd/server/main.go. Path parameters here are ServiceNow sys_ids or
   # case/account/project numbers, not UUIDs.
+  # State-changing routes here (every non-GET /customer-health route except
+  # POST /customer-health/summary, and POST /scan-user) additionally require
+  # the `write` permission; a caller without it receives 403.
   # ---------------------------------------------------------------------
 
   /accounts/{accountId}/escalations:
@@ -22485,6 +22488,12 @@ components:
           type: string
         isPartner:
           type: boolean
+        resendInvitation:
+          type: boolean
+          default: false
+          description: >-
+            When true and the contact has not accepted their project invitation, the invitation is
+            re-sent. Without it the scan only reports the state and sends nothing.
 
     SplScanInformation:
       type: object
