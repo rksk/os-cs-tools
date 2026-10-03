@@ -335,8 +335,11 @@ func main() {
 	// /health/dependencies are the two exceptions and are exempt in the Auth
 	// middleware too.
 	mux := http.NewServeMux()
+	// Every route's response also passes through RedactInlineImages, which
+	// strips inline image data from JSON for a caller without the attachment
+	// download permission (a no-op pass-through for one who holds it).
 	route := func(pattern string, perm handler.Permission, h http.HandlerFunc) {
-		mux.HandleFunc(pattern, accessGuard.Require(perm, h))
+		mux.HandleFunc(pattern, accessGuard.Require(perm, handler.RedactInlineImages(accessGuard, h)))
 	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -149,25 +149,21 @@ returns to *any* caller holding `PermView` — there is no separate attachment r
 `canDownloadAttachment`, could see a pasted screenshot in a case comment despite the `.iix` mechanism
 being correctly gated.
 
-`redactRawBase64Images` strips the base64 payload out of raw response bytes (a compiled regex over
-`data:image/...;base64,<payload>`, replaced with a short inert placeholder that still starts with
-`data:image/` — the frontend's own `useResolvedInlineImageHtml` still recognizes and hides it, see
-`apps/csm-portal/webapp`'s own `CLAUDE.md`) for a caller who fails `shouldRedactInlineImages` (no
-`PermDownloadAttachment`, or `access == nil`, which fails closed the same way `CaseHandler`'s own
-Security Center check does). It operates on the raw `[]byte` response — comment/description HTML
-appears under different field names across endpoints (`content`, `bodyHtml`, `description`, ...) and
-this backend already treats these responses as raw passthrough (see "Response shape" below); a
-byte-level substitution keeps that convention and can't miss a field by name the way a typed reshape
-could.
+`redactRawBase64Images` decodes the JSON response, walks **every string value** (field names differ
+across endpoints — `content`, `bodyHtml`, `description`, ... — so none is singled out) and replaces
+each inline image data URI with a short inert placeholder that still starts with `data:image/` (the
+frontend's own `useResolvedInlineImageHtml` still recognizes and hides it, see
+`apps/csm-portal/webapp`'s own `CLAUDE.md`). Matching happens after JSON escapes are decoded, so
+`\n`/`\r\n`-wrapped base64, `\/` and `+` cannot cut a match short; it is case-insensitive and
+accepts MIME parameters before `;base64,` and URL-encoded (non-base64) payloads. An unchanged body is
+returned byte for byte; a changed one is re-encoded with numbers kept verbatim and HTML unescaped. A
+body that is not a single JSON value falls back to the same pattern over the raw bytes.
 
-**Wired into every read response that can carry comment/description HTML**: `CaseHandler.SearchCases`/
-`SearchCaseComments`/`SearchCaseActivities`/`GetCase`, `IncidentHandler.SearchIncidents`/`GetIncident`/
-`SearchIncidentComments`/`SearchIncidentActivities`, `ChangeRequestHandler.SearchChangeRequests`/
-`GetChangeRequest`/`SearchChangeRequestComments` — each calls `WithAccessGuard` at construction (same
-pattern as `CaseHandler`'s own Security Center wiring) and checks `shouldRedactInlineImages(h.access,
-user.Roles)` immediately before its final `writeJSON`. A *create* endpoint (`CreateCaseComment` and
-its incident/change-request equivalents) is deliberately **not** redacted: the caller is the one who
-just submitted that exact content, so echoing it back leaks nothing new to them.
+**Applied once, to every route**: `route()` in `cmd/server/main.go` wraps each handler in
+`handler.RedactInlineImages(accessGuard, h)`. A caller holding `PermDownloadAttachment` passes
+straight through unbuffered; for everyone else (and when the guard is nil — fails closed) the
+response is buffered and an `application/json` body is redacted, any other content type is written
+back unchanged. New endpoints are covered automatically; do not add per-handler calls.
 
 This is the server-side half of a two-part fix — `apps/csm-portal/webapp`'s own `denyRawBase64`
 mitigation (added first, still in place) only ever hid the image *after* the bytes had already
