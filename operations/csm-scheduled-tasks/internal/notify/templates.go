@@ -246,7 +246,7 @@ var outageNotificationTemplate = bakeLogo(outageNotificationTemplateRaw)
 // OutageNotificationData is what RenderOutageNotification substitutes.
 //
 // Subject and Body arrive already rendered by entity-service, which owns the
-// wording so it can be tested against the ServiceNow original in one place.
+// wording so it can be tested against the legacy original in one place.
 // This only wraps them in the house shell.
 type OutageNotificationData struct {
 	// PhaseWord is Declared / Resolved / Update, for the banner.
@@ -258,8 +258,8 @@ type OutageNotificationData struct {
 
 // RenderOutageNotification wraps one outage notice in the standard shell.
 //
-// The body it wraps is deliberately thin: the ServiceNow flow this ports sends
-// three fixed sentences carrying no outage detail at all ("Outage {n}
+// The body it wraps is deliberately thin: the legacy workflow this replaces
+// sends three fixed sentences carrying no outage detail at all ("Outage {n}
 // declared." and so on), and the port reproduces that rather than inventing
 // content that cannot be checked against the original. See entity-service's
 // renderOutageNotification for the full reasoning. Making these emails useful

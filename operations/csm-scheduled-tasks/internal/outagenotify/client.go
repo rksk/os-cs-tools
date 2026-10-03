@@ -17,9 +17,9 @@
 // Package outagenotify is a narrow client for entity-service's outage
 // internal-notification sweep, plus the wire types it returns.
 //
-// The port of ServiceNow's `Internal Stakeholders Email Notification - Outage
-// Communication`. A sweep rather than a record trigger because nothing in this
-// stack writes `outage` — csm-sync-service mirrors it in from ServiceNow, so
+// The replacement for the legacy internal-stakeholder outage e-mail workflow.
+// A sweep rather than a record trigger because nothing in this stack writes
+// `outage` — csm-sync-service mirrors it in from the upstream data source, so
 // there is no local write to react to.
 package outagenotify
 

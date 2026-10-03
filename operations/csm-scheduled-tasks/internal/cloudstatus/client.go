@@ -15,8 +15,7 @@
 // under the License.
 
 // Package cloudstatus delivers cloud status webhooks to WSO2's public uptime
-// dashboards, completing the port of ServiceNow's `Cloud Status Event
-// Notification Flow`.
+// dashboards, replacing the legacy cloud status event notification workflow.
 //
 // The division of labour is the one this component uses everywhere:
 // entity-service decides which outage transitions the dashboards are owed and

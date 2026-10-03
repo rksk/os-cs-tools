@@ -41,8 +41,8 @@ type EmailSender interface {
 // SendCommunications returns the sub-cron handler: sweep, then send one email
 // per decision.
 //
-// *** ONE EMAIL PER OUTAGE, NOT A DIGEST. *** ServiceNow sends a separate
-// message per outage per phase, and outage mail is read as it arrives.
+// *** ONE EMAIL PER OUTAGE, NOT A DIGEST. *** The legacy workflow sends a
+// separate message per outage per phase, and outage mail is read as it arrives.
 // Batching would change what an on-call reader sees at the moment it matters.
 //
 // *** A SEND THAT FAILS IS LOST, NOT RETRIED. *** entity-service writes the
