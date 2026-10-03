@@ -680,8 +680,8 @@ var validChangeRequestCategory = map[domain.ChangeRequestCategory]bool{
 
 // snCRIntChoice mirrors a Choreo {id: <int>, label: <string>} choice-field shape.
 type snCRIntChoice struct {
-	ID    int    `json:"id"`
-	Label string `json:"label"`
+	ID    snFlexibleInt `json:"id"`
+	Label string        `json:"label"`
 }
 
 // snCRStrChoice mirrors a Choreo {id: <string>, label: <string>} choice-field shape.
@@ -1536,7 +1536,7 @@ func mapSNChangeRequestDetailToView(cr snChangeRequestDetail) domain.ChangeReque
 		result.ApprovedBy = &domain.EntityRef{ID: sysidToUUID(cr.ApprovedBy.ID), Name: cr.ApprovedBy.Name}
 	}
 	if cr.Priority != nil {
-		if label, ok := snCRPriorityLabelMap[cr.Priority.ID]; ok {
+		if label, ok := snCRPriorityLabelMap[int(cr.Priority.ID)]; ok {
 			result.Priority = &label
 		} else {
 			result.Priority = &cr.Priority.Label
