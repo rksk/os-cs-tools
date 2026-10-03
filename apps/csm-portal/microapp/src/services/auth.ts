@@ -25,7 +25,6 @@ import { queryClient } from "./queryClient";
 interface TokenPayload {
   email?: string;
   name?: string;
-  groups?: string[];
   given_name?: string;
   family_name?: string;
   // Either OIDC claim may carry the profile picture URL depending on the IdP — same fallback the
@@ -134,32 +133,6 @@ export const refreshToken = (force = false): Promise<string> => {
     inFlightRefresh = refresh;
   }
   return inFlightRefresh;
-};
-
-/**
- * Checks if the user belongs to a given group or groups based on the ID token.
- * This is a direct replacement for `handleCheckGroups`.
- * @param groupNames - A single group name or an array of group names.
- * @returns boolean - True if the user is in at least one of the required groups.
- */
-export const checkUserGroups = (groupNames: string | string[]): boolean => {
-  const token = getIdToken();
-
-  if (!token) {
-    Logger.error("ID token not found for group check.");
-    return false;
-  }
-
-  try {
-    const decoded = jwtDecode<TokenPayload>(token);
-    const userGroups = decoded.groups ?? [];
-    const requiredGroups = Array.isArray(groupNames) ? groupNames : [groupNames];
-
-    return requiredGroups.some((group) => userGroups.includes(group));
-  } catch (error) {
-    Logger.error("Failed to decode ID token for group check.", error);
-    return false;
-  }
 };
 
 /**
