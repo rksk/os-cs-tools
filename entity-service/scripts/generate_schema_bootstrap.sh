@@ -6,8 +6,9 @@
 # herein in any form is strictly forbidden, unless permitted by WSO2 expressly.
 # You may not alter or remove any copyright or other notice from copies of this content.
 
-# Concatenates migrations/*.sql, in the same order `make migrate` applies
-# them, into one handoff file for a manual run by someone without the
+# Concatenates the migrations listed by scripts/migration_order.sh, in the
+# same order `make migrate` applies them, into one handoff file for a manual
+# run by someone without the
 # Go/make/repo-clone toolchain (e.g. a DB admin applying it directly via
 # psql or a GUI SQL client). Ported from operations/csm-sync-service's own
 # script of the same name and output shape - both services migrate the same
@@ -126,7 +127,7 @@ out="${out:-dist/schema_bootstrap${label}_${file_timestamp}.sql}"
 mkdir -p "$(dirname "$out")"
 
 {
-	echo "-- Generated ${generated_at} by scripts/generate_schema_bootstrap.sh from migrations/*.sql at commit ${commit}."
+	echo "-- Generated ${generated_at} by scripts/generate_schema_bootstrap.sh from scripts/migration_order.sh at commit ${commit}."
 	if [[ -n "$since_arg" ]]; then
 		printf -- "-- Delta: migrations numbered after %04d only. For a DB that already\n" "$lower_num"
 		printf -- "-- has everything up to and including %04d applied.\n" "$lower_num"
@@ -149,7 +150,7 @@ mkdir -p "$(dirname "$out")"
 	echo
 
 	count=0
-	for f in migrations/*.sql; do
+	while IFS= read -r f; do
 		name="$(basename "$f")"
 		num=$(parse_num "$name")
 
@@ -167,7 +168,7 @@ mkdir -p "$(dirname "$out")"
 		echo "INSERT INTO csm_migration_applied_migration (filename) VALUES ('${name_escaped}');"
 		echo
 		count=$((count + 1))
-	done
+	done < <(./scripts/migration_order.sh)
 
 	echo "-- ${count} migrations combined."
 } >"$out"
