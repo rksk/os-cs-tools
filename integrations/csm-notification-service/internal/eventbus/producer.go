@@ -20,8 +20,16 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+)
+
+// publishBatchSize/publishBatchTimeout make every Publish flush at once;
+// see NewProducer.
+const (
+	publishBatchSize    = 1
+	publishBatchTimeout = 10 * time.Millisecond
 )
 
 // Producer publishes records to a single topic.
@@ -61,6 +69,18 @@ func NewProducer(cfg Config) *Producer {
 			// matching the previous Kafka client's synchronous-produce
 			// behavior.
 			RequiredAcks: kafka.RequireAll,
+			// Flush each Publish on its own. kafka-go's synchronous Writer
+			// otherwise holds a message until BatchSize (default 100)
+			// accumulate or BatchTimeout (default 1 s) passes, so a lone
+			// Publish -- every call this service makes -- waited about a
+			// second: once per dead-letter publish while the partition
+			// was blocked, and once per crossed SLA tier inside the SLA
+			// engine's sequential tick. Async is deliberately not used:
+			// every caller acts on the result (a failed dead-letter
+			// publish falls back to parking, a failed tier publish
+			// releases the tier claim for a retry).
+			BatchSize:    publishBatchSize,
+			BatchTimeout: publishBatchTimeout,
 			Transport: &kafka.Transport{
 				TLS:  &tls.Config{MinVersion: tls.VersionTLS12},
 				SASL: cfg.saslMechanism(),
