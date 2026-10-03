@@ -161,12 +161,6 @@ func (c *Client) CustomPost(ctx context.Context, path string, body []byte) ([]by
 	return c.do(ctx, http.MethodPost, path, nil, body)
 }
 
-// CustomPut performs a PUT with a JSON body against SupportPortalLite's
-// custom scoped-app REST API. Returns the raw JSON response body.
-func (c *Client) CustomPut(ctx context.Context, path string, body []byte) ([]byte, error) {
-	return c.do(ctx, http.MethodPut, path, nil, body)
-}
-
 // maxBinaryResponseBytes bounds how much of a GetBinary response this
 // client will hold in memory at once (e.g. an attachment download) --
 // without it, a large or malicious upstream response could exhaust backend
@@ -275,8 +269,8 @@ func (c *Client) doRaw(ctx context.Context, method, path string, params url.Valu
 // http.NewRequestWithContext populates automatically for the []byte-backed
 // readers this package uses), are retried -- and only when the method is
 // idempotent (isIdempotentMethod): retrying a POST that creates a record
-// (e.g. createNewEscalation) or a PATCH that appends a work note (e.g.
-// linkCaseToEscalation, PostWorkNote) risks a second create/append when the
+// (e.g. createNewEscalation) or a PATCH that changes a record (e.g.
+// linkCaseToEscalation) risks a second create or update when the
 // first attempt actually succeeded upstream but the response was lost or
 // timed out. retryBackoff is a short pause between attempts rather than an
 // immediate retry, giving a transient upstream hiccup a moment to clear.
