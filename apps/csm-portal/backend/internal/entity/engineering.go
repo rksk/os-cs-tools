@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/upstreamhttp"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -72,7 +73,7 @@ func NewEngineeringEntityClient(cfg EngineeringEntityConfig) *EngineeringEntityC
 	}
 
 	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: engineeringTokenFetchTimeout})
+		upstreamhttp.TokenClient(engineeringTokenFetchTimeout))
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
 
