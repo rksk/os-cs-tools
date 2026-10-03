@@ -270,7 +270,8 @@ export interface CasePatchPayloadDto {
   state?: CaseState;
   severity?: CaseSeverity;
   workState?: NonNullable<CaseWorkState>;
-  assigneeEmail?: string;
+  /** An email assigns the case; an explicit `null` clears the assignee. */
+  assigneeEmail?: string | null;
   resolutionCode?: CaseResolutionCode;
   cause?: CaseCause;
   closeNotes?: string;
