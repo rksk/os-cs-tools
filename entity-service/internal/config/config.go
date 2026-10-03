@@ -425,8 +425,8 @@ func Load() *Config {
 		DBUser:                                   os.Getenv("DB_USER"),
 		DBPassword:                               os.Getenv("DB_PASSWORD"),
 		DBName:                                   os.Getenv("DB_NAME"),
-		DBSSLMode:                                os.Getenv("DB_SSLMODE"),
 		DBSchema:                                 os.Getenv("DB_SCHEMA"),
+		DBSSLMode:                                defaultDBSSLMode(os.Getenv("DB_SSLMODE"), getEnvOrDefault("DB_HOST", "localhost")),
 		ServerPort:                               getEnvOrDefault("SERVER_PORT", "8080"),
 		HealthPort:                               getEnvOrDefault("HEALTH_PORT", "8081"),
 		DataSource:                               DataSource(getEnvOrDefault("DATA_SOURCE", string(DataSourcePostgres))),
@@ -624,6 +624,9 @@ func (c *Config) Validate() error {
 	// cmd/api/main.go and internal/server/routes.go. Requiring them in every
 	// mode would crash-loop existing DB-less servicenow deployments at boot
 	// with "DB_USER is required", which is what this branch exists to prevent.
+	if c.DBSSLMode != "" && !validDBSSLModes[c.DBSSLMode] {
+		return fmt.Errorf("invalid DB_SSLMODE %q: must be one of disable, allow, prefer, require, verify-ca, verify-full", c.DBSSLMode)
+	}
 	dbSet := c.DBUser != "" || c.DBPassword != "" || c.DBName != ""
 	dbComplete := c.DBUser != "" && c.DBPassword != "" && c.DBName != ""
 	dbRequired := c.DataSource == DataSourcePostgres || c.DataSource == DataSourcePostgresServiceNowDualWrite
@@ -750,7 +753,39 @@ func (c *Config) SalesEntityConfigured() bool {
 		c.SalesEntityClientSecret != ""
 }
 
-// DSN constructs a PostgreSQL connection string from the config fields.
+// validDBSSLModes are the sslmode values the Postgres driver accepts.
+var validDBSSLModes = map[string]bool{
+	"disable": true, "allow": true, "prefer": true,
+	"require": true, "verify-ca": true, "verify-full": true,
+}
+
+// defaultDBSSLMode returns DB_SSLMODE when it is set. Otherwise: "disable"
+// for a database on this machine or the local compose stack's "postgres"
+// container, and "verify-full" for any other host, so a deployment that
+// forgets the variable gets an encrypted connection to a verified server
+// rather than the driver's "prefer" (which silently falls back to
+// plaintext) or "require" (which does not check the certificate).
+func defaultDBSSLMode(explicit, host string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if isLocalDBHost(host) {
+		return "disable"
+	}
+	return "verify-full"
+}
+
+func isLocalDBHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "127.0.0.1", "::1", "postgres":
+		return true
+	}
+	return false
+}
+
+// DSN constructs a PostgreSQL connection string from the config fields. An
+// empty DBSSLMode is left out entirely: "sslmode=" (empty) is not a valid
+// value and fails at connect time.
 //
 // Pins search_path to DBSchema via the "options" connection parameter, the
 // same mechanism operations/csm-sync-service's own withSchema uses. When
@@ -767,7 +802,9 @@ func (c *Config) DSN() string {
 		Path:   c.DBName,
 	}
 	q := u.Query()
-	q.Set("sslmode", c.DBSSLMode)
+	if c.DBSSLMode != "" {
+		q.Set("sslmode", c.DBSSLMode)
+	}
 	u.RawQuery = q.Encode()
 
 	schema := c.DBSchema
