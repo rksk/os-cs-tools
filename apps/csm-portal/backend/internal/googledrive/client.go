@@ -35,7 +35,7 @@ import (
 )
 
 // driveAPIBaseURL is the Google Drive v3 REST API root. Not configurable:
-// unlike ServiceNow/entity, this is a fixed Google endpoint, not a
+// unlike the backing system/entity, this is a fixed Google endpoint, not a
 // per-deployment host.
 const driveAPIBaseURL = "https://www.googleapis.com/drive/v3"
 
@@ -109,7 +109,7 @@ var tokenRefreshTimeout = 10 * time.Second
 // backslash-escaped). The Ballerina source interpolated folderId directly
 // into its filter string with no escaping at all
 // ('${folderId}' in parents and trashed=false); this closes that same class
-// of query-injection gap ServiceNow's sysparm_query concatenation has,
+// of query-injection gap the backing system's sysparm_query concatenation has,
 // without changing which Drive API or endpoint is called.
 func escapeDriveQueryValue(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)

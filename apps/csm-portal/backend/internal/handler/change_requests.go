@@ -301,7 +301,7 @@ func (h *ChangeRequestHandler) SearchChangeRequestComments(w http.ResponseWriter
 }
 
 // DecideChangeRequestApproval handles POST /change-requests/{id}/approvals/decision. Any user
-// with access to the change request may attempt a decision; ServiceNow itself enforces that
+// with access to the change request may attempt a decision; the backing system itself enforces that
 // only the caller's own pending approval can be acted on, so this is not a bypass-only endpoint.
 func (h *ChangeRequestHandler) DecideChangeRequestApproval(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())

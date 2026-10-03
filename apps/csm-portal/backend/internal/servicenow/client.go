@@ -39,7 +39,8 @@ import (
 // Config holds the configuration for the ServiceNow client.
 type Config struct {
 	// BaseURL is snHost in the Ballerina config — the ServiceNow instance
-	// root, e.g. "https://wso2.service-now.com". Both the Table API and the
+	// root, e.g. "https://backing-system.example.com" (configuration only; there is
+	// no default). Both the Table API and the
 	// custom scoped-app API live under this same host.
 	BaseURL  string
 	Username string

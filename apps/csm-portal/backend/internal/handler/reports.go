@@ -25,7 +25,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
 )
 
-// reportsClient abstracts the ServiceNow report operations used by
+// reportsClient abstracts the backing-system report operations used by
 // ReportsHandler.
 type reportsClient interface {
 	GetSLAReport(ctx context.Context, projectSysID, from, to string) (servicenow.SLAReportDetails, error)
@@ -34,14 +34,14 @@ type reportsClient interface {
 }
 
 // ReportsHandler handles HTTP requests for SupportPortalLite's
-// project-level reports, delegating to the ServiceNow service.
+// project-level reports, delegating to the backing system service.
 type ReportsHandler struct {
 	servicenow  reportsClient
 	accessGuard *AccessGuard
 }
 
 // NewReportsHandler creates a ReportsHandler backed by the given
-// ServiceNow client. accessGuard enforces PermViewerAccess, SupportPortalLite's
+// The backing system client. accessGuard enforces PermViewerAccess, SupportPortalLite's
 // blanket audience gate.
 func NewReportsHandler(sn reportsClient, accessGuard *AccessGuard) *ReportsHandler {
 	return &ReportsHandler{servicenow: sn, accessGuard: accessGuard}

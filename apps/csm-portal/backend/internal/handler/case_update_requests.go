@@ -160,7 +160,7 @@ func (h *CaseHandler) RequestCaseUpdate(w http.ResponseWriter, r *http.Request) 
 
 	// engagementType is compared case-insensitively because it is NOT
 	// normalized before reaching this layer: entity-service's CaseView.EngagementType
-	// carries ServiceNow's raw choice-field display label unmodified (e.g.
+	// carries the backing system's raw choice-field display label unmodified (e.g.
 	// literally "Migration", capitalized) — unlike State/WorkState, which go
 	// through explicit lowering functions before reaching the domain layer. A
 	// strict-case compare would silently misclassify every real migration

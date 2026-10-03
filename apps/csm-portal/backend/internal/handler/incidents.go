@@ -721,7 +721,7 @@ type handOffIncidentResponseEnvelope struct {
 }
 
 // HandOffIncidentToSpecialist handles POST /incidents/{id}/specialist-handoffs.
-// The handoff itself can succeed (ServiceNow state committed) while the internal
+// The handoff itself can succeed (the backing-system state committed) while the internal
 // GitHub issue creation fails -- the entity service reports that as a non-nil
 // handoff.githubIssueError on an otherwise-200 response rather than an error status.
 // This is surfaced explicitly in the server log rather than left to a caller who

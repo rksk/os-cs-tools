@@ -169,10 +169,10 @@ func TestCustomerHealthHandler_GetSummary_HealthStatusFilterEmptyMatchShortCircu
 
 // TestCustomerHealthHandler_GetSummary_HealthStatusFilterStopsOnTotalCount
 // guards the fix for the pagination loop that only stopped on a
-// short page: with ServiceNow's page size at exactly the loop's batchSize,
+// short page: with the backing system's page size at exactly the loop's batchSize,
 // the old condition (len(batch.Data) < batchSize) never stops there,
 // requiring an extra round trip at best and looping forever at worst if
-// ServiceNow ignores offset and keeps returning a full page. The fix uses
+// The backing system ignores offset and keeps returning a full page. The fix uses
 // the response's own TotalCount instead.
 func TestCustomerHealthHandler_GetSummary_HealthStatusFilterStopsOnTotalCount(t *testing.T) {
 	fullPage := make([]servicenow.AccountSummary, 200)
@@ -183,7 +183,7 @@ func TestCustomerHealthHandler_GetSummary_HealthStatusFilterStopsOnTotalCount(t 
 	sn := &fakeSNCustomerHealthClient{
 		getCustomerHealthSummary: func(ctx context.Context, email, phrase, risks *string, region []string, product, abtTeam *string, offset, limit int) (*servicenow.AccountSummaryResponse, error) {
 			calls++
-			// Simulates ServiceNow ignoring offset (a real observed upstream
+			// Simulates the backing system ignoring offset (a real observed upstream
 			// quirk): every call returns the same full page, never a short
 			// one, and would keep this loop going indefinitely without the
 			// TotalCount-based stop condition this test guards.

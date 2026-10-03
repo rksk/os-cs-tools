@@ -362,14 +362,14 @@ func (h *ScheduleHandler) GetScheduleEditMarkers(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, result)
 }
 
-// viewerScheduleClient abstracts the ServiceNow ABT team schedule operation
+// viewerScheduleClient abstracts the backing system ABT team schedule operation
 // used by ViewerScheduleHandler.
 type viewerScheduleClient interface {
 	GetABTTeamSchedule(ctx context.Context, from, duration, teamID, eventType, teamScheduleURL string) (servicenow.ABTTeamScheduleData, error)
 }
 
 // ViewerScheduleHandler handles HTTP requests for the ABT team schedule,
-// delegating to the ServiceNow service.
+// delegating to the backing system service.
 type ViewerScheduleHandler struct {
 	servicenow      viewerScheduleClient
 	accessGuard     *AccessGuard
@@ -377,7 +377,7 @@ type ViewerScheduleHandler struct {
 }
 
 // NewViewerScheduleHandler creates a ViewerScheduleHandler backed by the given
-// ServiceNow client. accessGuard enforces PermViewerAccess, SupportPortalLite's
+// The backing system client. accessGuard enforces PermViewerAccess, SupportPortalLite's
 // blanket audience gate; teamScheduleURL is the static URL echoed back in
 // every response (TEAM_SCHEDULE_URL).
 func NewViewerScheduleHandler(sn viewerScheduleClient, accessGuard *AccessGuard, teamScheduleURL string) *ViewerScheduleHandler {

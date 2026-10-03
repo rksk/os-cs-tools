@@ -26,7 +26,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
 )
 
-// usageMetricsServiceNowClient abstracts the ServiceNow operations used by
+// usageMetricsServiceNowClient abstracts the backing-system operations used by
 // UsageMetricsHandler.
 type usageMetricsServiceNowClient interface {
 	GetAllProjects(ctx context.Context, search string) ([]byte, error)
@@ -43,7 +43,7 @@ type usageMetricsServiceNowClient interface {
 }
 
 // UsageMetricsHandler handles HTTP requests for the SupportPortalLite
-// usage-metrics domain (/usage-metrics/*), delegating to ServiceNow's
+// usage-metrics domain (/usage-metrics/*), delegating to the backing system's
 // custom scoped-app API. Every endpoint in this domain requires both the
 // blanket PermViewerAccess gate and the narrower PermUsageMetricsViewer gate —
 // mirrors Ballerina operations:checkUsageMetricsAccess, which every
