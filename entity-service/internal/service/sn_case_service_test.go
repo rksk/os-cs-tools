@@ -2573,9 +2573,10 @@ func TestSNCaseService_SearchTags_QueryTooLong(t *testing.T) {
 // TestCaseService_SearchTags_RequiresValidToken covers caseService.SearchTags
 // now that it's backed by real Postgres storage (tag/work_item_tag, migration
 // 000021) instead of being an unconditional ServiceUnavailableError stub --
-// it still resolves the caller's identity first (see resolveActor), so an
-// unparseable x-user-id-token ("token" here has no "." separators, not a
-// real JWT) is rejected before ever reaching the (nil in this test) repo.
+// it still resolves the caller's identity first (see resolveActor), so a
+// request whose token identifies no user ("token" here is not a real JWT)
+// is rejected as unauthenticated before ever reaching the (nil in this test)
+// repo.
 func TestCaseService_SearchTags_RequiresValidToken(t *testing.T) {
 	svc := &caseService{}
 
@@ -2583,8 +2584,8 @@ func TestCaseService_SearchTags_RequiresValidToken(t *testing.T) {
 		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
 	}); err == nil {
 		t.Fatalf("expected error")
-	} else if _, ok := err.(*apierror.ValidationError); !ok {
-		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	} else if _, ok := err.(*apierror.UnauthorizedError); !ok {
+		t.Fatalf("expected *apierror.UnauthorizedError, got %T: %v", err, err)
 	}
 }
 

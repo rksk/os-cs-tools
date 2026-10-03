@@ -4691,7 +4691,7 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
-	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
+	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(ctx)
 	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
 	if err != nil {
 		return domain.SearchCasesResponse{}, err
@@ -5019,7 +5019,7 @@ func (s *snCaseService) AggregateCases(ctx context.Context, req domain.Aggregate
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
-	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
+	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(ctx)
 	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
 	if err != nil {
 		return domain.AggregateResponse{}, err

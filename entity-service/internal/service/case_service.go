@@ -30,7 +30,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/validate"
 )
@@ -469,13 +468,9 @@ func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseReque
 	// already enforced above.
 
 	if req.CreatedBy == "" {
-		token := middleware.UserIDTokenFromContext(ctx)
-		if token == "" {
-			return domain.CreateCaseResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-		}
-		email, err := emailFromJWT(token)
+		email, err := callerEmail(ctx)
 		if err != nil {
-			return domain.CreateCaseResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+			return domain.CreateCaseResponse{}, err
 		}
 		user, err := s.userRepo.GetUserByEmail(ctx, email)
 		if err != nil {
@@ -496,9 +491,9 @@ func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseReque
 	}
 	if len(watcherIDs) > 0 {
 		// updated_by on the watcher write is the caller's email, taken from
-		// the token validateCreateWatchList already accepted.
-		callerEmail, _ := emailFromJWT(middleware.UserIDTokenFromContext(ctx))
-		s.addRequestedWatchers(ctx, c.ID, callerEmail, watcherIDs)
+		// the identity validateCreateWatchList already accepted.
+		watcherActor, _ := optionalCallerEmail(ctx)
+		s.addRequestedWatchers(ctx, c.ID, watcherActor, watcherIDs)
 	}
 	// Publish case.created here too -- previously only createCaseSNFirst
 	// (the SN-mirror path, reached when s.snMirror != nil) did this, so a
@@ -1008,13 +1003,9 @@ var validCommentType = map[domain.CommentType]bool{
 
 // CreateCaseComment implements CaseService.
 func (s *caseService) CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CreateCaseCommentResponse, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.CreateCaseCommentResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	email, err := emailFromJWT(token)
+	email, err := callerEmail(ctx)
 	if err != nil {
-		return domain.CreateCaseCommentResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.CreateCaseCommentResponse{}, err
 	}
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -2471,8 +2462,7 @@ func prepareCaseSearchFilters(ctx context.Context, req domain.SearchCasesRequest
 		return domain.SearchCasesRequest{}, err
 	}
 
-	token := middleware.UserIDTokenFromContext(ctx)
-	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
+	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(ctx)
 	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
 	if err != nil {
 		return domain.SearchCasesRequest{}, err
@@ -2702,13 +2692,9 @@ func (s *caseService) AggregateCases(ctx context.Context, req domain.AggregateCa
 // "the caller must be a known, authenticated user," so attachment mutations
 // reuse it verbatim rather than inventing a new authorization pattern.
 func (s *caseService) resolveActor(ctx context.Context) (domain.User, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.User{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	email, err := emailFromJWT(token)
+	email, err := callerEmail(ctx)
 	if err != nil {
-		return domain.User{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.User{}, err
 	}
 	return s.userRepo.GetUserByEmail(ctx, email)
 }
