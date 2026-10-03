@@ -45,6 +45,8 @@ const (
 	errMsgReadBody        = "Failed to read request body."
 	ErrMsgContentRequired = "The 'content' field is required."
 	ErrMsgLabelRequired   = "The 'label' field is required."
+	ErrMsgSyncNotArray    = "The request body must be a JSON array of product-vulnerability records."
+	ErrMsgSyncEmpty       = "At least one product-vulnerability record is required; an empty set is not accepted."
 )
 
 // errorBody is the JSON error payload format.
