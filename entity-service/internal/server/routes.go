@@ -1654,7 +1654,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 						// queries on the request context, and they must share the
 						// same 30s deadline as the handler instead of running unbounded.
 						middleware.Timeout(30 * time.Second)(
-							callerIdentityMiddleware(accessSvc)(mux),
+							// The identity gate consults the mux before resolving
+							// anything, so unknown paths and methods still get the
+							// mux's own 404/405 and only anonymousRoutes are served
+							// without a resolvable caller.
+							callerIdentityMiddleware(accessSvc, mux, anonymousRoutes),
 						),
 					),
 				),
