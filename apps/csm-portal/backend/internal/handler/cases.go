@@ -36,6 +36,12 @@ import (
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+// caseIDRe is the id shape GET and PATCH /cases/{id} accept: a UUID, the
+// 32-hex record id the legacy data source uses for a case, or a case number
+// (2-5 letters then 4-12 digits). It is checked whatever headers the request
+// carries.
+var caseIDRe = regexp.MustCompile(`^(?:(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?i)[0-9a-f]{32}|[A-Za-z]{2,5}[0-9]{4,12})$`)
+
 // stripField removes the named key from a JSON object body, if present.
 func stripField(body []byte, field string) ([]byte, error) {
 	var m map[string]json.RawMessage
@@ -1476,7 +1482,7 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Case ID cannot be empty!")
 		return
 	}
-	if strings.TrimSpace(r.Header.Get("x-user-id-token")) == "" && !uuidRe.MatchString(caseID) {
+	if !caseIDRe.MatchString(caseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
@@ -1705,7 +1711,7 @@ func (h *CaseHandler) GetCase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Case ID cannot be empty!")
 		return
 	}
-	if strings.TrimSpace(r.Header.Get("x-user-id-token")) == "" && !uuidRe.MatchString(caseID) {
+	if !caseIDRe.MatchString(caseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
