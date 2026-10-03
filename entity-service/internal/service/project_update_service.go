@@ -106,8 +106,16 @@ func (s *pgProjectUpdateService) UpdateProject(ctx context.Context, id string, r
 	if s.access == nil {
 		return domain.ProjectUpdateResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
 	}
-	if _, err := authorizeProject(ctx, s.access, id); err != nil {
+	scope, err := authorizeProject(ctx, s.access, id)
+	if err != nil {
 		return domain.ProjectUpdateResponse{}, err
+	}
+	// The closure-state fields are engineer-side: internal callers only, even
+	// on a project the caller is a registered contact of. hasAgent and
+	// hasKbReferences stay writable by a project's own contacts -- they are
+	// the customer-facing AI assistant settings.
+	if !scope.Unrestricted && hasClosureStateFields(req) {
+		return domain.ProjectUpdateResponse{}, &apierror.ForbiddenError{Msg: "only internal users may change endDateClosureState, invoiceDueDateClosureState or complianceViolationClosureState"}
 	}
 	if !hasStoredProjectFields(req) && req.SuspensionProcessState == nil {
 		return domain.ProjectUpdateResponse{}, &apierror.ValidationError{Msg: "at least one field must be provided"}
@@ -182,6 +190,12 @@ func (s *pgProjectUpdateService) resolveUpdatedBy(ctx context.Context) (string, 
 }
 
 // hasStoredProjectFields reports whether req sets a field Postgres stores.
+// hasClosureStateFields reports whether req sets any of the three fields that
+// feed the project's closure state.
+func hasClosureStateFields(req domain.ProjectUpdateRequest) bool {
+	return req.EndDateClosureState != nil || req.InvoiceDueDateClosureState != nil || req.ComplianceViolationClosureState != nil
+}
+
 func hasStoredProjectFields(req domain.ProjectUpdateRequest) bool {
 	return req.HasAgent != nil || req.HasKbReferences != nil || req.EndDateClosureState != nil ||
 		req.InvoiceDueDateClosureState != nil || req.ComplianceViolationClosureState != nil
