@@ -34,6 +34,12 @@ import (
 // Overridden in tests to keep them fast.
 var tokenFetchTimeout = 10 * time.Second
 
+// maxResponseBodyBytes caps a successful upstream response body. The largest
+// legitimate payloads here are paged search results, far below this; the cap
+// exists so one misbehaving upstream response cannot exhaust this process's
+// memory. Overridden in tests to exercise the limit cheaply.
+var maxResponseBodyBytes int64 = 32 << 20
+
 type ctxKey string
 
 const correlationIDKey ctxKey = "x-csm-correlation-id" // #nosec G101 -- context map key, not a credential
@@ -122,12 +128,21 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("entity: read error response body: %w", err)
 		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, &apierror.Error{
+			StatusCode: resp.StatusCode,
+			Body:       string(excerpt),
+			RetryAfter: resp.Header.Get("Retry-After"),
+		}
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Read one byte past the cap so an oversized body is detected rather than
+	// silently truncated into invalid JSON.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("entity: read response body: %w", err)
+	}
+	if int64(len(respBody)) > maxResponseBodyBytes {
+		return nil, fmt.Errorf("entity: %s %s: response body exceeds %d bytes", method, path, maxResponseBodyBytes)
 	}
 
 	return respBody, nil

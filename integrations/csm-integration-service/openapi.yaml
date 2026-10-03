@@ -77,8 +77,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -123,8 +135,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -175,8 +199,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -227,8 +263,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -303,8 +351,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -352,8 +412,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -404,8 +476,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -488,8 +572,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -553,8 +649,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -638,8 +746,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -716,8 +836,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -772,8 +904,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -828,8 +972,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -883,8 +1039,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -939,8 +1107,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -996,8 +1176,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1060,8 +1252,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1117,6 +1321,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1125,6 +1335,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (upstream unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1197,6 +1413,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1205,6 +1427,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (upstream unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1259,6 +1487,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1267,6 +1501,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (upstream unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1323,6 +1563,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1331,6 +1577,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (upstream unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1384,6 +1636,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1392,6 +1650,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (upstream unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1456,8 +1720,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1541,6 +1817,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
           content:
@@ -1549,6 +1831,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
           description: ServiceUnavailable (entity-service is running a Postgres data source, which does not support this operation yet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1613,8 +1901,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1680,8 +1980,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1744,8 +2056,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
@@ -1801,8 +2125,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: TooManyRequests (the upstream is rate limiting; its Retry-After header is passed through when it sends a well-formed one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "504":
+          description: GatewayTimeout (the upstream did not answer in time)
           content:
             application/json:
               schema:
