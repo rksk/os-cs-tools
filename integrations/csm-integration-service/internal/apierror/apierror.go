@@ -25,6 +25,10 @@ import "fmt"
 type Error struct {
 	StatusCode int
 	Body       string
+	// RetryAfter is the upstream's Retry-After header value, if it sent one
+	// (typically with a 429 or 503). Handlers pass it through to the caller
+	// after validating its shape; it is never interpreted here.
+	RetryAfter string
 }
 
 func (e *Error) Error() string {
