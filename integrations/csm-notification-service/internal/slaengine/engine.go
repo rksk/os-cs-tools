@@ -133,6 +133,19 @@ type Engine struct {
 	emailSendingEnabled  bool
 	emailDebugMode       bool
 	emailDebugRecipients []string
+
+	// now is the clock chataudience.Resolve's time-of-day/weekend
+	// audiences are decided against; nil means time.Now. Tests pin it so
+	// an alert's audience set does not depend on when the suite runs.
+	now func() time.Time
+}
+
+// clock returns the engine's current time (see Engine.now).
+func (e *Engine) clock() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
 }
 
 // NewEngine constructs an Engine. emailSendingEnabled/emailDebugMode/
@@ -358,7 +371,7 @@ func (e *Engine) sendBreachAlert(ctx context.Context, s SLAStatus, tier int) err
 		openedAt = s.StartedOn.UTC().Format("2006-01-02 15:04:05") + " (UTC)"
 	}
 
-	audiences := chataudience.Resolve(s.Team, s.IsEvaluationAccount, s.ProjectOnboardingStatus, time.Now(), e.chat.HasAudienceSpace)
+	audiences := chataudience.Resolve(s.Team, s.IsEvaluationAccount, s.ProjectOnboardingStatus, e.clock(), e.chat.HasAudienceSpace)
 	caseLink := e.links.CSMLink(s.CaseID)
 	var errs []error
 	for _, audience := range audiences {
