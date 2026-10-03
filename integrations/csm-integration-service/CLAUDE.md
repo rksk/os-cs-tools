@@ -276,8 +276,12 @@ make build   # runs tests then compiles ./cmd/server
 
 ## Handler conventions
 
-- **Body size**: cap with `http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)`
-  (1 MiB) before reading
+- **Request body**: always `body, ok := readJSONBody(w, r, bodyRequired)`
+  (`internal/handler/body.go`) — never re-implement the read. It applies the
+  1 MiB cap (413), rejects unreadable or invalid JSON (400), and enforces the
+  empty-body policy: `bodyRequired` 400s on an empty body; `bodyOptional`
+  forwards it as "no filters" and is only for searches whose `openapi.yaml`
+  `requestBody` says `required: false`. Keep the two in step
 - **Path params**: guard against empty string after `r.PathValue("id")`; if the
   param is a UUID, also validate format using the package-level `uuidRe` compiled
   regex and return 400 on mismatch — fail fast before calling the upstream
