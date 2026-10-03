@@ -6,9 +6,15 @@ info:
     Project/account search and their Contacts sub-resource, incident
     creation, and alert-incident mapping create/lookup, for third-party
     (M2M) consumers. Fronted by Choreo's API Manager gateway (subscription +
-    client credentials) — this service performs no inbound auth of its own.
-security:
-  - oauth2ClientCredentials: []
+    client credentials), which authenticates every caller; this service
+    performs no authentication of its own.
+
+    Authorization is per operation: every operation except GET /health
+    names the one OAuth2 scope it requires (see the `oauth2ClientCredentials`
+    security scheme for the full list), and the service enforces it from the
+    scope claim of the caller token the gateway forwards. A request with no
+    usable token is answered 401; one whose token lacks the operation's
+    scope is answered 403, before anything is forwarded upstream.
 servers:
   - url: "{server}:{port}/"
     variables:
@@ -30,6 +36,9 @@ paths:
     get:
       summary: Get an account by ID.
       operationId: getAccount
+      security:
+        - oauth2ClientCredentials:
+            - accounts:read
       parameters:
         - name: id
           in: path
@@ -51,7 +60,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `accounts:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -73,6 +88,9 @@ paths:
     post:
       summary: Search accounts.
       operationId: searchAccounts
+      security:
+        - oauth2ClientCredentials:
+            - accounts:read
       requestBody:
         description: Account search payload
         required: true
@@ -94,7 +112,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `accounts:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -110,6 +134,9 @@ paths:
     post:
       summary: Search contacts for an account.
       operationId: searchAccountContacts
+      security:
+        - oauth2ClientCredentials:
+            - contacts:read
       parameters:
         - name: id
           in: path
@@ -137,7 +164,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `contacts:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -153,6 +186,9 @@ paths:
     get:
       summary: Get a project by ID.
       operationId: getProject
+      security:
+        - oauth2ClientCredentials:
+            - projects:read
       parameters:
         - name: id
           in: path
@@ -174,7 +210,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `projects:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -204,6 +246,9 @@ paths:
         supply one, so every call here currently receives a mapped 401. Kept
         for API-shape completeness, not because it currently succeeds.
       operationId: updateProject
+      security:
+        - oauth2ClientCredentials:
+            - projects:write
       parameters:
         - name: id
           in: path
@@ -241,7 +286,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -269,6 +314,9 @@ paths:
     post:
       summary: Search projects.
       operationId: searchProjects
+      security:
+        - oauth2ClientCredentials:
+            - projects:read
       requestBody:
         description: Project search payload
         required: true
@@ -293,7 +341,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `projects:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -309,6 +363,9 @@ paths:
     post:
       summary: Search contacts for a project.
       operationId: searchProjectContacts
+      security:
+        - oauth2ClientCredentials:
+            - contacts:read
       parameters:
         - name: id
           in: path
@@ -336,7 +393,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `contacts:read` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -371,6 +434,9 @@ paths:
         currently receives a mapped 401 there, with no field combination that
         succeeds.
       operationId: patchCase
+      security:
+        - oauth2ClientCredentials:
+            - cases:write
       parameters:
         - name: id
           in: path
@@ -400,6 +466,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: Unauthorized (upstream reported a missing or invalid forwarded identity — always when entity-service runs a ServiceNow data source, given this service's M2M-only design; not returned on a Postgres data source, where an unsupported field is a 400 instead)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `cases:write` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -434,6 +506,9 @@ paths:
         the response is returned as-is. No special-casing for any particular
         lookup shape.
       operationId: searchCases
+      security:
+        - oauth2ClientCredentials:
+            - cases:read
       requestBody:
         description: Case search payload, mirroring entity-service's own POST /cases/search contract.
         required: true
@@ -455,13 +530,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -504,6 +579,9 @@ paths:
         with no mechanism to supply one, calls against that data source
         still receive a mapped 401.
       operationId: createCaseComment
+      security:
+        - oauth2ClientCredentials:
+            - cases:write
       parameters:
         - name: id
           in: path
@@ -580,6 +658,9 @@ paths:
         configured value matches an entry in entity-service's
         M2M_TRUSTED_ACTOR_EMAILS allowlist, and 403s otherwise.
       operationId: addCaseTag
+      security:
+        - oauth2ClientCredentials:
+            - cases:write
       parameters:
         - name: id
           in: path
@@ -651,6 +732,9 @@ paths:
         pure M2M call through this service succeeds (unlike the ServiceNow-backed
         write operations elsewhere in this API).
       operationId: searchOpportunities
+      security:
+        - oauth2ClientCredentials:
+            - opportunities:read
       requestBody:
         required: false
         content:
@@ -671,13 +755,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -703,6 +787,9 @@ paths:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: getOpportunity
+      security:
+        - oauth2ClientCredentials:
+            - opportunities:read
       parameters:
         - name: id
           in: path
@@ -724,13 +811,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -756,6 +843,9 @@ paths:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: searchInvoices
+      security:
+        - oauth2ClientCredentials:
+            - invoices:read
       requestBody:
         required: false
         content:
@@ -776,13 +866,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -808,6 +898,9 @@ paths:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: getInvoice
+      security:
+        - oauth2ClientCredentials:
+            - invoices:read
       parameters:
         - name: id
           in: path
@@ -829,13 +922,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -863,6 +956,9 @@ paths:
         endpoint. Read-only: this operation does not require a forwarded end-user
         identity token, so a pure M2M call through this service succeeds.
       operationId: searchProjectOpportunityLinks
+      security:
+        - oauth2ClientCredentials:
+            - opportunities:read
       requestBody:
         required: false
         content:
@@ -883,13 +979,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -917,6 +1013,9 @@ paths:
         deletes any existing record not present in the submitted set. The
         request body is forwarded to the entity service verbatim.
       operationId: syncProductVulnerabilities
+      security:
+        - oauth2ClientCredentials:
+            - vulnerabilities:sync
       requestBody:
         description: Complete current set of product-vulnerability records.
         required: true
@@ -938,7 +1037,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported an authorization failure)
+          description: Unauthorized (no usable caller token was forwarded by the gateway, or the upstream reported an authorization failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `vulnerabilities:sync` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -965,6 +1070,9 @@ paths:
         The response shape is that dashboard's and is reproduced field for
         field from the ServiceNow resource it replaces.
       operationId: getCloudStatusMonitors
+      security:
+        - oauth2ClientCredentials:
+            - cloud-status:read
       parameters:
         - name: cloud
           in: query
@@ -992,7 +1100,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1003,14 +1111,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable (upstream unreachable)
+        "500":
+          description: InternalServerError
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
+        "503":
+          description: ServiceUnavailable (upstream unreachable)
           content:
             application/json:
               schema:
@@ -1033,6 +1141,9 @@ paths:
         approval history, which are internal and which ServiceNow does not
         publish either.
       operationId: getCloudStatusIncidentDetail
+      security:
+        - oauth2ClientCredentials:
+            - cloud-status:read
       parameters:
         - name: id
           in: path
@@ -1062,12 +1173,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "404":
-          description: No outage with that id belongs to that cloud.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: Unauthorized (upstream rejected this service's credentials)
           content:
@@ -1075,19 +1180,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable (upstream unreachable)
+        "404":
+          description: No outage with that id belongs to that cloud.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: ServiceUnavailable (upstream unreachable)
           content:
             application/json:
               schema:
@@ -1101,6 +1212,9 @@ paths:
         present whether or not it has incidents, because the dashboard renders
         a row per key.
       operationId: getCloudStatusIncidents
+      security:
+        - oauth2ClientCredentials:
+            - cloud-status:read
       parameters:
         - name: cloud
           in: query
@@ -1128,7 +1242,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1139,14 +1253,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable (upstream unreachable)
+        "500":
+          description: InternalServerError
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
+        "503":
+          description: ServiceUnavailable (upstream unreachable)
           content:
             application/json:
               schema:
@@ -1162,6 +1276,9 @@ paths:
         anything that decodes and re-encodes this body would flatten the
         distinction. This service forwards raw bytes precisely so it cannot.
       operationId: getCloudStatusAvailabilities
+      security:
+        - oauth2ClientCredentials:
+            - cloud-status:read
       parameters:
         - name: cloud
           in: query
@@ -1189,7 +1306,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1200,14 +1317,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable (upstream unreachable)
+        "500":
+          description: InternalServerError
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
+        "503":
+          description: ServiceUnavailable (upstream unreachable)
           content:
             application/json:
               schema:
@@ -1220,6 +1337,9 @@ paths:
         Postgres-backed, forwarded verbatim. Nested region -> group -> monitor.
         Unlike the availabilities endpoint this one applies no weighting.
       operationId: getCloudStatusAvailabilityHistory
+      security:
+        - oauth2ClientCredentials:
+            - cloud-status:read
       parameters:
         - name: cloud
           in: query
@@ -1247,7 +1367,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1258,14 +1378,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "503":
-          description: ServiceUnavailable (upstream unreachable)
+        "500":
+          description: InternalServerError
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          description: InternalServerError
+        "503":
+          description: ServiceUnavailable (upstream unreachable)
           content:
             application/json:
               schema:
@@ -1283,6 +1403,9 @@ paths:
         itself unconfigured in the target environment. A 401 is therefore a
         possible response, not a guaranteed one.
       operationId: createIncident
+      security:
+        - oauth2ClientCredentials:
+            - incidents:write
       requestBody:
         description: Incident details.
         required: true
@@ -1310,7 +1433,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1358,6 +1481,9 @@ paths:
         service verbatim; it enforces its own field validation and 400s
         otherwise, so this service does not re-validate that.
       operationId: patchIncident
+      security:
+        - oauth2ClientCredentials:
+            - incidents:write
       parameters:
         - name: id
           in: path
@@ -1392,7 +1518,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1434,6 +1560,9 @@ paths:
         target environment. A 401 is therefore a possible response, not a
         guaranteed one.
       operationId: searchIncidents
+      security:
+        - oauth2ClientCredentials:
+            - incidents:read
       requestBody:
         description: Incident search payload.
         required: true
@@ -1461,7 +1590,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1498,6 +1627,9 @@ paths:
         credential is itself unconfigured in the target environment. A 401
         is therefore a possible response, not a guaranteed one.
       operationId: searchITServices
+      security:
+        - oauth2ClientCredentials:
+            - services:read
       requestBody:
         description: Service search payload.
         required: true
@@ -1525,7 +1657,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
-          description: Forbidden (upstream reported an authorization failure)
+          description: Forbidden (the caller's token lacks this operation's scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1559,6 +1691,9 @@ paths:
         and the call is expected to actually succeed today. The request body
         is forwarded to the entity service verbatim.
       operationId: createAlertIncidentMapping
+      security:
+        - oauth2ClientCredentials:
+            - alert-incident-mappings:write
       requestBody:
         description: Alert-incident mapping details.
         required: true
@@ -1581,6 +1716,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: Unauthorized (Choreo gateway rejected an unauthenticated M2M caller; not expected from the entity service itself for this operation)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `alert-incident-mappings:write` scope, or the upstream refused the request)
           content:
             application/json:
               schema:
@@ -1613,6 +1754,9 @@ paths:
         actually succeed today. Returns an empty `mappings` array (not 404)
         when nothing matches.
       operationId: lookupAlertIncidentMappings
+      security:
+        - oauth2ClientCredentials:
+            - alert-incident-mappings:read
       requestBody:
         description: Lookup criteria.
         required: true
@@ -1639,6 +1783,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Forbidden (the caller's token lacks the `alert-incident-mappings:read` scope, or the upstream refused the request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -1661,7 +1811,25 @@ components:
           # Placeholder — fill in with the actual token endpoint for this service's
           # Choreo-managed API once it's provisioned. Not a real/guessed URL.
           tokenUrl: "<token_url>"
-          scopes: {}
+          # One scope per operation group. Every operation below except
+          # GET /health lists the single scope it requires; a consumer is
+          # granted the scopes for the operations it needs and no others.
+          scopes:
+            accounts:read: Read accounts (get by id, search).
+            contacts:read: Search an account's or a project's contacts.
+            projects:read: Read projects (get by id, search).
+            projects:write: Update a project's closure-state fields.
+            cases:read: Search cases.
+            cases:write: Update a case, add a comment or a tag to it.
+            opportunities:read: Read opportunities and project-opportunity links.
+            invoices:read: Read invoices.
+            vulnerabilities:sync: Replace the product-vulnerability record set.
+            incidents:read: Search incidents.
+            incidents:write: Create and update incidents.
+            services:read: Search IT services.
+            alert-incident-mappings:read: Look up alert-incident mappings.
+            alert-incident-mappings:write: Create alert-incident mappings.
+            cloud-status:read: Read the public cloud status dashboard data.
 
   schemas:
     CloudStatusResult:

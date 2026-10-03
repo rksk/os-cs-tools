@@ -6,19 +6,39 @@ search, and alert-incident mapping create/lookup, to third-party (M2M)
 consumers. It forwards requests to the entity service and returns responses
 as-is — it does not shape or authenticate on behalf of an end user.
 
-## Why no `Auth` middleware
+## Authentication is the gateway's; authorization is per-operation scopes here
 
 Unlike `apps/csm-portal/backend` (a BFF for the CSM Portal's own end users, which
 validates an `x-jwt-assertion` JWT on every request), this service has no end-user
 identity to check. It's consumed by third-party M2M clients through Choreo's API
 Manager gateway, which owns the inbound trust boundary (subscription + client
 credentials) before a request ever reaches this app. Do not add inbound JWT/Bearer
-validation here without confirming that assumption no longer holds.
+signature validation here without confirming that assumption no longer holds.
 
-**This is not the same claim as "this service never returns 401/403."** `mapUpstreamError`
-(`internal/handler/response.go`) maps an upstream 401/403 straight through to the
-caller. "No app-level auth" means this service performs no authentication check of
-its own; it does not mean 401/403 can't happen.
+What this service does do is **authorize per operation**. Every route except
+`GET /health` requires one OAuth2 scope (`cases:write`, `contacts:read`,
+`vulnerabilities:sync`, …); the full route-to-scope table is
+`cmd/server/routes.go` and the same names are published in `openapi.yaml`'s
+`oauth2ClientCredentials` scheme and on each operation. `middleware.ScopeGuard`
+(`internal/middleware/scopes.go`) enforces it by decoding — never
+signature-verifying — the `x-jwt-assertion` token the gateway forwards and
+reading its `scope` claim (space-separated string or array; `scp` as a
+fallback). It fails closed: no usable token is 401, a token without the
+operation's scope — including a token with no scope claim at all — is 403,
+and neither reaches the entity service. The check is on by default;
+`REQUIRE_OPERATION_SCOPES=false` disables it for local development only, and
+the server logs a warning at startup when it is off.
+
+The point of the split: the gateway proves *who* is calling; the scope table
+decides *what* that caller may do, so a subscriber that only needs the status
+dashboard reads never inherits the ability to patch cases or run the
+product-vulnerability sync, even though this service's own credential to the
+entity service is unrestricted.
+
+**"No authentication here" is not the same claim as "this service never returns
+401/403 on its own."** The scope guard produces both, and `mapUpstreamError`
+(`internal/handler/response.go`) additionally maps an upstream 401/403 straight
+through to the caller.
 
 ## This service is M2M-only — no end-user identity is ever forwarded
 
@@ -172,7 +192,7 @@ Contacts search and opportunity/invoice/link reads work over M2M only if this se
 
 ## Middleware chain
 
-`SecurityHeaders → CorrelationID → Logger → Mux`
+`SecurityHeaders → CorrelationID → Logger → Mux → (ScopeGuard per route) → handler`
 
 - `SecurityHeaders` (`internal/middleware/security_headers.go`): sets
   `X-Content-Type-Options: nosniff`, `Content-Security-Policy:
@@ -186,6 +206,10 @@ Contacts search and opportunity/invoice/link reads work over M2M only if this se
   response header
 - `Logger` (`internal/middleware/logger.go`): logs every completed request (method,
   path, status, elapsed) via slog
+- `ScopeGuard` (`internal/middleware/scopes.go`): not in the outer chain but
+  wrapped around every route except `GET /health` by `newMux`
+  (`cmd/server/routes.go`); rejects a request whose forwarded token lacks the
+  route's scope (401 no token / 403 wrong scope) before the handler runs
 
 `middleware.ConfigureLogger()` must be called at startup — it wraps the default slog
 handler so every `slog.*Context(r.Context(), …)` call automatically includes
@@ -232,12 +256,19 @@ make build   # runs tests then compiles ./cmd/server
 2. **Handler interface** — extend the local interface in the relevant handler file
    (e.g. `entityAccountClient` in `accounts.go`); keep it minimal
 3. **Handler func** — path/body guards → call client → `mapUpstreamError` on
-   failure → write response. No auth check — see "Why no Auth middleware" above
-4. **Route** (`cmd/server/main.go`) — register using Go 1.22 method-prefixed
-   patterns: `"POST /accounts/{id}/contacts/search"`
-5. **OpenAPI spec** (`openapi.yaml`) — add the path with 200/400/401/403/404/500
-   responses — `mapUpstreamError` can map an upstream 401 or 403 straight
-   through to the caller, so both belong alongside the others
+   failure → write response. No auth check inside the handler — the scope
+   guard runs in front of it (see the authorization section above)
+4. **Route and scope** (`cmd/server/routes.go`) — add a row to `routes()` using
+   a Go 1.22 method-prefixed pattern (`"POST /accounts/{id}/contacts/search"`)
+   and the scope it requires; reuse an existing `scope*` constant for the same
+   resource and verb, or add one. `routes_test.go` then covers the new route's
+   401/403/2xx behaviour automatically
+5. **OpenAPI spec** (`openapi.yaml`) — add the path with a `security:` entry
+   naming that same scope (and, for a new scope, a line under
+   `securitySchemes.oauth2ClientCredentials.flows.clientCredentials.scopes`)
+   plus 200/400/401/403/404/500 responses — the scope guard produces 401/403
+   itself, and `mapUpstreamError` can also map an upstream 401 or 403 straight
+   through, so both belong alongside the others
 6. **Tests** — add a handler test following `accounts_test.go`/`projects_test.go`'s
    shape (empty/invalid path param, body-too-large, invalid JSON, success
    passthrough, `upstreamErrors` table); extend the mock in `helpers_test.go` to
@@ -271,9 +302,11 @@ published to third-party consumers via Choreo's Developer Portal.
 - **Never commit secrets** — client IDs/secrets and service URLs with credentials
   must not appear in source code or config files; use environment variables
 - **No sensitive data in logs** — log only IDs and error summaries
-- **No app-level inbound auth** — this is intentional (see above), not an
-  oversight; don't "fix" it by bolting on JWT validation without confirming the
-  Choreo gateway model has changed
+- **No app-level inbound authentication, but per-operation authorization** —
+  the gateway authenticates; this service only reads the forwarded token's
+  scope claim (see the authorization section above). Don't bolt on JWT
+  signature validation without confirming the Choreo gateway model has
+  changed, and never register a route outside the scope table
 - **Input validation** — validate and reject unexpected input at the boundary
   (path params, body size, JSON structure) before forwarding to the entity service
 - **Error messages** — never leak upstream error details or stack traces to the
