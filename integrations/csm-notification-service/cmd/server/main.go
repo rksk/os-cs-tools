@@ -317,8 +317,22 @@ func main() {
 	// doc comment.
 	defaultCSMEmailCC := splitComma(os.Getenv("DEFAULT_CSM_EMAIL_CC"))
 
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled, emailDebugMode, emailDebugRecipients, callSendingEnabled, defaultOnCallNumber, defaultCSMEmailCC).
-		WithOnboarding(loadOnboardingConfig(customerEntityClient, emailClient))
+	dispatcher := dispatch.NewDispatcher(
+		dispatch.Deps{
+			Email:      emailClient,
+			GoogleChat: googleChatClient,
+			Call:       twilioClient,
+			Links:      linkResolver,
+		},
+		dispatch.Config{
+			EmailSendingEnabled:  emailSendingEnabled,
+			EmailDebugMode:       emailDebugMode,
+			EmailDebugRecipients: emailDebugRecipients,
+			CallSendingEnabled:   callSendingEnabled,
+			DefaultOnCallNumber:  defaultOnCallNumber,
+			DefaultCSMEmailCC:    defaultCSMEmailCC,
+		},
+	).WithOnboarding(loadOnboardingConfig(customerEntityClient, emailClient))
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's
