@@ -39,6 +39,16 @@ paths:
         replica shuts down the stream ends with `event: shutdown`
         (`{"reason": "shutdown"}`); reconnecting reaches a replica that
         is still serving.
+
+        Every stream starts with an SSE `retry: 3000` field, and every
+        `case_updated` event carries an `id:`. A client reconnecting with
+        `Last-Event-ID` is sent the events for this case it missed, but
+        only best-effort: the replay window is short (the last 256 events
+        across all cases, at most 2 minutes old), held in memory, and
+        local to one replica and process, so a reconnect that lands on
+        another replica, after a restart, or after the window gets no
+        replay. Clients must still refresh their view of the case on every
+        (re)connect.
       operationId: getCasesIdActivitiesStream
       parameters:
         - name: id
@@ -48,6 +58,16 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: Last-Event-ID
+          in: header
+          description: >
+            The `id` of the last `case_updated` event the client received.
+            Best-effort resume; see the operation description. Unknown or
+            expired values are ignored.
+          required: false
+          schema:
+            type: string
+            maxLength: 64
         - name: x-user-id-token
           in: header
           description: >
