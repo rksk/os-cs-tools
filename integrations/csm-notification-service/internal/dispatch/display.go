@@ -182,7 +182,7 @@ func displayCaseRef(caseNumber, caseID string) string {
 }
 
 // displayInternalRef returns wso2CaseID (the CSM portal's own case
-// identifier, e.g. "WSO2-1000" — ServiceNow's u_wso2_case_id custom field,
+// identifier, e.g. "WSO2-1000" — the backing data source's internal case-id field,
 // see events.CaseCreatedPayload.WSO2CaseID's own doc comment) when the
 // publisher supplied one, falling back to caseID (the raw UUID, meaningless
 // to an end user) only so the subject is never blank while a publisher

@@ -91,7 +91,7 @@ func tierLabel(tier int) string {
 // its live businessElapsedPercent — HasBreached is trusted directly for the
 // 100% case rather than re-derived from the percentage alone, matching
 // entity-service's own SLAStatus doc comment on why HasBreached is trusted
-// as-is (ServiceNow's own SLA engine sets it, and it agrees with
+// as-is (the backing data source's own SLA engine sets it, and it agrees with
 // BusinessElapsedPercent >= 100 in every case checked live).
 func tierForStatus(s SLAStatus) int {
 	switch {
@@ -227,7 +227,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 //     multi-tier crossing still keeps whatever alerted successfully and
 //     retries only the remainder on the next Tick.
 //
-// A paused clock (s.IsPaused) is skipped outright: ServiceNow freezes
+// A paused clock (s.IsPaused) is skipped outright: the backing data source freezes
 // businessElapsedPercent while paused, so there is nothing to cross either
 // way, and skipping avoids a pointless Redis round trip for every paused
 // clock on every poll.
