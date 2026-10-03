@@ -31,6 +31,12 @@ import { CORRELATION_ID_HEADER, newCorrelationId } from "@utils/correlationId";
 // fail authentication at once.
 let signInInFlight = false;
 
+// Likewise shared: the single in-progress token recovery (silent sign-in +
+// polling). Concurrent callers that also hit an unrecoverable 401 wait on this
+// instead of each running their own poll loop. Resolves true when the
+// leader's poll got a non-401 answer (the token is usable again).
+let recoveryInFlight: Promise<boolean> | null = null;
+
 // Only the Asgardeo "unauthenticated" code means the token was expired/missing
 // when the call ran (e.g. the refresh token itself has expired, so the SDK's
 // periodic background refresh can no longer mint a new access token). Anything
@@ -404,20 +410,49 @@ export function useAuthApiClient() {
       // silent sign-in has definitively reported failure and the poll
       // budget is exhausted; a session that's still failing at that point is
       // presumed genuinely dead and falls through to the hard redirect below.
-      let silentSignInSettled = false;
-      let silentSignInSucceeded = false;
-      void trySilentSignIn().then((ok) => {
-        silentSignInSettled = true;
-        silentSignInSucceeded = ok;
-      });
+      //
+      // The recovery is shared across every caller that reaches this point:
+      // the first one (the "leader") runs the silent sign-in and the polling;
+      // every other concurrent caller just waits for the leader's outcome and
+      // then retries its own request exactly once. Without this, N queries
+      // failing together each ran their own full poll loop (~13 requests each).
+      if (recoveryInFlight) {
+        const recovered = await recoveryInFlight;
+        if (recovered) {
+          const again = await runAttempt(attemptFetch, input, options);
+          if (!again.recoverable) return again.response;
+          last = again;
+        }
+      } else {
+        let recoveredResponse: Response | undefined;
+        const recovery = (async (): Promise<boolean> => {
+          let silentSignInSettled = false;
+          let silentSignInSucceeded = false;
+          void trySilentSignIn().then((ok) => {
+            silentSignInSettled = true;
+            silentSignInSucceeded = ok;
+          });
 
-      const pollDeadline = Date.now() + SILENT_RECOVERY_POLL_BUDGET_MS;
-      while (Date.now() < pollDeadline) {
-        await sleep(SILENT_RECOVERY_POLL_INTERVAL_MS);
-        const polled = await runAttempt(attemptFetch, input, options);
-        if (!polled.recoverable) return polled.response;
-        last = polled;
-        if (silentSignInSettled && !silentSignInSucceeded) break;
+          const pollDeadline = Date.now() + SILENT_RECOVERY_POLL_BUDGET_MS;
+          while (Date.now() < pollDeadline) {
+            await sleep(SILENT_RECOVERY_POLL_INTERVAL_MS);
+            const polled = await runAttempt(attemptFetch, input, options);
+            if (!polled.recoverable) {
+              recoveredResponse = polled.response;
+              return true;
+            }
+            last = polled;
+            if (silentSignInSettled && !silentSignInSucceeded) break;
+          }
+          return false;
+        })();
+        recoveryInFlight = recovery;
+        try {
+          await recovery;
+        } finally {
+          recoveryInFlight = null;
+        }
+        if (recoveredResponse) return recoveredResponse;
       }
 
       // The poll budget is exhausted with no recovery. A caller that opted
