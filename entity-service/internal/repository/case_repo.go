@@ -1749,13 +1749,24 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 // trick the other five use, since "" is itself a meaningful value to write
 // there (clearing existing notes), not a stand-in for "not provided" --
 // unlike an enum column, where ” is never a valid domain value anyway.
+//
+// closed_on/resolved_on: each is stamped when the case enters its state and
+// kept (COALESCE) when that state is written again, so repeating a close or a
+// solution-proposed PATCH no longer moves the timestamp. SOLUTION_PROPOSED is
+// the resolved state (it is what the backing data source's resolved state
+// maps to, see snStateIDMap). Closing keeps an existing resolved_on; moving to
+// any other state clears both, as reopening does.
 const updateCaseQuery = `
 	WITH updated_case AS (
 		UPDATE "case"
 		SET state           = CASE WHEN $2 <> '' THEN $2::case_state_enum ELSE state END,
 		    severity        = CASE WHEN $3 <> '' THEN $3::case_severity_enum ELSE severity END,
 		    work_state      = CASE WHEN $4 <> '' THEN $4::case_work_state_enum ELSE work_state END,
-		    closed_on       = CASE WHEN $2 = 'CLOSED' THEN NOW() WHEN $2 <> '' AND $2 <> 'CLOSED' THEN NULL ELSE closed_on END,
+		    closed_on       = CASE WHEN $2 = 'CLOSED' THEN COALESCE(closed_on, NOW()) WHEN $2 <> '' THEN NULL ELSE closed_on END,
+		    resolved_on     = CASE WHEN $2 = 'SOLUTION_PROPOSED' THEN COALESCE(resolved_on, NOW())
+		                           WHEN $2 = 'CLOSED' THEN resolved_on
+		                           WHEN $2 <> '' THEN NULL
+		                           ELSE resolved_on END,
 		    resolution_code = CASE WHEN $5 <> '' THEN $5::case_resolution_code_enum ELSE resolution_code END,
 		    cause           = CASE WHEN $6 <> '' THEN $6::case_cause_enum ELSE cause END,
 		    close_notes     = COALESCE($7, close_notes)
