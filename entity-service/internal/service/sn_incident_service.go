@@ -1508,7 +1508,7 @@ func (s *snIncidentService) SearchIncidentActivities(ctx context.Context, req do
 		return domain.SearchIncidentActivitiesResponse{}, fmt.Errorf("sn search incident activities: parse response: %w", err)
 	}
 
-	activities, err := mapSNActivitiesToDomain(snResp.Activity)
+	activities, err := mapSNActivitiesToDomain(ctx, snResp.Activity)
 	if err != nil {
 		return domain.SearchIncidentActivitiesResponse{}, fmt.Errorf("sn search incident activities: %w", err)
 	}

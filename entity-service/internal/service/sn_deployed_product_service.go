@@ -253,7 +253,7 @@ func (s *snDeployedProductService) CreateDeployedProduct(ctx context.Context, re
 		return domain.CreateDeployedProductResponse{}, err
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.DeployedProduct.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn_deployed_product_service", "createdOn", snResp.DeployedProduct.CreatedOn)
 	if err != nil {
 		return domain.CreateDeployedProductResponse{}, fmt.Errorf("sn create deployed product: parse createdOn %q: %w", snResp.DeployedProduct.CreatedOn, err)
 	}
@@ -368,7 +368,7 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 		return domain.UpdateDeployedProductResponse{}, fmt.Errorf("sn update deployed product: parse response: %w", err)
 	}
 
-	updatedOn, err := time.Parse(snCreatedOnLayout, snResp.DeployedProduct.UpdatedOn)
+	updatedOn, err := parseSNDateTime(ctx, "sn_deployed_product_service", "updatedOn", snResp.DeployedProduct.UpdatedOn)
 	if err != nil {
 		return domain.UpdateDeployedProductResponse{}, fmt.Errorf("sn update deployed product: parse updatedOn %q: %w", snResp.DeployedProduct.UpdatedOn, err)
 	}
@@ -411,11 +411,11 @@ func (s *snDeployedProductService) SearchDeployedProducts(ctx context.Context, r
 
 	views := make([]domain.DeployedProductView, 0, len(snResp.DeployedProducts))
 	for _, dp := range snResp.DeployedProducts {
-		createdOn, err := time.Parse(snCreatedOnLayout, dp.CreatedOn)
+		createdOn, err := parseSNDateTime(ctx, "sn_deployed_product_service", "createdOn", dp.CreatedOn)
 		if err != nil {
 			return domain.SearchDeployedProductsResponse{}, fmt.Errorf("sn deployed products: parse createdOn %q: %w", dp.CreatedOn, err)
 		}
-		updatedOn, err := time.Parse(snCreatedOnLayout, dp.UpdatedOn)
+		updatedOn, err := parseSNDateTime(ctx, "sn_deployed_product_service", "updatedOn", dp.UpdatedOn)
 		if err != nil {
 			return domain.SearchDeployedProductsResponse{}, fmt.Errorf("sn deployed products: parse updatedOn %q: %w", dp.UpdatedOn, err)
 		}
