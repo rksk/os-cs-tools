@@ -29,6 +29,15 @@ type Producer struct {
 	writer *kafka.Writer
 }
 
+// Message is one record to publish: Key picks the partition (see Publish),
+// Value is the record body, and Headers are optional record headers (e.g.
+// HeaderNotBefore) carried alongside the body without touching it.
+type Message struct {
+	Key     []byte
+	Value   []byte
+	Headers map[string]string
+}
+
 // NewProducer constructs a Producer. Connecting is lazy — the underlying
 // writer dials brokers on first use, not here — so a wrong
 // Broker/ConnectionString only surfaces as an error from the first Publish
@@ -73,7 +82,16 @@ func NewProducer(cfg Config) *Producer {
 // pass the same key (e.g. an entity ID) for every event that must stay
 // ordered relative to each other.
 func (p *Producer) Publish(ctx context.Context, key, value []byte) error {
-	if err := p.writer.WriteMessages(ctx, kafka.Message{Key: key, Value: value}); err != nil {
+	return p.PublishMessage(ctx, Message{Key: key, Value: value})
+}
+
+// PublishMessage is Publish with optional record headers.
+func (p *Producer) PublishMessage(ctx context.Context, msg Message) error {
+	km := kafka.Message{Key: msg.Key, Value: msg.Value}
+	for k, v := range msg.Headers {
+		km.Headers = append(km.Headers, kafka.Header{Key: k, Value: []byte(v)})
+	}
+	if err := p.writer.WriteMessages(ctx, km); err != nil {
 		return fmt.Errorf("eventbus: publish: %w", err)
 	}
 	return nil
