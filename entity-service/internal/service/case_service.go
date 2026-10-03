@@ -1054,6 +1054,13 @@ func (s *caseService) createCaseCommentAs(ctx context.Context, req domain.Create
 	if req.Content == "" {
 		return domain.CreateCaseCommentResponse{}, &apierror.ValidationError{Msg: "content is required"}
 	}
+	// Work notes and activity entries are engineer-side: a customer contact
+	// may only author a public comment on their own case.
+	if req.Type != domain.CommentTypeComment {
+		if err := s.requireInternalCaller(ctx, "only internal users may add a "+string(req.Type)+" entry"); err != nil {
+			return domain.CreateCaseCommentResponse{}, err
+		}
+	}
 	// comment.created_by (migration 0040) is a free-text VARCHAR, not a
 	// UUID FK -- see CaseRepository.CreateCaseComment's own doc comment.
 	req.CreatedBy = actorEmail
@@ -1182,9 +1189,21 @@ func (s *caseService) SearchCaseComments(ctx context.Context, req domain.SearchC
 	if req.Filters != nil && req.Filters.Type != nil && !validCommentType[*req.Filters.Type] {
 		return domain.SearchCaseCommentsResponse{}, &apierror.ValidationError{Msg: "filters.type contains invalid value: " + string(*req.Filters.Type)}
 	}
+	scope, err := s.callerScope(ctx)
+	if err != nil {
+		return domain.SearchCaseCommentsResponse{}, err
+	}
+	if !scope.Unrestricted {
+		if req.Filters != nil && req.Filters.Type != nil && *req.Filters.Type == domain.CommentTypeWorkNote {
+			return domain.SearchCaseCommentsResponse{}, &apierror.ForbiddenError{Msg: "only internal users may read work notes"}
+		}
+	}
 	comments, total, err := s.repo.SearchCaseComments(ctx, req)
 	if err != nil {
 		return domain.SearchCaseCommentsResponse{}, err
+	}
+	if !scope.Unrestricted {
+		comments = withoutWorkNotes(comments)
 	}
 	return domain.SearchCaseCommentsResponse{
 		Comments: comments,
@@ -1306,8 +1325,26 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is closed or solution_proposed"}
 		}
 	}
+	// Who may change what: every field of this request is either
+	// customer-writable or engineer-side (see internalOnlyCaseUpdateFields),
+	// and the engineer-side ones are refused up front for any caller whose
+	// scope is not Unrestricted -- a registered customer contact is a project
+	// member (so row-level security lets the write through) but must not
+	// reassign, acknowledge, re-parent, re-prioritise or mark fix issued on
+	// their own case. Decided before dispatch so no branch ever runs for a
+	// caller it is not meant for.
+	scope, err := s.callerScope(ctx)
+	if err != nil {
+		return domain.UpdateCaseResponse{}, err
+	}
+	if !scope.Unrestricted {
+		if fields := internalOnlyCaseUpdateFields(req); len(fields) > 0 {
+			return domain.UpdateCaseResponse{}, &apierror.ForbiddenError{Msg: "only internal users may change " + strings.Join(fields, ", ")}
+		}
+	}
+
 	if req.WatchList != nil {
-		return s.updateCaseWatchList(ctx, req)
+		return s.updateCaseWatchList(ctx, req, scope)
 	}
 	if len(req.AssigneeEmail) > 0 {
 		return s.updateCaseAssignee(ctx, req)
@@ -1455,16 +1492,15 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		}
 	}
 
-	// actorEmail is used only for this update's own activity-feed entry
-	// below -- resolved best-effort, not required, since this branch has
-	// never required an authenticated caller before now (no permission
-	// model exists for Postgres-side case mutations yet -- see
-	// updateCaseAssignee's own doc comment) and must not start rejecting a
-	// caller who omits x-user-id-token just because this data source can
-	// now also log field changes to work_item_activity.
-	var actorEmail string
-	if actor, err := s.resolveActor(ctx); err == nil {
-		actorEmail = actor.Email
+	// actorEmail attributes this update's own activity-feed entry below. A
+	// request that carries a user token must resolve to a known user, exactly
+	// as every sibling branch requires; the only caller allowed through with
+	// no user attribution is an allow-listed internal client (its scope is
+	// Unrestricted on the client credential alone -- the machine-to-machine
+	// callers that update case state on a customer's behalf).
+	actorEmail, err := s.resolveMutationActorEmail(ctx, scope)
+	if err != nil {
+		return domain.UpdateCaseResponse{}, err
 	}
 
 	// oldSeverity is the case's severity immediately before this update —
@@ -1668,7 +1704,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 // eligibility question asked again later, pre-send, against an already-
 // persisted watch list rather than a new submission -- that one drops a
 // now-ineligible watcher silently instead of rejecting a request.
-func (s *caseService) validateWatchListProjectMembership(ctx context.Context, cv domain.CaseView, userIDs []string) error {
+func (s *caseService) validateWatchListProjectMembership(ctx context.Context, cv domain.CaseView, userIDs []string, internalCaller bool) error {
 	if len(userIDs) == 0 {
 		return nil
 	}
@@ -1700,7 +1736,13 @@ func (s *caseService) validateWatchListProjectMembership(ctx context.Context, cv
 			return uerr
 		}
 		if user.UserType == domain.UserTypeInternal {
-			continue
+			if internalCaller {
+				continue
+			}
+			// A customer contact may only add watchers who are themselves on
+			// the project; adding staff who are not registered contacts is an
+			// engineer-side edit.
+			return &apierror.ForbiddenError{Msg: "only internal users may add watchers who are not registered contacts on this case's project"}
 		}
 		who := user.Email
 		if who == "" {
@@ -1797,7 +1839,7 @@ func (s *caseService) isActiveProjectWatcher(ctx context.Context, projectID, use
 // publish time instead, so there is nothing here for a caller to "remove"
 // in the first place, and no floor to silently re-add. An explicitly empty
 // (non-nil) WatchList genuinely clears every persisted watcher.
-func (s *caseService) updateCaseWatchList(ctx context.Context, req domain.UpdateCaseRequest) (domain.UpdateCaseResponse, error) {
+func (s *caseService) updateCaseWatchList(ctx context.Context, req domain.UpdateCaseRequest, scope AccessScope) (domain.UpdateCaseResponse, error) {
 	userIDs := *req.WatchList
 	if err := validateUUIDs("watchList", userIDs); err != nil {
 		return domain.UpdateCaseResponse{}, err
@@ -1808,7 +1850,7 @@ func (s *caseService) updateCaseWatchList(ctx context.Context, req domain.Update
 		return domain.UpdateCaseResponse{}, err
 	}
 
-	if err := s.validateWatchListProjectMembership(ctx, cv, userIDs); err != nil {
+	if err := s.validateWatchListProjectMembership(ctx, cv, userIDs, scope.Unrestricted); err != nil {
 		return domain.UpdateCaseResponse{}, err
 	}
 
@@ -2880,9 +2922,17 @@ func (s *caseService) SearchCaseActivities(ctx context.Context, req domain.Searc
 		return domain.SearchCaseActivitiesResponse{}, err
 	}
 
+	scope, err := s.callerScope(ctx)
+	if err != nil {
+		return domain.SearchCaseActivitiesResponse{}, err
+	}
+
 	activity, total, err := s.repo.SearchCaseActivities(ctx, req)
 	if err != nil {
 		return domain.SearchCaseActivitiesResponse{}, err
+	}
+	if !scope.Unrestricted {
+		activity = withoutWorkNoteActivity(activity)
 	}
 
 	return domain.SearchCaseActivitiesResponse{
@@ -2955,6 +3005,9 @@ func (s *caseService) AddCaseTagAs(ctx context.Context, caseID, label, actorEmai
 // actor) -- everything past actor resolution is identical between the two.
 func (s *caseService) addCaseTagAs(ctx context.Context, caseID, label, actorEmail string) (domain.Tag, error) {
 	if err := validateUUIDs("caseId", []string{caseID}); err != nil {
+		return domain.Tag{}, err
+	}
+	if err := s.requireInternalCaller(ctx, "only internal users may tag a case"); err != nil {
 		return domain.Tag{}, err
 	}
 	label = strings.TrimSpace(label)
@@ -3044,6 +3097,9 @@ func (s *caseService) RemoveCaseTag(ctx context.Context, caseID, tagID string) e
 		return err
 	}
 	if err := validateUUIDs("tagId", []string{tagID}); err != nil {
+		return err
+	}
+	if err := s.requireInternalCaller(ctx, "only internal users may remove a case tag"); err != nil {
 		return err
 	}
 	actor, err := s.resolveActor(ctx)
