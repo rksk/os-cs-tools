@@ -179,9 +179,8 @@ func main() {
 	// it too.
 	accessGuard := handler.NewAccessGuard(loadAccessConfig())
 
-	// SupportPortalLite — off by default; see loadViewerConfig. Ported
-	// from digiops-cs/apps/support-portal-lite's Ballerina backend, which is
-	// being retired.
+	// SupportPortalLite — off by default; see loadViewerConfig. Ported from the
+	// retired SupportPortalLite Ballerina backend (tracked separately).
 	viewerEnabled, viewerCfg := loadViewerConfig()
 	var viewerHandlers *viewerHandlerSet
 	// closeOnShutdown holds resources released after the HTTP server has
@@ -227,15 +226,15 @@ func main() {
 
 		// Accounts/projects/cases/team-members read/search/comment paths used
 		// to have their own Postgres translation layer here, wrapping
-		// customerEntityClient into a ServiceNow-shaped response for SPL's
+		// customerEntityClient into a backing-system-shaped response for SPL's
 		// frontend. All four merged onto CS Portal's own /accounts,
 		// /projects, /cases, and /teams/{id}/members routes below instead,
 		// now that SPL's data source for them is the exact same
 		// entity-service data those routes already serve raw, with no
-		// ServiceNow-shape translation left to justify a second, parallel
+		// Backing-system-shape translation left to justify a second, parallel
 		// /spl/* contract. Only attachments (no entity-service storage path)
 		// and account escalations (CreateEscalation is an explicit stub on
-		// this data source) remain ServiceNow-backed and SPL-specific.
+		// this data source) remain legacy-data-source and SPL-specific.
 		postgresLookups := handler.NewPostgresLookupsClient(customerEntityClient, snClient)
 		postgresReports := handler.NewPostgresReportsClient(customerEntityClient, snClient)
 		postgresUsageMetrics := handler.NewPostgresUsageMetricsClient(customerEntityClient)
@@ -443,7 +442,7 @@ func main() {
 	route("POST /teams/search", handler.PermView, referenceHandler.SearchTeams)
 	route("GET /teams/{id}/members", handler.PermViewSharedEntity, teamHandler.GetTeamMembers)
 	route("GET /accounts/{id}", handler.PermViewSharedEntity, accountHandler.GetAccount)
-	// Admin-only: CRE/SRE team is a temporary override of ServiceNow's own
+	// Admin-only: CRE/SRE team is a temporary override of the backing system's own
 	// value (see AccountService.UpdateAccountTeams's doc comment) — no other
 	// staff role should be able to set it.
 	route("PATCH /accounts/{id}", handler.PermAdmin, accountHandler.UpdateAccountTeams)
@@ -961,7 +960,7 @@ func loadAccessConfig() handler.AccessConfig {
 //	                                         POST /announcements/audience/search
 //	                                         call unconditionally — the
 //	                                         caller cannot opt out — mirroring
-//	                                         the real ServiceNow flow this
+//	                                         the real backing-system flow this
 //	                                         replaces, whose own "Create
 //	                                         announcement for customers" flow
 //	                                         hardcodes an equivalent Project
@@ -1426,7 +1425,7 @@ type viewerConfig struct {
 // only exercised by the escalation and ABT-team-schedule endpoints
 // respectively and default to empty. SERVICENOW_*, GOOGLE_DRIVE_*, and the
 // entity vars below have no SPL_ prefix even though they're only read when
-// SPL is on: they aren't SPL-specific concepts (ServiceNow, Google Drive,
+// SPL is on: they aren't SPL-specific concepts (the backing system, Google Drive,
 // and the sales-side entity service are just this feature's own upstreams)
 // so they follow this file's existing convention of naming a service's own
 // credentials after the service, not the caller -- SPL_RISK_MYSQL_DSN

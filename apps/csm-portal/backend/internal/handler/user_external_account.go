@@ -25,7 +25,7 @@ import (
 
 // wso2EmailDomain is WSO2's own corporate domain. The SCIM "external" org can
 // never contain such an account -- it's reserved for WSO2 staff -- so a
-// wso2.com email skips the lookup even when ServiceNow tags the row with a
+// wso2.com email skips the lookup even when the backing system tags the row with a
 // non-"internal" userType/role (e.g. a wso2.com contact recorded under a
 // customer-facing role like snc_external for testing).
 const wso2EmailDomain = "@wso2.com"
