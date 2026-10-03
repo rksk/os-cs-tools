@@ -46,7 +46,7 @@ func NewVulnerabilityHandler(entity entityVulnerabilityClient) *VulnerabilityHan
 // SyncProductVulnerabilities handles POST /vulnerabilities/sync. The request body is
 // forwarded to the entity service verbatim. This is a full-replace sync — the caller
 // must submit the complete current set of product-vulnerability records on every
-// call, not an incremental delta; the entity service's downstream ServiceNow-backed
+// call, not an incremental delta; the entity service's downstream externally backed
 // operation deletes any existing record not present in the submitted set. Unlike
 // UpdateProject, this entity-service operation accepts pure M2M calls with no
 // forwarded end-user token, so this call is expected to actually succeed.

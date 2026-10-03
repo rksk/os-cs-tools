@@ -307,7 +307,7 @@ paths:
     patch:
       summary: Update closure-state fields or hasAgent/hasKbReferences toggles on a project.
       description: >
-        ServiceNow-data-source only. Used by the Account Closure Process (ACP)
+        external-data-source only. Used by the Account Closure Process (ACP)
         automation to write closure-state fields on a project. The request body
         is forwarded to the entity service verbatim — at least one field is
         required, and the entity service enforces that (400 if none is set).
@@ -520,7 +520,7 @@ paths:
 
   /cases/{id}:
     patch:
-      summary: Update a case's state, severity, or workState (or other fields on ServiceNow).
+      summary: Update a case's state, severity, or workState ((or other fields on the external data source)).
       description: >
         The request body is forwarded to the entity service verbatim; the
         entity service enforces its own field-combination rules (e.g. exactly
@@ -535,7 +535,7 @@ paths:
         autocloseHoldUntil, subject, description, deploymentId,
         deployedProductId, the fix-ETA group, acknowledge, workaroundProvided)
         is Postgres-rejected with 400, not proxied through to a token check.
-        On a ServiceNow data source, every field this operation accepts —
+        On the external data source, every field this operation accepts —
         including a bare state/severity/workState update — requires a
         forwarded identity token this service cannot supply, so every call
         currently receives a mapped 401 there, with no field combination that
@@ -572,7 +572,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream reported a missing or invalid forwarded identity — always when entity-service runs a ServiceNow data source, given this service's M2M-only design; not returned on a Postgres data source, where an unsupported field is a 400 instead)
+          description: Unauthorized (upstream reported a missing or invalid forwarded identity — always when entity-service runs on the external data source, given this service's M2M-only design; not returned on a Postgres data source, where an unsupported field is a 400 instead)
           content:
             application/json:
               schema:
@@ -704,7 +704,7 @@ paths:
         match an entry in entity-service's M2M_TRUSTED_ACTOR_EMAILS allowlist
         or every call here receives a mapped 403; when it matches, the
         comment is created successfully with no forwarded end-user identity
-        needed. On DATA_SOURCE=servicenow, entity-service's ServiceNow path
+        needed. On the external data source, entity-service's path
         still requires a forwarded end-user identity token unconditionally
         and ignores actorEmail entirely — since this service is strictly M2M
         with no mechanism to supply one, calls against that data source
@@ -741,7 +741,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: >
-            Unauthorized — always for DATA_SOURCE=servicenow, since this
+            Unauthorized — always for the external data source, since this
             service has no forwarded end-user identity to supply and that
             data source's entity-service path requires one unconditionally.
           content:
@@ -832,9 +832,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: >
-            Unauthorized — on DATA_SOURCE=servicenow, entity-service forwards
-            this call to ServiceNow with an empty user token (this service has
-            no end-user identity to forward), and ServiceNow returns 401.
+            Unauthorized — on the external data source, entity-service forwards
+            this call to the external data source with an empty user token (this service has
+            no end-user identity to forward), and that source returns 401.
           content:
             application/json:
               schema:
@@ -882,9 +882,9 @@ paths:
     post:
       summary: Search opportunities.
       description: >
-        Served from ServiceNow, or from the CSM database on Postgres. Read-only:
+        Served from the external data source, or from the CSM database on Postgres. Read-only:
         this operation does not require a forwarded end-user identity token, so a
-        pure M2M call through this service succeeds (unlike the ServiceNow-backed
+        pure M2M call through this service succeeds (unlike the externally backed
         write operations elsewhere in this API).
       operationId: searchOpportunities
       security:
@@ -950,7 +950,7 @@ paths:
     get:
       summary: Get an opportunity by ID.
       description: >
-        Served from ServiceNow, or from the CSM database on Postgres. Read-only:
+        Served from the external data source, or from the CSM database on Postgres. Read-only:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: getOpportunity
@@ -1018,7 +1018,7 @@ paths:
     post:
       summary: Search invoices.
       description: >
-        Served from ServiceNow, or from the CSM database on Postgres. Read-only:
+        Served from the external data source, or from the CSM database on Postgres. Read-only:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: searchInvoices
@@ -1085,7 +1085,7 @@ paths:
     get:
       summary: Get an invoice by ID.
       description: >
-        Served from ServiceNow, or from the CSM database on Postgres. Read-only:
+        Served from the external data source, or from the CSM database on Postgres. Read-only:
         this operation does not require a forwarded end-user identity token, so a
         pure M2M call through this service succeeds.
       operationId: getInvoice
@@ -1153,7 +1153,7 @@ paths:
     post:
       summary: Search project-opportunity links.
       description: >
-        Served from ServiceNow, or from the CSM database on Postgres. A project can
+        Served from the external data source, or from the CSM database on Postgres. A project can
         have more than one linked opportunity — one row per link — so this always
         returns a list. No by-id fetch: the underlying data has no single-record
         endpoint. Read-only: this operation does not require a forwarded end-user
@@ -1224,7 +1224,7 @@ paths:
       description: >
         This is a full-replace sync, not an incremental delta: the caller must
         submit the complete current set of product-vulnerability records on
-        every call. The entity service's downstream ServiceNow-backed operation
+        every call. The entity service's downstream externally backed operation
         deletes any existing record not present in the submitted set. Because
         of that, the body must be a non-empty JSON array: an empty array (which
         would delete every record) or a body that is not an array is rejected
@@ -1299,9 +1299,9 @@ paths:
       summary: The public status dashboard's monitor view for one cloud.
       description: >
         Postgres-backed, forwarded to the entity service verbatim. Consumed by
-        wso2-enterprise/uptime-dashboard, which renders status.*.choreo.dev.
-        The response shape is that dashboard's and is reproduced field for
-        field from the ServiceNow resource it replaces.
+        the public cloud status dashboard. The response shape is that
+        dashboard's and is reproduced field for field from the legacy
+        resource it replaces.
       operationId: getCloudStatusMonitors
       security:
         - oauth2ClientCredentials:
@@ -1383,7 +1383,7 @@ paths:
 
         `comments` are the outage's customer-facing external communications,
         newest first — NOT the linked incident's comments, work notes or
-        approval history, which are internal and which ServiceNow does not
+        approval history, which are internal and which the legacy source does not
         publish either.
       operationId: getCloudStatusIncidentDetail
       security:
@@ -1541,7 +1541,7 @@ paths:
       description: >
         Postgres-backed, forwarded verbatim. *** THE availability FIELD IS A
         JSON STRING FOR SIX CLOUDS AND A BARE NUMBER FOR asgardeo. *** That is
-        what the ServiceNow resource emits and what the dashboard renders;
+        what the legacy resource emits and what the dashboard renders;
         anything that decodes and re-encodes this body would flatten the
         distinction. This service forwards raw bytes precisely so it cannot.
       operationId: getCloudStatusAvailabilities
@@ -1688,10 +1688,10 @@ paths:
     post:
       summary: Create an incident.
       description: >
-        ServiceNow-backed. The request body is forwarded to the entity service
+        externally backed. The request body is forwarded to the entity service
         verbatim. This service is strictly M2M with no mechanism to forward an
         end-user identity token, but the entity-service operation falls back
-        to a separately-configured M2M ServiceNow credential when no end-user
+        to a separately-configured M2M credential for the external data source when no end-user
         token is present, and only returns 401 if that fallback credential is
         itself unconfigured in the target environment. A 401 is therefore a
         possible response, not a guaranteed one.
@@ -1720,7 +1720,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target ServiceNow environment's M2M credential isn't configured — possible, not guaranteed, given this service's M2M-only design)
+          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target environment's M2M credential for the external data source isn't configured — possible, not guaranteed, given this service's M2M-only design)
           content:
             application/json:
               schema:
@@ -1770,16 +1770,17 @@ paths:
         path at all: on a Postgres data source, entity-service rejects every
         call outright (503, not supported on this data source yet — several
         fields have no backing column, and others would need comment-table
-        side effects not implemented there). On a ServiceNow data source, it
+        side effects not implemented there). On the external data source, it
         goes through the same M2M-fallback mechanism as POST /incidents and
         POST /incidents/search above: this service is strictly M2M with no
         mechanism to forward an end-user identity token, but the
         entity-service operation falls back to a separately-configured M2M
-        ServiceNow credential when no end-user token is present, and only
+        credential for the external data source when no end-user token is
+        present, and only
         returns 401 if that fallback credential is itself unconfigured in the
-        target environment. So this call is unconditionally ServiceNow-backed
+        target environment. So this call is unconditionally backed by the external data source
         with no Postgres fallback — whether it succeeds depends on the target
-        environment's data source and, on ServiceNow, its M2M credential
+        environment's data source and, on the external data source, its M2M credential
         configuration, not on which fields are sent (contrast PATCH
         /cases/{id}, whose Postgres path narrows to specific fields instead
         of failing outright). The request body is forwarded to the entity
@@ -1817,7 +1818,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target ServiceNow environment's M2M credential isn't configured — possible, not guaranteed, given this service's M2M-only design)
+          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target environment's M2M credential for the external data source isn't configured — possible, not guaranteed, given this service's M2M-only design)
           content:
             application/json:
               schema:
@@ -1869,10 +1870,11 @@ paths:
     post:
       summary: Search incidents.
       description: >
-        ServiceNow-backed, same as POST /incidents. This service is strictly
+        externally backed, same as POST /incidents. This service is strictly
         M2M with no mechanism to forward an end-user identity token, but the
         entity-service operation falls back to a separately-configured M2M
-        ServiceNow credential when no end-user token is present, and only
+        credential for the external data source when no end-user token is
+        present, and only
         returns 401 if that fallback credential is itself unconfigured in the
         target environment. A 401 is therefore a possible response, not a
         guaranteed one.
@@ -1901,7 +1903,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target ServiceNow environment's M2M credential isn't configured — possible, not guaranteed, given this service's M2M-only design)
+          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target environment's M2M credential for the external data source isn't configured — possible, not guaranteed, given this service's M2M-only design)
           content:
             application/json:
               schema:
@@ -1947,11 +1949,11 @@ paths:
     post:
       summary: Search CMDB IT services.
       description: >
-        ServiceNow-backed, same M2M-fallback mechanism as POST /incidents and
+        externally backed, same M2M-fallback mechanism as POST /incidents and
         POST /incidents/search above (confirmed to use the identical code
         path). This service is strictly M2M with no mechanism to forward an
         end-user identity token, but the entity-service operation falls back
-        to a separately-configured M2M ServiceNow credential when no
+        to a separately-configured M2M credential for the external data source when no
         end-user token is present, and only returns 401 if that fallback
         credential is itself unconfigured in the target environment. A 401
         is therefore a possible response, not a guaranteed one.
@@ -1980,7 +1982,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
-          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target ServiceNow environment's M2M credential isn't configured — possible, not guaranteed, given this service's M2M-only design)
+          description: Unauthorized (upstream may report a missing or invalid forwarded identity if the target environment's M2M credential for the external data source isn't configured — possible, not guaranteed, given this service's M2M-only design)
           content:
             application/json:
               schema:
@@ -2026,7 +2028,7 @@ paths:
     post:
       summary: Create an alert-incident mapping.
       description: >
-        Postgres-only entity-service operation with no ServiceNow dependency —
+        Postgres-only entity-service operation with no external-data-source dependency —
         unlike POST /incidents above, this does not require a forwarded
         end-user identity token, so this service's M2M identity is sufficient
         and the call is expected to actually succeed today. The request body
@@ -2102,7 +2104,7 @@ paths:
     post:
       summary: Look up alert-incident mappings by source and unique identifier.
       description: >
-        Postgres-only entity-service operation with no ServiceNow dependency —
+        Postgres-only entity-service operation with no external-data-source dependency —
         same situation as POST /alert-incident-mappings above; expected to
         actually succeed today. Returns an empty `mappings` array (not 404)
         when nothing matches.
@@ -2200,9 +2202,9 @@ components:
     CloudStatusResult:
       type: object
       description: >
-        The envelope ServiceNow's Scripted REST APIs return, reproduced here
+        The envelope the legacy status endpoints return, reproduced here
         so these endpoints are a DROP-IN REPLACEMENT rather than a second
-        integration. uptime-dashboard checks
+        integration. The dashboard checks
         `json?.result?.message == "success"` and then reads
         `json.result.data`, so cutting over is a change to its endpoint URLs
         and nothing else — no new controller, no parallel code path.
@@ -2393,7 +2395,7 @@ components:
           nullable: true
           description: >
             Free-form, per-dimension Account Closure Process (ACP) suspension-process
-            state (event type + action results) written by an existing ServiceNow
+            state (event type + action results) written by an existing external-system
             suspension flow. This is opaque JSON passed through as-is — its shape is
             not defined or validated by this layer.
 
@@ -2504,7 +2506,7 @@ components:
           nullable: true
           description: >
             Free-form, per-dimension Account Closure Process (ACP) suspension-process
-            state (event type + action results) written by an existing ServiceNow
+            state (event type + action results) written by an existing external-system
             suspension flow. This is opaque JSON passed through as-is — its shape is
             not defined or validated by this layer.
 
@@ -2549,7 +2551,7 @@ components:
       description: >
         state, severity, and workState are mutually exclusive of each other
         and of every other field in this request — exactly one of them, or
-        one combination of the other (ServiceNow-only) fields, is required
+        one combination of the other (external-data-source-only) fields, is required
         per call. Only state/severity/workState succeed through this
         M2M-only service; every other field requires a forwarded end-user
         identity token this service cannot supply. See the entity service's
@@ -2571,8 +2573,8 @@ components:
             for the case. Mutually exclusive with state, severity, workState,
             and every other field in this request. A second call on an
             already-marked case is a no-op success, not an error. Postgres
-            data source only (or postgres-servicenow-dual-write, which
-            asynchronously mirrors the write to ServiceNow) — unlike
+            data source only (or the dual-write data source, which
+            asynchronously mirrors the write to the external data source) — unlike
             state/severity/workState, this succeeds through this M2M-only
             service unconditionally, with no data-source-dependent 401.
           enum: [true]
@@ -2755,7 +2757,7 @@ components:
     Opportunity:
       type: object
       description: >
-        Salesforce data, read from ServiceNow or from the CSM database on Postgres. Every field but id is nullable — ServiceNow can
+        Salesforce data, read from the external data source or from the CSM database on Postgres. Every field but id is nullable — the external data source can
         omit any of them entirely for a sparsely-populated row.
       properties:
         id:
@@ -2808,7 +2810,7 @@ components:
     Invoice:
       type: object
       description: >
-        Salesforce data, read from ServiceNow or from the CSM database on Postgres. Every field but id is nullable — ServiceNow can
+        Salesforce data, read from the external data source or from the CSM database on Postgres. Every field but id is nullable — the external data source can
         omit any of them entirely for a sparsely-populated row.
       properties:
         id:
@@ -2884,7 +2886,7 @@ components:
     ProjectOpportunityLink:
       type: object
       description: >
-        Salesforce data, read from ServiceNow or from the CSM database on Postgres. Every field but id is nullable — ServiceNow can
+        Salesforce data, read from the external data source or from the CSM database on Postgres. Every field but id is nullable — the external data source can
         omit either reference entirely for a sparsely-populated row.
       properties:
         id:
