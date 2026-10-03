@@ -56,6 +56,9 @@ type fakeLedger struct {
 	// given was still live and carried a deadline — the bookkeeping
 	// contract engine.bookkeepingContext promises.
 	ctxSeen []ctxState
+
+	// staleAfter records the staleClaimAfter each task's claim carried.
+	staleAfter map[string]time.Duration
 }
 
 type failCall struct {
@@ -74,10 +77,14 @@ func observe(ctx context.Context) ctxState {
 	return ctxState{live: ctx.Err() == nil, hasDeadline: hasDeadline}
 }
 
-func (f *fakeLedger) Attempt(_ context.Context, taskName string, _ time.Time, _ time.Duration) (ledger.Claim, error) {
+func (f *fakeLedger) Attempt(_ context.Context, taskName string, _ time.Time, staleAfter time.Duration) (ledger.Claim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.attempts = append(f.attempts, taskName)
+	if f.staleAfter == nil {
+		f.staleAfter = map[string]time.Duration{}
+	}
+	f.staleAfter[taskName] = staleAfter
 	if f.attemptFn != nil {
 		return f.attemptFn(taskName)
 	}
@@ -471,6 +478,163 @@ type ledgerFunc struct {
 func (w ledgerFunc) Complete(ctx context.Context, id string, n int) error {
 	w.onComplete(ctx)
 	return w.fakeLedger.Complete(ctx, id, n)
+}
+
+// ── ordering, timeouts, concurrency, cadence ───────────────────────────
+
+func TestTick_RunsShortestIntervalFirst(t *testing.T) {
+	l := &fakeLedger{allowed: true}
+	eng := newEngine([]registry.Task{
+		{Name: "daily", Schedule: "0 3 * * *", Handler: okHandler},
+		{Name: "quarter", Schedule: "*/15 * * * *", Handler: okHandler},
+		{Name: "five-a", Schedule: "*/5 * * * *", Handler: okHandler},
+		{Name: "five-b", Schedule: "*/5 * * * *", Handler: okHandler},
+	}, l, &fakeEmail{})
+
+	if err := eng.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(l.attempts, ","); got != "five-a,five-b,quarter,daily" {
+		t.Fatalf("expected shortest-interval-first, registration order among equals; got %s", got)
+	}
+}
+
+func TestTick_HandlerRunsUnderScheduleDerivedTimeout(t *testing.T) {
+	var deadline time.Time
+	var ok bool
+	l := &fakeLedger{allowed: true}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Handler: func(ctx context.Context) error {
+			deadline, ok = ctx.Deadline()
+			return nil
+		}},
+	}, l, &fakeEmail{})
+
+	start := time.Now()
+	_ = eng.Tick(context.Background(), start)
+	if !ok {
+		t.Fatal("the handler must run with a deadline")
+	}
+	if d := deadline.Sub(start); d < 4*time.Minute || d > 6*time.Minute {
+		t.Fatalf("a */5 handler's timeout should be about 5m, got %s", d)
+	}
+}
+
+func TestTick_ExplicitTimeoutWinsAndStopsAHungHandler(t *testing.T) {
+	l := &fakeLedger{allowed: true}
+	m := &fakeEmail{}
+	eng := newEngine([]registry.Task{
+		{Name: "a", Schedule: "*/5 * * * *", Timeout: 20 * time.Millisecond, Handler: func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+	}, l, m)
+
+	err := eng.Tick(context.Background(), time.Now())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a hung handler must be cut off by its timeout, got %v", err)
+	}
+	if len(l.fails) != 1 {
+		t.Fatalf("the timeout must be recorded as a failure, got %+v", l.fails)
+	}
+}
+
+func TestHandlerTimeout(t *testing.T) {
+	now := time.Date(2026, 10, 1, 10, 2, 0, 0, time.UTC)
+	cases := []struct {
+		task registry.Task
+		want time.Duration
+	}{
+		{registry.Task{Schedule: "*/5 * * * *"}, 5 * time.Minute},
+		{registry.Task{Schedule: "*/15 * * * *"}, 15 * time.Minute},
+		{registry.Task{Schedule: "0 3 * * *"}, maxHandlerTimeout},
+		{registry.Task{Schedule: "*/5 * * * *", Timeout: time.Minute}, time.Minute},
+		{registry.Task{Schedule: "bogus"}, maxHandlerTimeout},
+	}
+	for _, tc := range cases {
+		if got := handlerTimeout(tc.task, now); got != tc.want {
+			t.Errorf("%q timeout=%s: got %s, want %s", tc.task.Schedule, tc.task.Timeout, got, tc.want)
+		}
+	}
+}
+
+func TestTick_ClaimWindowCoversTheHandlerTimeout(t *testing.T) {
+	l := &fakeLedger{allowed: false}
+	eng := newEngine([]registry.Task{
+		{Name: "five", Schedule: "*/5 * * * *", Handler: okHandler},
+		{Name: "quarter", Schedule: "*/15 * * * *", Handler: okHandler},
+	}, l, &fakeEmail{}) // DriverInterval 5m
+
+	_ = eng.Tick(context.Background(), time.Now())
+	if got := l.staleAfter["five"]; got != 10*time.Minute {
+		t.Errorf("*/5 task: want the usual 2 x 5m window, got %s", got)
+	}
+	if got := l.staleAfter["quarter"]; got != 20*time.Minute {
+		t.Errorf("*/15 task: window must cover its 15m timeout plus a tick (20m), got %s", got)
+	}
+}
+
+func TestTick_ConcurrencyLetsShortTasksFinishPastASlowOne(t *testing.T) {
+	release := make(chan struct{})
+	l := &fakeLedger{allowed: true}
+	var mu sync.Mutex
+	var finished []string
+	mark := func(name string) {
+		mu.Lock()
+		finished = append(finished, name)
+		mu.Unlock()
+	}
+	eng := newEngine([]registry.Task{
+		{Name: "slow", Schedule: "*/5 * * * *", Handler: func(ctx context.Context) error {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			mark("slow")
+			return nil
+		}},
+		{Name: "fast", Schedule: "*/5 * * * *", Handler: func(context.Context) error {
+			mark("fast")
+			close(release)
+			return nil
+		}},
+	}, l, &fakeEmail{})
+	eng.Concurrency = 2
+
+	done := make(chan error, 1)
+	go func() { done <- eng.Tick(context.Background(), time.Now()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("with two workers the fast task must run while the slow one waits")
+	}
+	if strings.Join(finished, ",") != "fast,slow" {
+		t.Fatalf("expected fast to finish first, got %v", finished)
+	}
+}
+
+func TestValidateCadence(t *testing.T) {
+	now := time.Now()
+	tasks := []registry.Task{
+		{Name: "five", Schedule: "*/5 * * * *"},
+		{Name: "daily", Schedule: "0 3 * * *"},
+	}
+	if err := ValidateCadence(tasks, 5*time.Minute, now); err != nil {
+		t.Fatalf("a 5m driver covers a */5 schedule, got %v", err)
+	}
+	err := ValidateCadence(tasks, time.Hour, now)
+	if err == nil {
+		t.Fatal("a 1h driver cannot honour a */5 schedule")
+	}
+	if !strings.Contains(err.Error(), "five fires every 5m0s") || strings.Contains(err.Error(), "daily") {
+		t.Fatalf("the error should name only the offending task, got %v", err)
+	}
+	if err := ValidateCadence([]registry.Task{{Name: "x", Schedule: "bogus"}}, time.Minute, now); err == nil {
+		t.Fatal("an invalid schedule must be reported")
+	}
 }
 
 // ── ledger-failure alerting ────────────────────────────────────────────

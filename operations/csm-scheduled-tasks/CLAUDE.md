@@ -331,16 +331,37 @@ report emails" below for why that's not a generic engine feature.
 | `EMAIL_FROM_ADDRESS` | No | Fixed "From" address for every email this component sends |
 | `ALERTS_ENABLED` | No (default `true`) | Global kill switch for every email this component sends — failure alerts and report-style tasks' own success emails alike — see "Alerting" above |
 | `ALERT_RECIPIENTS` | No | Comma-separated email addresses alerted on every failed sub-cron attempt, for every task — see "Alerting" above |
-| `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself |
+| `DRIVER_INTERVAL` | No (default `1h`), but checked at startup | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself. Startup refuses to proceed if any registered schedule fires more often than this (the default task set has `*/5` tasks, so a real deployment must set this to the trigger cadence, e.g. `5m`): a tighter schedule can never be honoured, and a failed period of such a task would be superseded by its next period before its retry (which defaults to this interval) ever came due |
+| `TASK_CONCURRENCY` | No (default `2`) | How many task handlers may run at once within one tick. Tasks always start shortest-interval first (the `*/5` tasks ahead of the `*/15` one ahead of the dailies); a second worker additionally keeps one slow handler from holding the rest of the tick. `1` makes the tick strictly sequential |
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
 | `SUB_CRON_RECIPIENTS` | No | JSON object `{"<task.Name>": {"to": [...], "cc": [...]}}` giving a registered task its own extra failure-alert audience, on top of `ALERT_RECIPIENTS` — or, for a report-style task, its report's actual recipients (see "Alerting" above for which tasks work which way). A task not mentioned gets no per-task recipients |
 | `HOUSEKEEPING_RETENTION_DAYS` | No (default `30`) | Plain integer number of days of resolved history the `housekeeping_cleanup` sub-cron keeps — see "Housekeeping" above |
 
-No app-level execution timeout is configured here — Choreo's own Scheduled Task execution-time
-limit already bounds how long one invocation can run. `cmd/server/main.go` instead cancels its
-context via `signal.NotifyContext` on `SIGTERM`, so however that signal arrives (Choreo's own
-timeout firing, a redeploy, a manual stop), in-flight HTTP calls to entity-service abort promptly
-instead of being cut off mid-request with no chance to react.
+There is no whole-process execution timeout here — Choreo's own Scheduled Task execution-time
+limit bounds how long one invocation can run. Each handler, however, runs under its own
+`context.WithTimeout`: `registry.Task.Timeout` when set, otherwise the schedule's shortest
+inter-fire gap capped at 30 minutes (`engine.handlerTimeout`), since a handler still running when
+its own next period comes due has already lost. The ledger's orphaned-claim window is widened to
+cover that timeout, so a long handler is never reclaimed mid-run by the next tick.
+
+`cmd/server/main.go` cancels its context via `signal.NotifyContext` on `SIGTERM`, so however that
+signal arrives (Choreo's own timeout firing, a redeploy, a manual stop), the in-flight handler
+aborts promptly and no further task is claimed. The engine's record-back (`Complete`/`Fail`) and
+alert e-mails deliberately do **not** run on that context: they use a short context derived with
+`context.WithoutCancel` (`engine.bookkeepingContext`, bounded by `Engine.BookkeepingTimeout`,
+default 10s), so an interrupted run is still recorded as failed and the alert still goes out —
+otherwise both would fail before dialling, the row would stay claimed with no retry time, and
+nobody would be told.
+
+The process exits non-zero whenever `engine.Tick` returns an error — any handler failure, any
+ledger call that failed at any stage, an alert that could not be sent, or an interruption —
+so the scheduler's run history shows a failed run. "Not due" and "claim denied" exit 0.
+
+Ledger-stage failures (claim, complete, fail) get one aggregated **LEDGER ERROR** e-mail per tick
+(`notify.RenderLedgerAlertEmail`, `internal/notify/templates/ledger_alert.html`) listing every
+affected task with a short, summarised cause — never a response body — sent to `ALERT_RECIPIENTS`
+plus each affected task's own To/Cc. The e-mail client does not depend on the ledger, so this is
+exactly the alert that still works when entity-service is what is down.
 
 `.env` is auto-loaded from the working directory at startup if present (silently ignored if
 absent), matching `integrations/csm-notification-service`'s own convention.
