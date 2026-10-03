@@ -5,7 +5,7 @@
 # herein in any form is strictly forbidden, unless permitted by WSO2 expressly.
 # You may not alter or remove any copyright or other notice from copies of this content.
 
-.PHONY: build test lint migrate schema-bootstrap-sql
+.PHONY: build test lint migrate migrate-order schema-bootstrap-sql
 
 SHELL := /bin/bash
 .ONESHELL:
@@ -19,8 +19,8 @@ test:
 lint:
 	go vet ./...
 
-# Applies migrations/*.sql in ascending numeric order (4-digit names sort
-# correctly, no numeric-aware sort needed), tracked in
+# Applies the migrations listed by scripts/migration_order.sh, in that order
+# (not a plain migrations/*.sql glob: see that script for why), tracked in
 # csm_migration_applied_migration - same convention, same loop shape, as
 # operations/csm-sync-service's own `make migrate`, since both services
 # migrate the same shared database and must stay interchangeable here.
@@ -37,7 +37,8 @@ migrate:
 		conn=""; \
 	fi; \
 	psql $$conn -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS csm_migration_applied_migration (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());" || exit 1; \
-	for f in migrations/*.sql; do \
+	files=$$(./scripts/migration_order.sh) || exit 1; \
+	for f in $$files; do \
 		name=$$(basename "$$f"); \
 		name_escaped=$$(printf '%s' "$$name" | sed "s/'/''/g"); \
 		applied=$$(psql $$conn -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM csm_migration_applied_migration WHERE filename = '$$name_escaped';"); \
@@ -50,7 +51,11 @@ migrate:
 		psql $$conn -v ON_ERROR_STOP=1 -c "INSERT INTO csm_migration_applied_migration (filename) VALUES ('$$name_escaped');" || exit 1; \
 	done
 
-# Combines migrations/*.sql into one file (dist/schema_bootstrap_<timestamp>.sql)
+# Dry run: prints the files `migrate` would consider, in apply order.
+migrate-order:
+	./scripts/migration_order.sh
+
+# Combines the migrations (same list and order as `migrate`) into one file (dist/schema_bootstrap_<timestamp>.sql)
 # for a manual run against a DB that has never run any of these before -
 # first-time prod, or a staging reset. Mirrors
 # operations/csm-sync-service's own script of the same name and output
