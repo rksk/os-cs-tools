@@ -103,9 +103,12 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, query
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("updates: read response body: %w", err)
+	}
+	if len(respBody) > maxUpstreamResponseBytes {
+		return nil, fmt.Errorf("updates: read response body: response exceeds %d bytes", maxUpstreamResponseBytes)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
