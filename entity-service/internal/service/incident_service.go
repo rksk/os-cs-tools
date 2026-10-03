@@ -527,7 +527,7 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 		req.ConfigurationItemID != nil || req.ChangeRequestID != nil || req.ProblemID != nil ||
 		req.CausedByID != nil || req.ResolvedByID != nil || req.ResolutionNotes != nil ||
 		req.IncidentReport != nil || req.WatchList != nil {
-		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "subject, priority, state, category, subcategory, contactType, resolutionCode, parentId, parentIncidentId, assignmentGroupId, assignedEngineerId, serviceId, serviceOfferingId, configurationItemId, changeRequestId, problemId, causedById, resolvedById, resolutionNotes, incidentReport, and watchList are only supported for the ServiceNow data source"}
+		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "subject, priority, state, category, subcategory, contactType, resolutionCode, parentId, parentIncidentId, assignmentGroupId, assignedEngineerId, serviceId, serviceOfferingId, configurationItemId, changeRequestId, problemId, causedById, resolvedById, resolutionNotes, incidentReport, and watchList are not supported by this data source"}
 	}
 	if req.WorkNotes == nil && req.AdditionalComments == nil {
 		return domain.UpdateIncidentResponse{}, &apierror.ValidationError{Msg: "at least one of workNotes or additionalComments must be provided"}
