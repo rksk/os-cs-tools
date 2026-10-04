@@ -89,7 +89,7 @@ type ProblemRepository interface {
 	// no createdBy/createdOn field at all, unlike case/incident/change
 	// request. The caller (problemService.createProblemSNFirst) instead
 	// resolves createdBy from the requesting user's own JWT email claim
-	// (same middleware.UserIDTokenFromContext + emailFromJWT chain
+	// (same verified-identity helper (callerEmail)
 	// caseService.CreateCase already uses when req.CreatedBy is empty) --
 	// the calling user's identity is the only real signal for who actually
 	// created the problem, since ServiceNow's own response gives none.

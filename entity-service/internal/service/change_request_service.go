@@ -307,17 +307,13 @@ func (s *changeRequestService) CreateChangeRequest(ctx context.Context, req doma
 // ChangeRequestRepository's own doc comment on CreateChangeRequestFromServiceNow
 // for why a change request specifically needs no wso2ID the way case/incident
 // do). createdBy is resolved from the caller's own JWT email claim -- the
-// same middleware.UserIDTokenFromContext + emailFromJWT chain
+// same verified-identity helper (callerEmail)
 // problemService.createProblemSNFirst already uses -- since there is no
 // ServiceNow response to take it from on this path.
 func (s *changeRequestService) createChangeRequestPortal(ctx context.Context, req domain.CreateChangeRequestRequest) (domain.CreateChangeRequestResponse, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.CreateChangeRequestResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	createdBy, err := emailFromJWT(token)
+	createdBy, err := callerEmail(ctx)
 	if err != nil {
-		return domain.CreateChangeRequestResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.CreateChangeRequestResponse{}, err
 	}
 	// Same type check createChangeRequestSNFirst runs before calling
 	// ServiceNow -- deterministic, no I/O, so there's no reason to defer it
