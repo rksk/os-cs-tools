@@ -67,7 +67,7 @@ function formatDateOnly(date: Date): string {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
-import DOMPurify from "dompurify";
+import { safeRouteId } from "@features/spl/utils/routeId";
 import { BackendApiError } from "@api/backend/client";
 import { useGetTeamSchedule } from "@features/spl/schedule/api/useGetTeamSchedule";
 import type { ABTTeamScheduleList } from "@features/spl/schedule/scheduleTypes";
@@ -152,7 +152,7 @@ const BlackTooltip = styled(({ className, ...props }: TooltipProps) => (
 
 export default function TeamSchedulePage(): JSX.Element {
   const { sysId } = useParams<{ sysId?: string }>();
-  const [teamId, setTeamId] = useState(sysId ? DOMPurify.sanitize(sysId) : "");
+  const [teamId, setTeamId] = useState(safeRouteId(sysId));
   const [duration, setDuration] = useState("");
   const [from, setFrom] = useState<string>(formatDateOnly(new Date()));
   const [eventType, setEventType] = useState("");
@@ -168,7 +168,7 @@ export default function TeamSchedulePage(): JSX.Element {
   const [prevSysId, setPrevSysId] = useState(sysId);
   if (sysId !== prevSysId) {
     setPrevSysId(sysId);
-    setTeamId(sysId ? DOMPurify.sanitize(sysId) : "");
+    setTeamId(safeRouteId(sysId));
   }
 
   const { data, isLoading, error } = useGetTeamSchedule({ teamId, duration, from, eventType });
