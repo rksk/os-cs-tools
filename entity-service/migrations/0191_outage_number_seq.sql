@@ -1,0 +1,37 @@
+-- Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+--
+-- WSO2 LLC. licenses this file to you under the Apache License,
+-- Version 2.0 (the "License"); you may not use this file except
+-- in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing,
+-- software distributed under the License is distributed on an
+-- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+-- KIND, either express or implied.  See the License for the
+-- specific language governing permissions and limitations
+-- under the License.
+
+-- outage_number_seq: native outage creation (insertOutage in
+-- outage_repo.go) draws the OUT number from this sequence, but no earlier
+-- migration created it. On any database built from migrations, POST /outages
+-- therefore failed with: relation "outage_number_seq" does not exist.
+--
+-- This applies to every data source that creates outages in Postgres (the
+-- postgres source and the dual-write source): outage creation never asks the
+-- legacy system for a number.
+--
+-- START 10000 puts the first native number (OUT0010000) above the highest
+-- number the legacy system had allocated when this was written (OUT0001887),
+-- so it cannot collide with numbers the legacy system keeps allocating while
+-- both run. The cutover seed (scripts/cutover/seed_native_numbering.sql) only
+-- ever moves this sequence forward.
+--
+-- IF NOT EXISTS: a database where the sequence was created by hand keeps its
+-- own sequence and current value untouched. Migration 0180 also creates this
+-- sequence, but it is only reached on PostgreSQL 18 (0179 refuses older
+-- versions); this migration has no such requirement.
+
+CREATE SEQUENCE IF NOT EXISTS outage_number_seq START 10000;
