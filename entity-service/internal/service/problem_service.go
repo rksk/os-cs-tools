@@ -204,13 +204,9 @@ func (s *problemService) CreateProblem(ctx context.Context, req domain.CreatePro
 // resolved from the caller's own JWT email claim, same chain
 // createProblemSNFirst already uses.
 func (s *problemService) createProblemPortal(ctx context.Context, req domain.CreateProblemRequest) (domain.ProblemDetail, error) {
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.ProblemDetail{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	createdBy, err := emailFromJWT(token)
+	createdBy, err := callerEmail(ctx)
 	if err != nil {
-		return domain.ProblemDetail{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.ProblemDetail{}, err
 	}
 	if utf8.RuneCountInString(req.Subject) > maxWorkItemSubjectLength {
 		return domain.ProblemDetail{}, &apierror.ValidationError{Msg: fmt.Sprintf("subject cannot exceed %d characters", maxWorkItemSubjectLength)}

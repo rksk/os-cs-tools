@@ -382,13 +382,9 @@ func (s *userService) PatchMe(ctx context.Context, req domain.PatchUserMeRequest
 	if req.TimeZone == "" {
 		return domain.PatchUserMeResponse{}, &apierror.ValidationError{Msg: "timeZone is required"}
 	}
-	token := middleware.UserIDTokenFromContext(ctx)
-	if token == "" {
-		return domain.PatchUserMeResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
-	}
-	email, err := emailFromJWT(token)
+	email, err := callerEmail(ctx)
 	if err != nil {
-		return domain.PatchUserMeResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
+		return domain.PatchUserMeResponse{}, err
 	}
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
