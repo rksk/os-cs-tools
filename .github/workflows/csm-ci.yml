@@ -106,12 +106,15 @@ jobs:
           else
             changed="$(git diff --name-only "$base" "$head")"
           fi
-          if printf '%s\n' "$changed" | grep -qx '.github/workflows/csm-ci.yml'; then
+          # Here-strings, not `printf | grep -q`: under pipefail grep -q exits at its
+          # first match, printf then dies of SIGPIPE on a long file list, and the
+          # pipeline reports failure for exactly the modules that sort early.
+          if grep -qx '.github/workflows/csm-ci.yml' <<<"$changed"; then
             run_all=1
           fi
 
           touched() { # touched <dir> -> exit 0 if any changed path is under <dir>
-            [ "$run_all" = 1 ] || printf '%s\n' "$changed" | grep -q "^$1/"
+            [ "$run_all" = 1 ] || grep -q "^$1/" <<<"$changed"
           }
 
           go_json="["; sep=""
