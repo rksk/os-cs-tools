@@ -367,7 +367,7 @@ export default function TimelogsReportPage(): JSX.Element {
     // own dashed UUID -- sysidToUuid converts it to what SPL's own
     // /spl/cases/:caseId route (which validates a dashed UUID) needs.
     if (rowData?.caseSysId) {
-      window.open(`/spl/cases/${sysidToUuid(rowData.caseSysId)}`, "_blank");
+      window.open(`/spl/cases/${sysidToUuid(rowData.caseSysId)}`, "_blank", "noopener,noreferrer");
     } else {
       setErrorMessage("Case not found.");
     }
