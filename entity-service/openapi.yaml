@@ -6100,8 +6100,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: 'The caller is not an internal caller; this operation is only available to internal callers.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: 'The caller''s access scope cannot be resolved right now.'
           content:
             application/json:
               schema:
