@@ -15,7 +15,7 @@
 // under the License.
 
 // Comment visibility on the Postgres data source: internal notes stay with
-// staff (the comment policies, migration 0179) and soft-deleted comments leave
+// staff (the comment policies, migration 0185) and soft-deleted comments leave
 // the case thread and activity feed for everyone. Needs an RLS-enforcing role,
 // like the other RLS integration tests; skipped without CASE_STATS_TEST_DSN.
 //
