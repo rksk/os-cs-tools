@@ -1145,6 +1145,9 @@ describe("CsmCaseDetailPage — managed cloud and onboarding banners", () => {
 
     expect(screen.getByText(MANAGED_TITLE)).toBeInTheDocument();
     expect(screen.getByText(ONBOARDING_TITLE)).toBeInTheDocument();
+    // Routine guidance must not announce assertively to screen readers.
+    expect(screen.getByTestId("case-managed-cloud-banner")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("case-onboarding-banner")).toHaveAttribute("role", "status");
   });
 
   it("shows no banner for a project that is neither", () => {

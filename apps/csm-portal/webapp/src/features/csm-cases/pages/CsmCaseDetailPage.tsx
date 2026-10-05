@@ -2414,7 +2414,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
           both can show. Not dismissible; nothing renders until the project
           fetch resolves. */}
       {!isAnnouncement && caseProject?.subscriptionType === "managed_cloud_subscription" && (
-        <Alert severity="warning" data-testid="case-managed-cloud-banner">
+        <Alert severity="warning" role="status" data-testid="case-managed-cloud-banner">
           <AlertTitle>This is a WSO2 Managed Cloud deployment</AlertTitle>
           Do not ask the customer for logs, configuration files, deployment artefacts or
           other deployment-related information. Check with the WSO2 MS team instead. Do not
@@ -2422,7 +2422,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         </Alert>
       )}
       {!isAnnouncement && caseProject?.onboardingStatus === "In-Progress" && (
-        <Alert severity="info" data-testid="case-onboarding-banner">
+        <Alert severity="info" role="status" data-testid="case-onboarding-banner">
           <AlertTitle>Customer onboarding in progress</AlertTitle>
           This is an ongoing customer onboarding account. Make sure you have the account
           context before answering or requesting information. First check with the
