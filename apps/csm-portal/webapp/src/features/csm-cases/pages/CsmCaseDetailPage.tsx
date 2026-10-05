@@ -15,6 +15,8 @@
 // under the License.
 
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
   Card,
@@ -2406,6 +2408,28 @@ export default function CsmCaseDetailPage(): JSX.Element {
           </Box>
         )}
       </Box>
+
+      {/* Always-on guidance while the case's project is Managed Cloud and/or
+          has onboarding in progress. The two conditions are independent, so
+          both can show. Not dismissible; nothing renders until the project
+          fetch resolves. */}
+      {!isAnnouncement && caseProject?.subscriptionType === "managed_cloud_subscription" && (
+        <Alert severity="warning" data-testid="case-managed-cloud-banner">
+          <AlertTitle>This is a WSO2 Managed Cloud deployment</AlertTitle>
+          Do not ask the customer for logs, configuration files, deployment artefacts or
+          other deployment-related information. Check with the WSO2 MS team instead. Do not
+          move the case to Awaiting info when you request these from the MS team.
+        </Alert>
+      )}
+      {!isAnnouncement && caseProject?.onboardingStatus === "In-Progress" && (
+        <Alert severity="info" data-testid="case-onboarding-banner">
+          <AlertTitle>Customer onboarding in progress</AlertTitle>
+          This is an ongoing customer onboarding account. Make sure you have the account
+          context before answering or requesting information. First check with the
+          onboarding owner ({caseProject.onboardingOwner?.name || "Unassigned"}) whether they
+          are available; if not, review the customer's solution context before responding.
+        </Alert>
+      )}
 
       <CaseMetaBand
         detail={c}

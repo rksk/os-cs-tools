@@ -1092,6 +1092,104 @@ describe("CsmCaseDetailPage — onboarding chip", () => {
   });
 });
 
+describe("CsmCaseDetailPage — managed cloud and onboarding banners", () => {
+  const MANAGED_TITLE = "This is a WSO2 Managed Cloud deployment";
+  const ONBOARDING_TITLE = "Customer onboarding in progress";
+
+  function mockProject(data: Record<string, unknown> | undefined): void {
+    useGetProjectMock.mockImplementation(() => ({
+      data,
+      isLoading: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+  }
+
+  it("shows only the managed cloud banner for a managed cloud project", () => {
+    mockProject({ subscriptionType: "managed_cloud_subscription" });
+    renderPage();
+
+    expect(screen.getByText(MANAGED_TITLE)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Check with the WSO2 MS team instead/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Do not move the case to Awaiting info/)).toBeInTheDocument();
+    expect(screen.queryByText(ONBOARDING_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("shows the onboarding banner with the owner's name when onboarding is in progress", () => {
+    mockProject({
+      onboardingStatus: "In-Progress",
+      onboardingOwner: { id: "user-1", name: "Jane Doe", email: "jane.doe@example.com" },
+    });
+    renderPage();
+
+    expect(screen.getByText(ONBOARDING_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(/onboarding owner \(Jane Doe\)/)).toBeInTheDocument();
+    expect(screen.queryByText(MANAGED_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("falls back to 'Unassigned' in the onboarding banner when no owner is set", () => {
+    mockProject({ onboardingStatus: "In-Progress", onboardingOwner: null });
+    renderPage();
+
+    expect(screen.getByText(/onboarding owner \(Unassigned\)/)).toBeInTheDocument();
+  });
+
+  it("shows both banners when the project is managed cloud and onboarding is in progress", () => {
+    mockProject({
+      subscriptionType: "managed_cloud_subscription",
+      onboardingStatus: "In-Progress",
+    });
+    renderPage();
+
+    expect(screen.getByText(MANAGED_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(ONBOARDING_TITLE)).toBeInTheDocument();
+  });
+
+  it("shows no banner for a project that is neither", () => {
+    mockProject({ subscriptionType: "subscription", onboardingStatus: undefined });
+    renderPage();
+
+    expect(screen.queryByText(MANAGED_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(ONBOARDING_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("shows no banner while the project has not loaded", () => {
+    mockProject(undefined);
+    renderPage();
+
+    expect(screen.queryByText(MANAGED_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(ONBOARDING_TITLE)).not.toBeInTheDocument();
+  });
+
+  it.each(["Completed", "Not-Applicable", "Not-Started"])(
+    "shows no onboarding banner for onboarding status %s",
+    (status) => {
+      mockProject({ onboardingStatus: status });
+      renderPage();
+
+      expect(screen.queryByText(ONBOARDING_TITLE)).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows no banner on an announcement even when the project qualifies for both", () => {
+    mockProject({
+      subscriptionType: "managed_cloud_subscription",
+      onboardingStatus: "In-Progress",
+    });
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Advisory</p>",
+    );
+
+    expect(screen.queryByText(MANAGED_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(ONBOARDING_TITLE)).not.toBeInTheDocument();
+  });
+});
+
 describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () => {
   it("stops showing the previous case's edit dialog once the route moves to a new case", () => {
     renderPage();
