@@ -363,7 +363,7 @@ is), each bounded by its own 5s `context.WithTimeout`
 (`publishCaseCreatedTimeout`/`publishIncidentCreatedTimeout`/
 `publishCommentAddedTimeout`/`publishStatusChangedTimeout`/
 `publishSeverityChangedTimeout`) so a slow
-ServiceNow or Event Hub round trip can't consume this service's own 30s
+ServiceNow or Event Hub round trip can't consume this service's own 45s
 request timeout — a deliberate simplicity trade-off over the async+
 `WaitGroup`-drain pattern, made because this service (unlike that backend)
 has no existing per-handler struct to hold a drain hook, and adding one

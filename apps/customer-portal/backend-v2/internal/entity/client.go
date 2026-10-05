@@ -126,8 +126,11 @@ func NewClient(cfg Config) *Client {
 	// directly on the returned one.
 	oauthClient := cc.Client(tokenCtx)
 	httpClient := &http.Client{
-		Transport:     oauthClient.Transport,
-		Timeout:       25 * time.Second,
+		Transport: oauthClient.Transport,
+		// 55s: create-case relays inline base64 attachments (up to ~15 MiB).
+		// Kept below the backend server's 60s Read/WriteTimeout and above the
+		// entity-service server's 50s so the inner layer errors first.
+		Timeout:       55 * time.Second,
 		CheckRedirect: noRedirect,
 	}
 

@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	serverReadTimeout  = 15 * time.Second
-	serverWriteTimeout = 15 * time.Second
+	serverReadTimeout  = 50 * time.Second
+	serverWriteTimeout = 50 * time.Second
 	serverIdleTimeout  = 60 * time.Second
 )
 

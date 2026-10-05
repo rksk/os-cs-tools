@@ -359,9 +359,14 @@ func main() {
 			),
 		),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Read/WriteTimeout are 60s because create-case carries inline base64
+		// attachments (up to ~15 MiB) relayed through two hops. The chain is
+		// ordered backend server 60s > entity client 55s > entity-service
+		// server 50s, so each layer can return a clean error before the
+		// outer one gives up.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Established before the WebSocket listener binds, so that listener's setup

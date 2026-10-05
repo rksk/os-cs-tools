@@ -610,7 +610,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 		middleware.Recovery(
 			middleware.Logger(
 				middleware.UserIDToken(
-					middleware.Timeout(30 * time.Second)(mux),
+					middleware.Timeout(45 * time.Second)(mux),
 				),
 			),
 		),
