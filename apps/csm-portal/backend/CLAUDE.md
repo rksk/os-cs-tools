@@ -29,6 +29,8 @@ New upstream services get their own package under `internal/` following the same
 
 **Shared OAuth2 credentials**: `CustomerEntityClient` and `EngineeringEntityClient` (both in `entity`), `updates`, and `scim` all authenticate as the same OAuth2 client-credentials app — `cmd/server/main.go` reads `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` once and passes them into every service's `Config`; only `<SERVICE>_BASE_URL`/`<SERVICE>_SCOPES` are per-service. `EngineeringEntityConfig` still has its own `ClientID`/`ClientSecret`/`TokenURL` fields (matching every other service's `Config` shape), but when it's wired into `main.go` those should be filled with the same shared `oauth2ClientID`/`oauth2ClientSecret`/`oauth2TokenURL` values, not new `ENGINEERING_ENTITY_*` env vars. Follow this pattern for any new upstream service client unless it genuinely uses a different OAuth2 app.
 
+**Request timeouts**: `REST_READ_TIMEOUT` / `REST_WRITE_TIMEOUT` (default 60s) and `ENTITY_SERVICE_TIMEOUT` (default 55s, applied to `CustomerEntityClient` only) are parsed by the pure `loadTimeouts` in `cmd/server/timeouts.go`; all must be > 0 and `ENTITY_SERVICE_TIMEOUT` < `REST_WRITE_TIMEOUT`, else startup fails. Defaults were raised from 30s/25s for large inline-attachment uploads. Other upstream clients (engineering, updates, SCIM, notifications, SFTPGo) keep their own fixed timeouts.
+
 ## Running locally
 
 ```bash

@@ -131,6 +131,16 @@ Backs `entity.CustomerEntityClient` (this repo's entity-service; cases, accounts
 | `CUSTOMER_ENTITY_BASE_URL` | Base URL of the customer entity service |
 | `CUSTOMER_ENTITY_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
+### Request timeouts
+
+Go duration strings (e.g. `45s`, `2m`); unset or empty uses the default. All must be greater than 0, and `ENTITY_SERVICE_TIMEOUT` must be strictly less than `REST_WRITE_TIMEOUT`; the service exits at startup otherwise. The defaults deliberately raise the previous values (server 30s, entity client 25s) so large inline-attachment uploads are not cut off, matching the customer-portal backend.
+
+| Variable | Default | Description |
+|---|---|---|
+| `REST_READ_TIMEOUT` | `60s` | Main REST server read timeout |
+| `REST_WRITE_TIMEOUT` | `60s` | Main REST server write timeout |
+| `ENTITY_SERVICE_TIMEOUT` | `55s` | Per-request timeout of the customer entity service client |
+
 ### Engineering entity service (not yet wired in)
 
 Backs `entity.EngineeringEntityClient.CreateGitIssue` (a separate internal engineering entity service) but is not constructed in `cmd/server/main.go` — no handler calls it yet. These variables are not read by any code today. It uses the same shared OAuth2 credentials above (same `OAUTH2_CLIENT_ID`/`_CLIENT_SECRET`/`_TOKEN_URL`) — only its base URL and scopes are its own.

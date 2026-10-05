@@ -59,6 +59,12 @@ func main() {
 	// request path.
 	dir := loadDirectory()
 
+	reqTimeouts, err := loadTimeouts(os.Getenv)
+	if err != nil {
+		slog.Error("invalid timeout configuration", "err", err)
+		os.Exit(1)
+	}
+
 	// All upstream service clients (entity, updates, SCIM, and future notification
 	// channels) authenticate as the same OAuth2 client-credentials app; only the
 	// base URL and scopes differ per service.
@@ -73,6 +79,8 @@ func main() {
 		ClientSecret: oauth2ClientSecret,
 		// Scopes is optional; set CUSTOMER_ENTITY_SCOPES as a comma-separated list if required.
 		Scopes: splitComma(os.Getenv("CUSTOMER_ENTITY_SCOPES")),
+		// Timeout is ENTITY_SERVICE_TIMEOUT (default 55s, raised from 25s).
+		Timeout: reqTimeouts.EntityService,
 	}
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
@@ -340,9 +348,11 @@ func main() {
 			),
 		),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// REST_READ_TIMEOUT / REST_WRITE_TIMEOUT, default 60s each (raised from
+		// 30s so large inline-attachment uploads are not cut off).
+		ReadTimeout:  reqTimeouts.RESTRead,
+		WriteTimeout: reqTimeouts.RESTWrite,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {
