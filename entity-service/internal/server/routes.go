@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/cache"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/config"
@@ -50,10 +49,11 @@ import (
 // The function is never nil; with publishing unconfigured it simply has
 // nothing to close. It also closes the user cache's Redis client, when one
 // was built.
-func NewRouter(pgPool *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
-	// FromPgx keeps a nil pool a true nil interface, so every `db != nil` gate
-	// below still means "no database configured".
-	db := db.FromPgx(pgPool)
+func NewRouter(dbPool db.Pool, cfg *config.Config) (http.Handler, func()) {
+	// dbPool must be a true nil interface for "no database configured" (never
+	// a nil *pgxpool.Pool stored in it), so every `db != nil` gate below keeps
+	// meaning that. db.Router.Pool and db.FromPgx produce one.
+	db := dbPool
 	userRepo := repository.NewUserRepository(db)
 	userSvc := service.NewUserService(userRepo)
 

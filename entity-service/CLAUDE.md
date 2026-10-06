@@ -49,6 +49,12 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `DB_POOL_MIN_CONNS` | no | `2` | pgxpool connections kept warm when idle; `0` is a valid, accepted value |
 | `DB_POOL_MAX_CONN_LIFETIME` | no | `30m` | pgxpool connection rotation interval |
 | `DB_POOL_MAX_CONN_IDLE_TIME` | no | `5m` | pgxpool idle-connection release interval |
+| `DB_READ_POOL_ENABLED` | no | off | Adds a second, read-only pool; on only when exactly `true`. Requires a configured database (startup error otherwise). See "Connection pool settings" |
+| `DB_READ_HOST` / `DB_READ_PORT` / `DB_READ_USER` / `DB_READ_PASSWORD` / `DB_READ_NAME` / `DB_READ_SSLMODE` | no | the `DB_*` value | Read pool connection; each falls back to its write counterpart, so the read pool targets the same primary until `DB_READ_HOST` points at a replica |
+| `DB_READ_POOL_MAX_CONNS` | no | `10` | Read pool max connections (same fallback rule as `DB_POOL_MAX_CONNS`) |
+| `DB_READ_POOL_MIN_CONNS` | no | `2` | Read pool warm connections; `0` accepted |
+| `DB_READ_POOL_MAX_CONN_LIFETIME` | no | `30m` | Read pool connection rotation interval |
+| `DB_READ_POOL_MAX_CONN_IDLE_TIME` | no | `5m` | Read pool idle-connection release interval |
 | `SERVER_PORT` | no       | `8080`  | Main API listen port       |
 | `HEALTH_PORT` | no       | `8081`  | Health probe listen port; `Validate` rejects it being equal to `SERVER_PORT` (see "Health probes" below) |
 | `SERVER_READ_TIMEOUT` | no | `60s` | Main API server read timeout (Go duration, e.g. `60s`); must be > 0 |
@@ -6396,6 +6402,14 @@ Tuned via `config.Config`, applied by `internal/db.NewPool`. Each is env-configu
 | Max idle time       | `DB_POOL_MAX_CONN_IDLE_TIME`   | 5 min   |
 
 `DB_POOL_MAX_CONNS` falls back to its default on an unset, non-numeric, or non-positive value (a pool that may open no connections at all can never serve a single query). `DB_POOL_MIN_CONNS` falls back the same way **except zero is accepted** — pgxpool genuinely permits a minimum of 0 (a deployment that doesn't want to retain any idle connections) — same fail-safe-to-default posture `getDurationOrDefault` already uses for every duration-shaped env var here, now shared by `getInt32OrDefault`. An invalid value for any of the four surfaces through `Config.Validate()` at startup (`loadErr`), the same mechanism `SERVER_READ_TIMEOUT`/etc. already use.
+
+### Optional read pool
+
+`DB_READ_POOL_ENABLED=true` adds a second pool (`internal/db.NewReadPool`) behind a `db.Router` that implements `db.Pool`. `cmd/api/main.go` builds one Router (`db.NewRouterIfNeeded`), logs one secret-free line with each pool's max/min conns, and closes both pools on exit. With the flag unset the Router is a thin wrapper over the single write pool and behaviour is unchanged. Sizing defaults are 10/2/30m/5m (`DB_READ_POOL_*`), and the connection fields default to the write pool's, so today it points at the same primary.
+
+**Routing rule: the default is the write pool.** A route opts in by wrapping its handler with `middleware.ReadOnly` (or `middleware.ReadOnlyFunc` for `mux.HandleFunc`), which sets `db.WithReadOnly` on the request context. Unmarked contexts and all background work (drainers, workers, listeners) use the write pool. The Router cannot infer read from write by method: `repository.Scoped` sends every statement through `SendBatch`, and many writes are `INSERT ... RETURNING` via `Query`, so only the context marker decides. Never wrap a handler that writes.
+
+**Enforcement.** Every read-pool connection starts with `default_transaction_read_only=on` (plus `jit=off`), so a write routed there fails with SQLSTATE `25006` instead of quietly succeeding on the primary and breaking the day the read pool points at a replica. There is no fallback to the write pool on a read-pool error. `Ping` checks both pools, so the health probe fails if either is down.
 
 ## Pagination response conventions
 
