@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/db"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -31,7 +31,7 @@ import (
 // `GET /plg/health` is deliberately absent. entity-service has its own
 // `/health`, and a second liveness endpoint answering for one application
 // inside a shared service is a probe that lies.
-func registerPLGRoutes(mux *http.ServeMux, db *pgxpool.Pool) {
+func registerPLGRoutes(mux *http.ServeMux, db db.Pool) {
 	// Reference data — the platform catalogue and the lifecycle stages.
 	referenceRepo := repository.NewReferenceRepository(db)
 	referenceHandler := handler.NewPlgReferenceHandler(service.NewReferenceService(referenceRepo))

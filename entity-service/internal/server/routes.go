@@ -26,6 +26,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/cache"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/db"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/github"
@@ -49,7 +50,10 @@ import (
 // The function is never nil; with publishing unconfigured it simply has
 // nothing to close. It also closes the user cache's Redis client, when one
 // was built.
-func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
+func NewRouter(pgPool *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
+	// FromPgx keeps a nil pool a true nil interface, so every `db != nil` gate
+	// below still means "no database configured".
+	db := db.FromPgx(pgPool)
 	userRepo := repository.NewUserRepository(db)
 	userSvc := service.NewUserService(userRepo)
 
@@ -1469,8 +1473,8 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("GET /users/me", userHandler.GetMe)
 		mux.HandleFunc("PATCH /users/me", userHandler.PatchMe)
 		mux.HandleFunc("POST /users/search", userHandler.SearchUsers)
-	mux.HandleFunc("POST /users/by-ids", userHandler.GetUsersByIDs)
-	mux.HandleFunc("POST /users", userHandler.CreateUser)
+		mux.HandleFunc("POST /users/by-ids", userHandler.GetUsersByIDs)
+		mux.HandleFunc("POST /users", userHandler.CreateUser)
 	}
 	if snAccountHandler != nil {
 		mux.HandleFunc("GET /accounts/{id}", internalOnly(accessSvc, snAccountHandler.GetAccount))
