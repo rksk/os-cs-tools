@@ -139,7 +139,6 @@ var readOnlyRoutes = routeSet(
 	"GET /groups/{id}",
 	"GET /incident-tasks/{id}",
 	"GET /incidents/{id}",
-	"GET /internal/cloud-status/pending",
 	"GET /invoices/{id}",
 	"GET /kb-articles/{id}",
 	"GET /kb-articles/{id}/history",

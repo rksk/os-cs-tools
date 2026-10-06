@@ -6425,6 +6425,7 @@ The marked set lives in one place: `readOnlyRoutes` in `internal/server/routes.g
 - A `SELECT` that calls a function with side effects: `next_*_number()` and anything else that calls `nextval` (read-only transactions reject it), or `recompute_user_type`.
 - Lazy-create or upsert on read: auto-provisioning a user, "last seen" / activity / audit inserts, recomputing or refreshing derived rows, SLA clock or onboarding-ledger writes.
 - Publishing an event that records a failure to `event_publish_failures`, or dispatching an external mirror/writeback (which records its own failures to a table).
+- A read that a poller or dispatcher uses to decide what to do next, right after its own write (for example `GET /internal/cloud-status/pending` after `POST /internal/cloud-status/sweep`). A lagging replica would miss the rows just written, or return rows whose delivery was already recorded on the primary, which delays or duplicates work. Keep these on the write pool.
 
 Never mark `/health`, anything under `/salesforce`, or a `POST` / `PATCH` / `PUT` / `DELETE` that is not a search or aggregate. If a route would need a code change to become read-only-safe, change that first, in its own commit; do not mark it and hope.
 
