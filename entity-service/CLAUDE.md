@@ -6411,6 +6411,27 @@ Tuned via `config.Config`, applied by `internal/db.NewPool`. Each is env-configu
 
 **Enforcement.** Every read-pool connection starts with `default_transaction_read_only=on` (plus `jit=off`), so a write routed there fails with SQLSTATE `25006` instead of quietly succeeding on the primary and breaking the day the read pool points at a replica. There is no fallback to the write pool on a read-pool error. `Ping` checks both pools, so the health probe fails if either is down.
 
+#### Read-pool route opt-in
+
+The marked set lives in one place: `readOnlyRoutes` in `internal/server/routes.go`. `NewRouter` registers on a `readPoolMux` (a `*http.ServeMux` that wraps a listed pattern's handler with `middleware.ReadOnly`), so the `mux.HandleFunc` lines stay as they are and the pattern string must match the registration exactly. Today that is the pure-read `POST .../search`, `POST .../aggregate`, and `GET` by-id/list routes. Nothing changes until `DB_READ_POOL_ENABLED=true`.
+
+**Rule for adding a route:** read its whole call chain and prove nothing on it writes, for every data source it can run under (Postgres-first, external-source-first, dual-write mirror, Postgres fallback): handler, then service (every implementation wired in `routes.go`, plus the `internalOnly` / `projectMemberOnly` wrappers and `AccessService`), then every repository method. When in doubt, leave it out; a wrongly marked route returns a 500 (SQLSTATE `25006`) the moment the read pool is on.
+
+**Exclude a route if anything on its path does any of these:**
+
+- `INSERT` / `UPDATE` / `DELETE` / `MERGE` / `TRUNCATE`, including DML inside a `WITH` CTE, `INSERT ... ON CONFLICT`, or `... RETURNING`.
+- `Exec`, `CopyFrom`, or `Begin` / `BeginTx` / `InTx` whose body then writes. A transaction that only runs `SELECT` is fine; `Scoped` identity-setting uses `set_config(..., true)` (transaction-local), which a read-only transaction allows.
+- `SELECT ... FOR UPDATE` / `FOR SHARE`, advisory locks, `set_config(..., false)`, `LOCK TABLE`, or `pg_notify`.
+- A `SELECT` that calls a function with side effects: `next_*_number()` and anything else that calls `nextval` (read-only transactions reject it), or `recompute_user_type`.
+- Lazy-create or upsert on read: auto-provisioning a user, "last seen" / activity / audit inserts, recomputing or refreshing derived rows, SLA clock or onboarding-ledger writes.
+- Publishing an event that records a failure to `event_publish_failures`, or dispatching an external mirror/writeback (which records its own failures to a table).
+
+Never mark `/health`, anything under `/salesforce`, or a `POST` / `PATCH` / `PUT` / `DELETE` that is not a search or aggregate. If a route would need a code change to become read-only-safe, change that first, in its own commit; do not mark it and hope.
+
+**Check before pointing `DB_READ_HOST` at a replica.** The allowlist is proven free of writes, not free of read-after-write assumptions. A `GET` by id, or a search, that a caller issues straight after its own write can return the pre-write row once reads come from a lagging replica. Review the allowlist for that before the read pool leaves the primary.
+
+**The allowlist test** is `internal/server/read_only_routes_test.go`. `TestReadOnlyRoutesAllowlist` pins `readOnlyRoutes` to an explicit list in the test, so adding or removing a mark is a deliberate two-place diff; `TestReadOnlyRoutesShape` rejects write-method routes and health/Salesforce routes; `TestReadOnlyRoutesAreRegistered` rejects a mark that wraps no registered route; `TestReadPoolMuxMarksOnlyListedRoutes` drives the real mux and asserts a listed route's handler sees `db.IsReadOnly(ctx)` while an unlisted one does not. `internal/repository/read_pool_routes_integration_test.go` (skipped without `ENTITY_TEST_DATABASE_URL`) runs the case search, case aggregate, project search and an `InTx` read through a Router with a real read-only pool and asserts no `25006`.
+
 ## Pagination response conventions
 
 All search responses — regardless of data source — must use `total` (not `totalRecords`) as the JSON field name for the count of matched records. This applies to every `SearchXxxResponse` struct in `internal/domain/entity.go`.
