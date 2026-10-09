@@ -37,6 +37,8 @@ const (
 	notesTestActor     = "incident-notes-test@example.com"
 	notesTestUserID    = "49222222-0000-0000-0000-000000000001"
 	notesTestServiceID = "49333333-0000-0000-0000-000000000001"
+	notesTestSNID      = "49444444-0000-0000-0000-000000000001"
+	notesTestSNNumber  = "INCNOTESSN001"
 )
 
 // seedNotesFixture creates the caller and service an incident must reference, and removes everything
@@ -140,5 +142,37 @@ func TestIncidentNotesIntegration_UpdateSavesBothNotesOrNeither(t *testing.T) {
 	}
 	if n := countRows(t, ctx, pool, `SELECT count(*) FROM comment WHERE work_item_id = $1`, id); n != 2 {
 		t.Errorf("%d note(s) saved, want both", n)
+	}
+}
+
+// The dual-write, SN-first create path (CreateIncidentFromServiceNow) must leave the same comment
+// rows behind as the plain-Postgres path (CreateIncident) above: an AdditionalComments/WorkNotes pair
+// submitted with the create is not ServiceNow-only data -- it has to land in Postgres's comment table
+// too, as a COMMENT and a WORK_NOTE row against the new incident's id.
+func TestIncidentNotesIntegration_CreateFromServiceNowSavesBothNotes(t *testing.T) {
+	pool := caseStatsPool(t)
+	ctx := seedNotesFixture(t, pool)
+	repo := repository.NewIncidentRepository(repository.NewScoped(pool))
+
+	additionalComments := "customer-visible update"
+	workNotes := "internal triage note"
+	req := notesTestRequest("")
+	req.AdditionalComments = &additionalComments
+	req.WorkNotes = &workNotes
+
+	resp, err := repo.CreateIncidentFromServiceNow(ctx, req, notesTestSNID, notesTestSNNumber, notesTestActor)
+	if err != nil {
+		t.Fatalf("CreateIncidentFromServiceNow: %v", err)
+	}
+	if resp.Incident.ID != notesTestSNID {
+		t.Fatalf("CreateIncidentFromServiceNow id = %q, want %q", resp.Incident.ID, notesTestSNID)
+	}
+	if n := countRows(t, ctx, pool, `SELECT count(*) FROM comment WHERE work_item_id = $1 AND type = 'COMMENT' AND content = $2`,
+		resp.Incident.ID, additionalComments); n != 1 {
+		t.Errorf("%d additional-comment row(s) saved, want 1", n)
+	}
+	if n := countRows(t, ctx, pool, `SELECT count(*) FROM comment WHERE work_item_id = $1 AND type = 'WORK_NOTE' AND content = $2`,
+		resp.Incident.ID, workNotes); n != 1 {
+		t.Errorf("%d work-note row(s) saved, want 1", n)
 	}
 }

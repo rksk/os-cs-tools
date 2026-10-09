@@ -472,20 +472,23 @@ func (s *incidentService) CreateIncident(ctx context.Context, req domain.CreateI
 	req = withAssignmentGroup(req, decision)
 	if s.snMirror != nil {
 		// ConfigurationItemID has no backing column on this data source at
-		// all (unlike Subcategory/AssignedEngineerID/WatchList/
-		// AdditionalComments/WorkNotes, which are accepted but silently
-		// not persisted -- a separate, tracked follow-up per CodeRabbit's
-		// finding on PR #1922). Rejecting it explicitly is strictly
-		// better than the alternative: ServiceNow would already have
-		// accepted and stored it by the time Postgres is ever touched, so
-		// silently dropping it here would mean the caller's request
-		// appears to succeed while quietly losing data they explicitly
-		// asked to set.
+		// all (unlike Subcategory/AssignedEngineerID/WatchList, which are
+		// accepted but silently not persisted -- a separate, tracked
+		// follow-up per CodeRabbit's finding on PR #1922). Rejecting it
+		// explicitly is strictly better than the alternative: ServiceNow
+		// would already have accepted and stored it by the time Postgres
+		// is ever touched, so silently dropping it here would mean the
+		// caller's request appears to succeed while quietly losing data
+		// they explicitly asked to set.
 		//
 		// AssignmentGroupID, by contrast, DOES have a backing column
 		// (work_item.assignment_group_id, migration 0075) and is now
 		// persisted by CreateIncidentFromServiceNow -- see that
-		// function's own doc comment.
+		// function's own doc comment. AdditionalComments/WorkNotes are
+		// likewise persisted: CreateIncidentFromServiceNow writes them as
+		// comment rows (COMMENT/WORK_NOTE) in the same transaction as the
+		// work_item/incident insert, the same shape CreateIncident produces
+		// on the plain-Postgres path.
 		if req.ConfigurationItemID != nil {
 			return domain.CreateIncidentResponse{}, &apierror.ValidationError{Msg: "configurationItemId is not supported for this data source"}
 		}

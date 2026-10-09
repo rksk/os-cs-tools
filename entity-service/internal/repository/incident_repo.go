@@ -1606,19 +1606,44 @@ func (r *incidentRepo) CreateIncidentFromServiceNow(ctx context.Context, req dom
 	// CreateCaseFromServiceNow's own identical stamps: this insert only ever
 	// runs after ServiceNow's own workflow already accepted the create.
 	ctx = WithSystemIdentity(ctx)
-	var (
-		outID, outNumber, outSubject, outCreatedBy string
-		outCreatedOn, outUpdatedOn                 time.Time
-	)
-	err := r.db.QueryRow(ctx, createIncidentFromServiceNowQuery,
-		id, createdBy,
-		number, req.Subject, req.ParentID, req.AssignmentGroupID,
-		req.CallerID, string(req.Category), string(req.Impact), string(req.Urgency),
-		req.ServiceID, req.ServiceOfferingID, contactType,
-		req.ChangeRequestID, req.CausedByID, req.ParentIncidentID, req.ProblemID,
-		req.CorrelationID, req.Environment,
-	).Scan(&outID, &outNumber, &outSubject, &outCreatedOn, &outUpdatedOn, &outCreatedBy)
+	resp, err := InTxReturning(ctx, r.db, func(tx pgx.Tx) (domain.CreateIncidentResponse, error) {
+		var (
+			outID, outNumber, outSubject, outCreatedBy string
+			outCreatedOn, outUpdatedOn                 time.Time
+		)
+		if err := tx.QueryRow(ctx, createIncidentFromServiceNowQuery,
+			id, createdBy,
+			number, req.Subject, req.ParentID, req.AssignmentGroupID,
+			req.CallerID, string(req.Category), string(req.Impact), string(req.Urgency),
+			req.ServiceID, req.ServiceOfferingID, contactType,
+			req.ChangeRequestID, req.CausedByID, req.ParentIncidentID, req.ProblemID,
+			req.CorrelationID, req.Environment,
+		).Scan(&outID, &outNumber, &outSubject, &outCreatedOn, &outUpdatedOn, &outCreatedBy); err != nil {
+			return domain.CreateIncidentResponse{}, err
+		}
+
+		// ServiceNow already holds the authoritative journal entries (this is
+		// the SN-first create path); mirror AdditionalComments/WorkNotes into
+		// Postgres's comment table too, exactly as CreateIncident's own
+		// journal loop does, so a dual-write create leaves the same
+		// comment-row shape behind as a plain-Postgres one. insertIncidentNotesTx
+		// already skips nil/blank content and re-checks the incident exists.
+		if err := insertIncidentNotesTx(ctx, tx, outID, req.WorkNotes, req.AdditionalComments, createdBy); err != nil {
+			return domain.CreateIncidentResponse{}, err
+		}
+
+		resp := domain.CreateIncidentResponse{Message: "Incident created successfully."}
+		resp.Incident.ID = outID
+		resp.Incident.Number = outNumber
+		resp.Incident.CreatedOn = outCreatedOn.UTC().Format(time.RFC3339)
+		resp.Incident.CreatedBy = outCreatedBy
+		return resp, nil
+	})
 	if err != nil {
+		var ve *apierror.ValidationError
+		if errors.As(err, &ve) {
+			return domain.CreateIncidentResponse{}, err
+		}
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) {
 			switch pgErr.Code {
 			case "23505": // unique_violation on id/number -- see this method's own doc comment for why this "shouldn't" happen
@@ -1633,11 +1658,5 @@ func (r *incidentRepo) CreateIncidentFromServiceNow(ctx context.Context, req dom
 		}
 		return domain.CreateIncidentResponse{}, fmt.Errorf("create incident from servicenow: %w", err)
 	}
-
-	resp := domain.CreateIncidentResponse{Message: "Incident created successfully."}
-	resp.Incident.ID = outID
-	resp.Incident.Number = outNumber
-	resp.Incident.CreatedOn = outCreatedOn.UTC().Format(time.RFC3339)
-	resp.Incident.CreatedBy = outCreatedBy
 	return resp, nil
 }
