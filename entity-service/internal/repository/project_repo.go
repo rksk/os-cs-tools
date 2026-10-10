@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -539,7 +540,20 @@ func (r *projectRepo) GetProjectByID(ctx context.Context, id string, scope Searc
 		v.SubscriptionType = projectTypeNameToSubscriptionType(*projectTypeName)
 	}
 	v.HasSr = hasSr != nil && *hasSr
+	// The backing data source stores a sign-inverted consumed balance for some
+	// projects; normalise at read, leaving the stored value untouched.
+	v.ConsumedQueryHours = absHours(v.ConsumedQueryHours)
+	v.ConsumedOnboardingHours = absHours(v.ConsumedOnboardingHours)
 	return v, nil
+}
+
+// absHours returns the absolute value of h, preserving nil.
+func absHours(h *float64) *float64 {
+	if h == nil {
+		return nil
+	}
+	a := math.Abs(*h)
+	return &a
 }
 
 // UpdateProject implements ProjectRepository.
