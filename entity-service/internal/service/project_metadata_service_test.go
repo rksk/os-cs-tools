@@ -171,6 +171,42 @@ func TestGetProjectMetadata_FeaturesFromEntitlementRow(t *testing.T) {
 	}
 }
 
+func TestGetProjectMetadata_PdpServiceRequestAccess(t *testing.T) {
+	cases := []struct {
+		name     string
+		typeName string
+		pdp      bool
+		want     bool
+	}{
+		{"cloud support with pdp", "Cloud Support", true, true},
+		{"cloud support without pdp", "Cloud Support", false, false},
+		{"cloud evaluation support with pdp", "Cloud Evaluation Support", true, true},
+		{"cloud evaluation support without pdp", "Cloud Evaluation Support", false, false},
+		{"other type with pdp unchanged", "Professional Services", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeReferenceDataRepo{
+				projectType: &repository.ProjectTypeRow{
+					ID: testUUID, Name: tc.typeName, IsPdpSubscription: tc.pdp,
+					HasChangeRequestReadAccess: true,
+				},
+			}
+			resp, err := NewProjectMetadataService(repo).GetProjectMetadata(context.Background(), testUUID)
+			if err != nil {
+				t.Fatalf("GetProjectMetadata: %v", err)
+			}
+			f := resp.Features
+			if f.HasServiceRequestWriteAccess != tc.want || f.HasServiceRequestReadAccess != tc.want {
+				t.Errorf("SR write/read = %v/%v, want both %v", f.HasServiceRequestWriteAccess, f.HasServiceRequestReadAccess, tc.want)
+			}
+			if !f.HasChangeRequestReadAccess || f.HasSraReadAccess {
+				t.Errorf("other flags changed: %+v", f)
+			}
+		})
+	}
+}
+
 // A project whose type has no entitlement columns set (the four types
 // FEATURE_MATRIX itself has no entry for -- defaulted FALSE/nil by the
 // migration) keeps the pre-existing all-false/empty behavior -- no

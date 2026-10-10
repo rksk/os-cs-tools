@@ -47,6 +47,19 @@ const (
 
 // projectMetadataEnumTypes is every enum EnumLabels is asked for in one
 // round trip by GetProjectMetadata.
+// Project type names (as stored in project_type.name, matched the same way
+// migration 0130 does) whose PDP subscription projects get service request
+// access regardless of the type-level flags.
+const (
+	projectTypeCloudSupport           = "Cloud Support"
+	projectTypeCloudEvaluationSupport = "Cloud Evaluation Support"
+)
+
+var pdpServiceRequestProjectTypes = map[string]bool{
+	projectTypeCloudSupport:           true,
+	projectTypeCloudEvaluationSupport: true,
+}
+
 var projectMetadataEnumTypes = []string{
 	caseStateEnumType, caseSeverityEnumType, caseIssueTypeEnumType,
 	deploymentTypeEnumType, engagementTypeEnumType, engagementPaymentTypeEnumType,
@@ -198,6 +211,15 @@ func (s *projectMetadataService) GetProjectMetadata(ctx context.Context, project
 		features.AcceptedSeverityValues = severityChoiceItems(ctx, projectType.AcceptedSeverityValues)
 		features.DefaultCaseProductCategories = lowercaseAll(projectType.DefaultCaseProductCategories)
 		features.SrProductCategories = lowercaseAll(projectType.SrProductCategories)
+
+		// Service requests are a per-project entitlement for the cloud support
+		// types: migration 0130 leaves their type-level SR flags FALSE because
+		// the type alone does not decide it, and a PDP subscription project of
+		// these types is entitled to raise and view them.
+		if projectType.IsPdpSubscription && pdpServiceRequestProjectTypes[projectType.Name] {
+			features.HasServiceRequestWriteAccess = true
+			features.HasServiceRequestReadAccess = true
+		}
 	}
 
 	return domain.ProjectMetadataResponse{
