@@ -1518,7 +1518,9 @@ func (s *caseService) isCustomerAuthor(ctx context.Context, caseID, actorEmail s
 // applyCustomerReplyStateTransition best-effort moves a case from
 // awaiting_info or solution_proposed to waiting_on_wso2 after a customer's
 // public comment, the same behaviour the other data source's case service
-// has. It goes through s.UpdateCase so SLA clock effects, the activity-feed
+// has. Applies to every case-like work item type (case, service request,
+// engagement, security report analysis) since they share the same state
+// labels; announcements are skipped. It goes through s.UpdateCase so SLA clock effects, the activity-feed
 // entry, the case.status_changed event and the data-source mirror all happen
 // exactly once. UpdateCase resolves its actor best-effort and applies no
 // caller-authorization check on this path, so a customer's context works.
@@ -1538,6 +1540,12 @@ func (s *caseService) applyCustomerReplyStateTransition(ctx context.Context, cas
 		return
 	}
 	if st := derefState(cv.State); st != domain.CaseStateAwaitingInfo && st != domain.CaseStateSolutionProposed {
+		return
+	}
+	// Announcements only have open/closed states (announcement_state_enum), so
+	// waiting_on_wso2 does not exist for them and UpdateCase would reject it.
+	// They can never be in a waiting state either, so this is belt and braces.
+	if cv.Type != nil && *cv.Type == "announcement" {
 		return
 	}
 	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2

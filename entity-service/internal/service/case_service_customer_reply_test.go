@@ -34,7 +34,7 @@ type customerReplyHarness struct {
 	fetches      int
 }
 
-func newCustomerReplyHarness(t *testing.T, caseState domain.CaseState, roles []string, userErr error) (*customerReplyHarness, context.Context) {
+func newCustomerReplyHarness(t *testing.T, caseState domain.CaseState, roles []string, userErr error, workItemType ...string) (*customerReplyHarness, context.Context) {
 	t.Helper()
 	h := &customerReplyHarness{}
 	repo := &stubCaseRepo{
@@ -44,7 +44,11 @@ func newCustomerReplyHarness(t *testing.T, caseState domain.CaseState, roles []s
 		getCaseByID: func(context.Context, string, repository.SearchScope) (domain.CaseView, error) {
 			h.fetches++
 			st := caseState
-			return domain.CaseView{ID: testDeploymentUUID, State: &st}, nil
+			cv := domain.CaseView{ID: testDeploymentUUID, State: &st}
+			if len(workItemType) > 0 {
+				cv.Type = &workItemType[0]
+			}
+			return cv, nil
 		},
 		updateCase: func(_ context.Context, req domain.UpdateCaseRequest) (domain.Case, *domain.CaseSeverity, error) {
 			h.updatedState = append(h.updatedState, *req.State)
@@ -214,5 +218,43 @@ func TestCaseService_CustomerReply_DualWriteMirrorsOnceEach(t *testing.T) {
 	}
 	if patchedState == nil || *patchedState != domain.CaseStateWaitingOnWSO2 {
 		t.Errorf("mirrored state = %v, want waiting_on_wso2", patchedState)
+	}
+}
+
+// Every case-like type with the three states transitions; announcements
+// (open/closed only) are skipped cleanly, with no UpdateCase attempt.
+func TestCaseService_CustomerReply_AcrossWorkItemTypes(t *testing.T) {
+	cases := []struct {
+		typ       string
+		state     domain.CaseState
+		wantMoved bool
+	}{
+		{"case", domain.CaseStateAwaitingInfo, true},
+		{"case", domain.CaseStateSolutionProposed, true},
+		{"service_request", domain.CaseStateAwaitingInfo, true},
+		{"service_request", domain.CaseStateSolutionProposed, true},
+		{"engagement", domain.CaseStateAwaitingInfo, true},
+		{"engagement", domain.CaseStateSolutionProposed, true},
+		{"security_report_analysis", domain.CaseStateAwaitingInfo, true},
+		{"security_report_analysis", domain.CaseStateSolutionProposed, true},
+		{"service_request", domain.CaseStateOpen, false},
+		{"engagement", domain.CaseStateClosed, false},
+		{"security_report_analysis", domain.CaseStateWorkInProgress, false},
+		{"announcement", domain.CaseStateOpen, false},
+		{"announcement", domain.CaseStateClosed, false},
+		// Defensive: a (never expected) waiting state on an announcement.
+		{"announcement", domain.CaseStateAwaitingInfo, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.typ+"/"+string(tc.state), func(t *testing.T) {
+			h, ctx := newCustomerReplyHarness(t, tc.state, []string{"customer"}, nil, tc.typ)
+			if _, err := h.svc.CreateCaseComment(ctx, commentReq(domain.CommentTypeComment)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			moved := len(h.updatedState) == 1 && h.updatedState[0] == domain.CaseStateWaitingOnWSO2
+			if moved != tc.wantMoved || (!tc.wantMoved && len(h.updatedState) != 0) {
+				t.Fatalf("moved=%v (updates %v), want moved=%v", moved, h.updatedState, tc.wantMoved)
+			}
+		})
 	}
 }

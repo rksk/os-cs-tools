@@ -2324,7 +2324,11 @@ here.
 
 **Postgres / dual-write path.** `case_service.go`'s `createCaseCommentAs` has
 its own `applyCustomerReplyStateTransition` (5s timeout, best-effort, never
-fails the comment) for public `comment` rows. The author counts as a customer
+fails the comment) for public `comment` rows on every case-like work item
+type that has these states (case, service request, engagement, security
+report analysis; announcements only have open/closed and are skipped).
+Incidents, change requests, problems and conversations have different state
+enums and no such transition. The author counts as a customer
 when their Postgres roles derive user_type EXTERNAL (`external`, `partner`,
 `customer`, `partner_admin`, `customer_admin`) and carry no `admin`/`internal`
 role, mirroring `recompute_user_type` (migration 0011); `CUSTOMER_ROLES` is not
