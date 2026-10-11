@@ -1332,6 +1332,13 @@ func (s *caseService) createCaseCommentAs(ctx context.Context, req domain.Create
 		s.completeResponseSLAOnComment(ctx, req.CaseID, isSupportEngineerResponse)
 	}
 
+	// Best-effort, in-process only, same posture as the SLA hook above: a
+	// customer's public reply to a case waiting on them moves it back to
+	// waiting_on_wso2 (see applyCustomerReplyStateTransition).
+	if req.Type == domain.CommentTypeComment {
+		s.applyCustomerReplyStateTransition(ctx, req.CaseID, actorEmail)
+	}
+
 	// Event publishing follows the write, not DATA_SOURCE -- see
 	// publishCaseCreatedEvent's own doc comment for why. authorName reuses
 	// the actor already resolved above -- unlike snCaseService's own
@@ -1360,12 +1367,10 @@ func (s *caseService) createCaseCommentAs(ctx context.Context, req domain.Create
 	// committed by this point and is fully authoritative for the comment —
 	// this mirror's ONLY job is making sure ServiceNow's copy of the comment
 	// text exists too. It deliberately does NOT replicate
-	// snCaseService.CreateCaseComment's auto state-transition-on-reply
-	// (applyCustomerReplyStateTransition) — Postgres already owns the real
-	// outcome (note: this Postgres-native CreateCaseComment does not
-	// currently implement state-transition-on-reply at all; that is a
-	// separate, larger feature-parity gap, out of scope here — see
-	// CreateBareCaseComment's own doc comment). Uses CreateBareCaseComment
+	// the customer-reply state transition: applyCustomerReplyStateTransition
+	// already decided that outcome in Postgres, and the resulting state
+	// change reaches the backing data source through UpdateCase's own mirror
+	// dispatch, so mirroring it again here would apply it twice. Uses CreateBareCaseComment
 	// specifically (not the full CreateCaseComment) so neither side effect
 	// ever fires twice, or fires against ServiceNow for an outcome only
 	// Postgres actually decided. Fires identically for both the token-
@@ -1479,6 +1484,66 @@ func (s *caseService) isSupportEngineerAuthor(ctx context.Context, caseID, actor
 		return false
 	}
 	return slices.Contains(roles, s.csEngineerRole)
+}
+
+// externalUserRoles are the role names recompute_user_type (migration 0011)
+// derives user_type EXTERNAL from; internalUserRoles are the ones it derives
+// INTERNAL from, which win over EXTERNAL when a user holds both.
+var (
+	externalUserRoles = []string{"external", "partner", "customer", "partner_admin", "customer_admin"}
+	internalUserRoles = []string{"admin", "internal"}
+)
+
+// isCustomerAuthor reports whether actorEmail resolves to a user whose
+// derived user_type is EXTERNAL: at least one external role and no internal
+// one, mirroring recompute_user_type's own precedence. An unresolvable actor
+// (the M2M CreateCaseCommentAs path has no user row) or a failed role lookup
+// answers false -- can't confirm, not an error.
+func (s *caseService) isCustomerAuthor(ctx context.Context, caseID, actorEmail string) bool {
+	user, err := s.userRepo.GetUserByEmail(ctx, actorEmail)
+	if err != nil {
+		return false
+	}
+	roles, err := s.userRepo.GetUserRoles(ctx, user.ID)
+	if err != nil {
+		slog.ErrorContext(ctx, "create comment: customer role lookup failed", "caseId", caseID)
+		return false
+	}
+	if slices.ContainsFunc(roles, func(r string) bool { return slices.Contains(internalUserRoles, r) }) {
+		return false
+	}
+	return slices.ContainsFunc(roles, func(r string) bool { return slices.Contains(externalUserRoles, r) })
+}
+
+// applyCustomerReplyStateTransition best-effort moves a case from
+// awaiting_info or solution_proposed to waiting_on_wso2 after a customer's
+// public comment, the same behaviour the other data source's case service
+// has. It goes through s.UpdateCase so SLA clock effects, the activity-feed
+// entry, the case.status_changed event and the data-source mirror all happen
+// exactly once. UpdateCase resolves its actor best-effort and applies no
+// caller-authorization check on this path, so a customer's context works.
+// The customer check runs before the case fetch so the far more common
+// engineer comment pays only two cheap lookups. Failures are logged and
+// swallowed: the comment has already been committed and must stand.
+func (s *caseService) applyCustomerReplyStateTransition(ctx context.Context, caseID, actorEmail string) {
+	ctx, cancel := context.WithTimeout(ctx, applyCustomerReplyTimeout)
+	defer cancel()
+
+	if !s.isCustomerAuthor(ctx, caseID, actorEmail) {
+		return
+	}
+	cv, err := s.GetCaseByID(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "create comment: customer reply state transition not evaluated, get case failed", "caseId", caseID)
+		return
+	}
+	if st := derefState(cv.State); st != domain.CaseStateAwaitingInfo && st != domain.CaseStateSolutionProposed {
+		return
+	}
+	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: caseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "create comment: move case to waiting on wso2 after customer reply failed", "caseId", caseID)
+	}
 }
 
 // SearchCaseComments implements CaseService.

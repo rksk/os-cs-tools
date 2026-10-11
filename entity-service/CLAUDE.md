@@ -2322,6 +2322,18 @@ and the Choreo integration's PATCH has no conditional-update mechanism
 integration to expose one first — a cross-team dependency, not addressed
 here.
 
+**Postgres / dual-write path.** `case_service.go`'s `createCaseCommentAs` has
+its own `applyCustomerReplyStateTransition` (5s timeout, best-effort, never
+fails the comment) for public `comment` rows. The author counts as a customer
+when their Postgres roles derive user_type EXTERNAL (`external`, `partner`,
+`customer`, `partner_admin`, `customer_admin`) and carry no `admin`/`internal`
+role, mirroring `recompute_user_type` (migration 0011); `CUSTOMER_ROLES` is not
+used. It runs after the customer check, then reads the case and, for
+`awaiting_info`/`solution_proposed`, calls `s.UpdateCase` with
+`waiting_on_wso2`, so SLA effects, the activity row, `case.status_changed` and
+the data-source mirror fire once. The comment's own mirror still uses
+`CreateBareCaseComment`.
+
 ## Scheduled task runs
 
 `scheduled_task_run` (migration `0108`, `internal/domain/entity.go`'s

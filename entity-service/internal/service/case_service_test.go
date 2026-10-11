@@ -3653,6 +3653,12 @@ func TestCaseService_CreateCaseComment_DoesNotCompleteResponseSLAForNonEngineer(
 		createCaseComment: func(_ context.Context, req domain.CreateCaseCommentRequest, _ *time.Time) (domain.CaseComment, error) {
 			return domain.CaseComment{ID: "comment-1", CaseID: req.CaseID, Type: req.Type, Content: req.Content}, nil
 		},
+		// The customer author makes the reply-transition hook read the case;
+		// "open" is not a waiting state, so nothing further happens.
+		getCaseByID: func(context.Context, string, repository.SearchScope) (domain.CaseView, error) {
+			st := domain.CaseStateOpen
+			return domain.CaseView{ID: testDeploymentUUID, State: &st}, nil
+		},
 	}
 	userRepo := stubUserRepo{
 		getUserByEmail: func(context.Context, string) (domain.User, error) {
