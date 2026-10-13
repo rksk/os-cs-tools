@@ -3755,7 +3755,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 // traffic. At most one of state/severity/workState/markFixIssued is expected
 // non-nil at a time -- this method does not enforce that itself, the caller
 // already has.
-func (s *snCaseService) patchCaseFields(ctx context.Context, caseID string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, markFixIssued *bool, resolution *caseResolutionFields) (domain.UpdatedCase, error) {
+func (s *snCaseService) patchCaseFields(ctx context.Context, caseID string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, markFixIssued *bool, resolution *caseResolutionFields, asSystemUser bool) (domain.UpdatedCase, error) {
 	payload := snUpdateCasePayload{}
 	if resolution != nil {
 		if resolution.Code != nil {
@@ -3809,7 +3809,19 @@ func (s *snCaseService) patchCaseFields(ctx context.Context, caseID string, stat
 		payload.MarkFixIssued = markFixIssued
 	}
 
+	// asSystemUser forwards no x-user-id-token at all, rather than this
+	// request's own, when the caller (UpdateCase) has determined ServiceNow
+	// must see this write as the integration's own M2M ServiceNow user, not
+	// as the acting caller -- see snFieldPatcher's own doc comment for why
+	// (ServiceNow has been observed to reject resolutionCode/cause/closeNotes
+	// outright when set under a customer's own identity, "cannot be
+	// provided by this user", even though the values are system-generated
+	// defaults the customer never supplied). This is the exact "no user
+	// token" shape SNGithubCases already relies on for its own M2M writes.
 	token := middleware.UserIDTokenFromContext(ctx)
+	if asSystemUser {
+		token = ""
+	}
 	raw, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(caseID), token, payload)
 	if err != nil {
 		return domain.UpdatedCase{}, err

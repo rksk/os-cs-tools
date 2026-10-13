@@ -2935,7 +2935,7 @@ func TestSNCaseService_PatchCaseFields_NoGetCaseByIDOrEventPublish(t *testing.T)
 			publisher := &mockEventPublisher{}
 			svc := NewServiceNowCaseService(client, nil, publisher, nil, nil, "", nil).(*snCaseService)
 
-			result, err := svc.patchCaseFields(contextWithUserIDToken("token"), testDeploymentUUID, tt.state, tt.severity, tt.workState, nil, nil)
+			result, err := svc.patchCaseFields(contextWithUserIDToken("token"), testDeploymentUUID, tt.state, tt.severity, tt.workState, nil, nil, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2958,6 +2958,58 @@ func TestSNCaseService_PatchCaseFields_NoGetCaseByIDOrEventPublish(t *testing.T)
 				t.Errorf("expected 0 publish calls, got %d", len(publisher.calls))
 			}
 		})
+	}
+}
+
+// TestSNCaseService_PatchCaseFields_AsSystemUserOmitsUserIDToken is the
+// regression guard for the production incident on case CS0378899: an
+// external caller's case close has its resolutionCode/cause/closeNotes
+// defaulted (never supplied by the customer -- see UpdateCase's own doc
+// comment), but ServiceNow's scripted API rejected those exact default
+// values outright when the mirror PATCH forwarded the customer's own
+// x-user-id-token ("resolutionCode, cause, and closeNotes cannot be
+// provided by this user"). asSystemUser=true must omit x-user-id-token from
+// the outgoing request entirely -- the same "no user token" shape
+// SNGithubCases already uses for its own M2M writes -- while still sending
+// every field the caller asked for (nothing is silently dropped, only the
+// acting identity changes).
+func TestSNCaseService_PatchCaseFields_AsSystemUserOmitsUserIDToken(t *testing.T) {
+	state := domain.CaseStateClosed
+	code := domain.CaseResolutionCodeSolvedByCustomer
+	cause := domain.CaseCauseUnknown
+	notes := externalCloseDefaultNotes
+	resolution := &caseResolutionFields{Code: &code, Cause: &cause, CloseNotes: &notes}
+
+	var gotUserIDTokenHeader string
+	var gotHeaderPresent bool
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotUserIDTokenHeader, gotHeaderPresent = r.Header.Get("x-user-id-token"), r.Header.Get("x-user-id-token") != ""
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "system@example.com"}
+		}`))
+	})
+	svc := NewServiceNowCaseService(client, nil, &mockEventPublisher{}, nil, nil, "", nil).(*snCaseService)
+
+	if _, err := svc.patchCaseFields(contextWithUserIDToken("customers-own-token"), testDeploymentUUID, &state, nil, nil, nil, resolution, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotHeaderPresent {
+		t.Errorf("x-user-id-token header = %q, want it omitted entirely when asSystemUser=true", gotUserIDTokenHeader)
+	}
+	if _, ok := gotBody["resolutionCode"]; !ok {
+		t.Errorf("resolutionCode missing from payload: %+v", gotBody)
+	}
+	if _, ok := gotBody["cause"]; !ok {
+		t.Errorf("cause missing from payload: %+v", gotBody)
+	}
+	if gotBody["closeNotes"] != notes {
+		t.Errorf("closeNotes = %v, want %q", gotBody["closeNotes"], notes)
 	}
 }
 

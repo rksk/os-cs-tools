@@ -228,8 +228,24 @@ type caseResolutionFields struct {
 // plain, Postgres-backed caseService itself) would then have to satisfy —
 // named exactly for what UpdateCase's mirror needs: a bare PATCH with none of
 // snCaseService.UpdateCase's own read-before-write behavior.
+//
+// asSystemUser, when true, tells patchCaseFields to issue the mirror PATCH
+// without forwarding the triggering request's x-user-id-token -- the same
+// "no user token" shape SNGithubCases already uses so the ServiceNow
+// integration service authenticates as its own M2M ServiceNow user instead
+// of impersonating any particular caller (see SNGithubCases's own doc
+// comment). UpdateCase sets this when it has just defaulted
+// resolutionCode/cause/closeNotes for an EXTERNAL caller closing a case:
+// ServiceNow's scripted API has been observed to reject those three fields
+// outright when they arrive under a customer's own identity ("resolutionCode,
+// cause, and closeNotes cannot be provided by this user"), even though the
+// values themselves are the system-generated defaults, not anything the
+// customer supplied. Forwarding the customer's identity was never load-bearing
+// here -- the values aren't the customer's own input -- so the fix is to stop
+// asserting that identity for this specific mirror write, not to stop sending
+// the fields (which ServiceNow's own close workflow still requires).
 type snFieldPatcher interface {
-	patchCaseFields(ctx context.Context, caseID string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, markFixIssued *bool, resolution *caseResolutionFields) (domain.UpdatedCase, error)
+	patchCaseFields(ctx context.Context, caseID string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, markFixIssued *bool, resolution *caseResolutionFields, asSystemUser bool) (domain.UpdatedCase, error)
 }
 
 // snCommentMirror is implemented by *snCaseService (see
@@ -1966,6 +1982,21 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	// real, valid values on both sides, not nulls -- sparing the customer
 	// an internal-classification question they can't answer while still
 	// keeping both stores in sync.
+	//
+	// Confirmed in production (case CS0378899) that ServiceNow's scripted
+	// API rejects even these exact default values outright when the mirror
+	// PATCH forwards the EXTERNAL caller's own x-user-id-token:
+	// "resolutionCode, cause, and closeNotes cannot be provided by this
+	// user" -- ServiceNow allows WSO2 staff to set them, but not a customer
+	// identity, regardless of what value is sent. Since the values here are
+	// never the customer's own input (they're system-generated defaults),
+	// forwarding the customer's identity for this specific mirror write was
+	// never load-bearing -- so the dispatch below asks the mirror to apply
+	// this PATCH as the ServiceNow integration's own M2M identity instead
+	// (snFieldPatcher's asSystemUser, the same "no user token" shape
+	// SNGithubCases already uses) whenever this block just defaulted these
+	// fields for an external caller. An internal caller's own resolution
+	// choice still mirrors under their own identity, unchanged.
 	if s.snWriteback != nil && req.State != nil && (*req.State == domain.CaseStateClosed || *req.State == domain.CaseStateSolutionProposed) {
 		if before == nil || before.Type == nil || *before.Type == "case" {
 			if isInternalCaller {
@@ -2144,10 +2175,19 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 					resolution = &caseResolutionFields{Code: req.ResolutionCode, Cause: req.Cause, CloseNotes: req.CloseNotes}
 					payload["resolutionCode"], payload["cause"], payload["closeNotes"] = req.ResolutionCode, req.Cause, req.CloseNotes
 				}
+				// asSystemUser only for an EXTERNAL caller's close/
+				// solution_proposed -- isInternalCaller is the exact same
+				// resolved value the defaulting block above just used to
+				// decide whether resolutionCode/cause/closeNotes needed
+				// defaulting at all, so this is true precisely when
+				// resolution carries system-defaulted (not customer-
+				// supplied) values. An internal caller's own resolution
+				// choice still mirrors under their own identity, unchanged.
+				asSystemUser := !isInternalCaller && resolution != nil
 				s.snWriteback.Dispatch(ctx, "case", req.ID, "update",
 					payload,
 					func(writeCtx context.Context) error {
-						_, err := patcher.patchCaseFields(writeCtx, req.ID, &state, nil, nil, nil, resolution)
+						_, err := patcher.patchCaseFields(writeCtx, req.ID, &state, nil, nil, nil, resolution, asSystemUser)
 						return err
 					},
 				)
@@ -2156,7 +2196,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 				s.snWriteback.Dispatch(ctx, "case", req.ID, "update",
 					map[string]any{"id": req.ID, "severity": severity},
 					func(writeCtx context.Context) error {
-						_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, &severity, nil, nil, nil)
+						_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, &severity, nil, nil, nil, false)
 						return err
 					},
 				)
@@ -2165,7 +2205,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 				s.snWriteback.Dispatch(ctx, "case", req.ID, "update",
 					map[string]any{"id": req.ID, "workState": workState},
 					func(writeCtx context.Context) error {
-						_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, nil, &workState, nil, nil)
+						_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, nil, &workState, nil, nil, false)
 						return err
 					},
 				)
@@ -2554,7 +2594,7 @@ func (s *caseService) updateCaseMarkFixIssued(ctx context.Context, req domain.Up
 			s.snWriteback.Dispatch(ctx, "case", req.ID, "update",
 				map[string]any{"id": req.ID, "markFixIssued": true},
 				func(writeCtx context.Context) error {
-					_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, nil, nil, &markFixIssued, nil)
+					_, err := patcher.patchCaseFields(writeCtx, req.ID, nil, nil, nil, &markFixIssued, nil, false)
 					return err
 				},
 			)
