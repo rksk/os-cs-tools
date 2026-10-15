@@ -185,10 +185,10 @@ describe("AnnouncementDetailsPanel", () => {
       description: "<p>Scheduled downtime</p>",
       status: { id: "1", label: "Open" },
       createdOn: "2024-01-15T10:00:00Z",
-    } as never;
+    };
     const { rerender } = render(
       <AnnouncementDetailsPanel
-        data={openData}
+        data={openData as never}
         isLoading={false}
         isError={false}
         caseId="case-1"
