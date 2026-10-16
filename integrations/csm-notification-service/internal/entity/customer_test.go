@@ -169,3 +169,62 @@ func TestSearchUsersByEmail_EmptyInput(t *testing.T) {
 		t.Error("upstream should not have been called for an empty email list")
 	}
 }
+
+// TestGetCaseDescription_SendsBearerToken verifies GetCaseDescription sends
+// the same OAuth2 client-credentials bearer token every other method on this
+// client already does (see SearchUsersByEmail's own tests) — entity-service
+// resolves this caller's identity from it (its own gateway translates the
+// token into its internal x-jwt-assertion form), the same path every
+// existing call on this client already relies on, so this one needs no
+// header handling of its own.
+func TestGetCaseDescription_SendsBearerToken(t *testing.T) {
+	var gotAuthorization string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"description": "full description"})
+	}))
+	defer apiSrv.Close()
+	tokenSrv := newCustomerTokenServer(t)
+	defer tokenSrv.Close()
+
+	c := newTestCustomerClient(t, tokenSrv, apiSrv)
+
+	got, err := c.GetCaseDescription(context.Background(), "case-1")
+	if err != nil {
+		t.Fatalf("GetCaseDescription returned error: %v", err)
+	}
+	if got != "full description" {
+		t.Errorf("description = %q, want %q", got, "full description")
+	}
+	if gotAuthorization != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want %q", gotAuthorization, "Bearer test-token")
+	}
+}
+
+// TestGetCommentContent_SendsBearerToken is GetCaseDescription's
+// GET /comments/{id} counterpart — see that test's own doc comment.
+func TestGetCommentContent_SendsBearerToken(t *testing.T) {
+	var gotAuthorization string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": "full comment"})
+	}))
+	defer apiSrv.Close()
+	tokenSrv := newCustomerTokenServer(t)
+	defer tokenSrv.Close()
+
+	c := newTestCustomerClient(t, tokenSrv, apiSrv)
+
+	got, err := c.GetCommentContent(context.Background(), "comment-1")
+	if err != nil {
+		t.Fatalf("GetCommentContent returned error: %v", err)
+	}
+	if got != "full comment" {
+		t.Errorf("content = %q, want %q", got, "full comment")
+	}
+	if gotAuthorization != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want %q", gotAuthorization, "Bearer test-token")
+	}
+}

@@ -17,6 +17,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
+import { SYSTEM_AUTHOR_NAME } from "@api/backend/mappers";
 import type { BeCaseEscalationSearchResponse } from "@api/backend/types";
 import type { CaseEscalationHistory } from "@features/csm-cases/types/csmCases";
 
@@ -50,7 +51,7 @@ export function useGetCsmCaseEscalations(
           id: e.id,
           currentLevel: e.currentLevel.id,
           previousLevel: e.previousLevel.id,
-          createdBy: e.createdBy,
+          createdBy: e.createdBy?.trim() || SYSTEM_AUTHOR_NAME,
           createdOn: e.createdOn,
           reason: e.reason,
         })),

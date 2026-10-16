@@ -45,20 +45,3 @@ func requireViewerAccess(w http.ResponseWriter, r *http.Request, guard *AccessGu
 	}
 	return user, true
 }
-
-// requireViewerPermission performs one of the additional, narrower
-// permission checks (PermEscalate, PermDownloadAttachment) layered on top
-// of the blanket PermViewerAccess gate requireViewerAccess already
-// enforced. Call this after requireViewerAccess, only for the handful of
-// endpoints Ballerina's operations.bal gated a second time (formerly
-// addEscalationGroups/downloadAttachmentGroups). PermUsageMetricsViewer no
-// longer goes through this layering -- it's checked directly, on its own,
-// at the route level (see its own doc comment). Returns false (and has
-// already written a 403) when user holds no role granting perm.
-func requireViewerPermission(w http.ResponseWriter, user *middleware.UserInfo, guard *AccessGuard, perm Permission) bool {
-	if !guard.Permits(perm, user.Roles) {
-		writeError(w, http.StatusForbidden, ErrMsgForbidden)
-		return false
-	}
-	return true
-}

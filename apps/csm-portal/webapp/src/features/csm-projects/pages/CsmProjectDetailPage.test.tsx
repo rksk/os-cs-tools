@@ -51,7 +51,7 @@ vi.mock("@config/apiConfig", () => ({
   apiConfig: { backendUrl: "https://example.test" },
 }));
 // This page now reads usePortalAccess (to gate the "Create" split-button and
-// the ex-Support-Portal-Lite report buttons), which transitively imports the
+// the viewer-audience "Time Report" button), which transitively imports the
 // real backend client/config -- mocked above. Default to full write access,
 // no SPL audience, and the Work items staff view; the gating tests below
 // override each independently.
@@ -191,6 +191,30 @@ describe("CsmProjectDetailPage — tab state", () => {
     );
   });
 
+  it.each([
+    ["managed_cloud_subscription", true],
+    ["cloud_support", true],
+    ["subscription", false],
+    ["cloud_evaluation_support", false],
+  ] as const)(
+    "Create menu for a %s project shows 'Create service request': %s",
+    (subscriptionType, shown) => {
+      mockUseGetProject.mockReturnValue({
+        data: { ...PROJECT, subscriptionType },
+        isLoading: false,
+        isError: false,
+      });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: /create/i }));
+      expect(screen.getByText("Create case")).toBeInTheDocument();
+      if (shown) {
+        expect(screen.getByText("Create service request")).toBeInTheDocument();
+      } else {
+        expect(screen.queryByText("Create service request")).not.toBeInTheDocument();
+      }
+    },
+  );
+
   it("hides the Create split-button entirely for a caller without write access", () => {
     mockCanWrite = false;
     renderPage();
@@ -209,12 +233,17 @@ describe("CsmProjectDetailPage — tab state", () => {
   });
 });
 
-// Regression: the ex-Support Portal Lite SLA/Time/CS report buttons have no
-// modern equivalent and must stay limited to the same audience they always
-// had (isSplAudience), independently of canWrite -- they must never appear
-// for an ordinary cs_engineer/admin session that doesn't separately hold the
-// viewer role, and must appear for one that does, even without write access.
-describe("CsmProjectDetailPage — ex-SPL report buttons", () => {
+// Regression: the Time report button has no modern equivalent and must stay
+// limited to the viewer audience (isSplAudience), independently of canWrite
+// -- it must never appear for an ordinary cs_engineer/admin session that
+// doesn't separately hold the viewer role, and must appear for one that
+// does, even without write access.
+//
+// Temporarily disabled on the page itself (see CsmProjectDetailPage.tsx's own
+// comment) -- the button is hidden unconditionally right now, so the
+// isSplAudience-gating test below is skipped rather than deleted, to make
+// re-enabling the feature (and this assertion) a one-line change.
+describe("CsmProjectDetailPage — Time report button", () => {
   beforeEach(() => {
     mockCanViewWorkItemsStaffView = true;
     mockUseGetProject.mockReturnValue({
@@ -224,23 +253,25 @@ describe("CsmProjectDetailPage — ex-SPL report buttons", () => {
     });
   });
 
-  it("hides the SLA/Time/CS report buttons for a caller without the viewer role", () => {
+  it("hides the Time report button for a caller without the viewer role", () => {
     mockIsSplAudience = false;
     renderPage();
-    expect(screen.queryByRole("link", { name: "SLA Report" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Time Report" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "CS Report" })).not.toBeInTheDocument();
   });
 
   // Rendered via component={RouterLink} (an in-app navigation, not a
-  // dialog/menu trigger), so each is an <a>, accessible role "link".
-  it("shows the SLA/Time/CS report buttons for a caller holding the viewer role, even without write access", () => {
+  // dialog/menu trigger), so it's an <a>, accessible role "link".
+  it.skip("shows the Time report button for a caller holding the viewer role, even without write access", () => {
     mockIsSplAudience = true;
     mockCanWrite = false;
     renderPage();
-    expect(screen.getByRole("link", { name: "SLA Report" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Time Report" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "CS Report" })).toBeInTheDocument();
+  });
+
+  it("hides the Time report button even for a caller holding the viewer role, while temporarily disabled", () => {
+    mockIsSplAudience = true;
+    renderPage();
+    expect(screen.queryByRole("link", { name: "Time Report" })).not.toBeInTheDocument();
   });
 });
 

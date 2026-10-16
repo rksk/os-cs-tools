@@ -25,7 +25,7 @@ import {
   DialogTitle,
   Typography,
 } from "@wso2/oxygen-ui";
-import { sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { sanitizeAnnouncementHtml } from "@utils/sanitizeHtml";
 import ResolvedAudienceList from "@features/csm-announcements/components/ResolvedAudienceList";
 import { useResolvedAudiencePreview } from "@features/csm-announcements/api/useResolvedAudiencePreview";
 import type { AnnouncementRequest } from "@features/csm-announcements/types/announcementRequests";
@@ -98,7 +98,7 @@ export default function PublishConfirmationDialog({
               maxHeight: 200,
               overflowY: "auto",
             }}
-            dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(request.description) }}
+            dangerouslySetInnerHTML={{ __html: sanitizeAnnouncementHtml(request.description) }}
           />
         </Box>
 

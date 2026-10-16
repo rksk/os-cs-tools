@@ -43,6 +43,14 @@ export interface PieSliceResult extends BeDashboardPieSlice {
    * `useWidgetGroupByData`) — `DashboardWidgetTile` skips click-through for
    * a slice carrying this. */
   navigable?: boolean;
+  /** The raw `POST /{resourceType}/aggregate` bucket `key` this slice came
+   * from (e.g. an account UUID) — only ever set by `useWidgetGroupByData`
+   * for a named bucket (never the synthetic "Others" bucket, which has no
+   * key of its own, and never a hand-authored `slices` config, which has no
+   * bucket at all). Exists purely for `BeDashboardGroupByConfig.linkResourceType`:
+   * `DashboardWidgetTile` uses it as the id when building that OTHER
+   * resourceType's own `detailHref`, instead of this slice's own `query`. */
+  linkId?: string;
 }
 
 export interface WidgetPieData {

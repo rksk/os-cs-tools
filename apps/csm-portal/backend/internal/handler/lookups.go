@@ -22,25 +22,23 @@ import (
 	"net/http"
 )
 
-// lookupsClient abstracts the ServiceNow lookup operations used by
-// LookupsHandler.
+// lookupsClient abstracts the dropdown lookups used by LookupsHandler.
 type lookupsClient interface {
 	GetProductList(ctx context.Context) ([]string, error)
 	GetABTTeamList(ctx context.Context) ([]string, error)
 }
 
-// LookupsHandler handles HTTP requests for SupportPortalLite's small
-// standalone dropdown lookups, delegating to the ServiceNow service.
+// LookupsHandler handles HTTP requests for the viewer audience's small
+// standalone dropdown lookups, delegating to entity-service.
 type LookupsHandler struct {
-	servicenow  lookupsClient
+	lookups     lookupsClient
 	accessGuard *AccessGuard
 }
 
-// NewLookupsHandler creates a LookupsHandler backed by the given
-// ServiceNow client. accessGuard enforces PermViewerAccess, SupportPortalLite's
-// blanket audience gate.
-func NewLookupsHandler(sn lookupsClient, accessGuard *AccessGuard) *LookupsHandler {
-	return &LookupsHandler{servicenow: sn, accessGuard: accessGuard}
+// NewLookupsHandler creates a LookupsHandler. accessGuard enforces
+// PermViewerAccess, the viewer audience's blanket gate.
+func NewLookupsHandler(lookups lookupsClient, accessGuard *AccessGuard) *LookupsHandler {
+	return &LookupsHandler{lookups: lookups, accessGuard: accessGuard}
 }
 
 // GetProducts handles GET /products.
@@ -50,9 +48,9 @@ func (h *LookupsHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	products, err := h.servicenow.GetProductList(r.Context())
+	products, err := h.lookups.GetProductList(r.Context())
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetProductList failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "GetProductList failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve products.")
 		return
 	}
@@ -67,9 +65,9 @@ func (h *LookupsHandler) GetABTTeams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	teams, err := h.servicenow.GetABTTeamList(r.Context())
+	teams, err := h.lookups.GetABTTeamList(r.Context())
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetABTTeamList failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "GetABTTeamList failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve ABT teams.")
 		return
 	}

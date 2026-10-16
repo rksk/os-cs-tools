@@ -38,6 +38,11 @@ func (f *fakeRotaGenerateClient) GenerateRotaMonth(_ context.Context, code strin
 	return f.resp, f.err
 }
 
+func (f *fakeRotaGenerateClient) GetRotaNightCrew(_ context.Context, code, from, to string) ([]byte, error) {
+	f.gotCode, f.gotBody = code, from+".."+to
+	return f.resp, f.err
+}
+
 func generateRequest(body string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/team-schedule/rotas/SRE_SAAS/generate", strings.NewReader(body))
 	r.SetPathValue("code", "SRE_SAAS")
@@ -99,5 +104,45 @@ func TestGenerateRotaMonth_KeepsTheRefusalReason(t *testing.T) {
 		if c.status == http.StatusInternalServerError && strings.Contains(w.Body.String(), "relation") {
 			t.Fatal("upstream internals leaked")
 		}
+	}
+}
+
+func nightCrewRequest(query string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/team-schedule/rotas/SRE_SAAS/night-crew?"+query, nil)
+	r.SetPathValue("code", "SRE_SAAS")
+	return r
+}
+
+func TestGetRotaNightCrew_ForwardsTheMonths(t *testing.T) {
+	fake := &fakeRotaGenerateClient{resp: []byte(`{"rotaCode":"SRE_SAAS","months":[]}`)}
+	w := httptest.NewRecorder()
+	NewRotaGenerateHandler(fake).GetRotaNightCrew(w, withUser(nightCrewRequest("from=2026-10&to=2026-12")))
+	if w.Code != http.StatusOK || fake.gotCode != "SRE_SAAS" || fake.gotBody != "2026-10..2026-12" {
+		t.Fatalf("status %d, forwarded %q %q", w.Code, fake.gotCode, fake.gotBody)
+	}
+}
+
+func TestGetRotaNightCrew_RefusesBeforeAskingUpstream(t *testing.T) {
+	w := httptest.NewRecorder()
+	NewRotaGenerateHandler(&fakeRotaGenerateClient{}).GetRotaNightCrew(w, nightCrewRequest("from=2026-10&to=2026-12"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("no user: status %d, want 401", w.Code)
+	}
+	for _, q := range []string{"", "from=2026-10", "from=2026-13&to=2026-12", "from=2026/10&to=2026-12", "from=2026-10&to=26-12"} {
+		fake := &fakeRotaGenerateClient{}
+		w := httptest.NewRecorder()
+		NewRotaGenerateHandler(fake).GetRotaNightCrew(w, withUser(nightCrewRequest(q)))
+		if w.Code != http.StatusBadRequest || fake.gotCode != "" {
+			t.Fatalf("%q: status %d, upstream asked %v", q, w.Code, fake.gotCode != "")
+		}
+	}
+}
+
+func TestGetRotaNightCrew_KeepsTheRefusalReason(t *testing.T) {
+	fake := &fakeRotaGenerateClient{err: &apierror.Error{StatusCode: http.StatusNotFound, Body: `{"code":404,"message":"rota \"SRE_IAAS\" has no night crew; only SRE_SAAS has"}`}}
+	w := httptest.NewRecorder()
+	NewRotaGenerateHandler(fake).GetRotaNightCrew(w, withUser(nightCrewRequest("from=2026-10&to=2026-12")))
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "has no night crew") {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 }

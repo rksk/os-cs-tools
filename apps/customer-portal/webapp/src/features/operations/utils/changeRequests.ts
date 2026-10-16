@@ -23,6 +23,10 @@ import {
 } from "@features/operations/constants/operationsConstants";
 import { resolveChangeRequestCanonicalState } from "@features/operations/utils/changeRequestUi";
 import type {
+  ChangeRequestApproval,
+  ChangeRequestApprovalRecord,
+  ChangeRequestApprovalsRead,
+  ChangeRequestApprover,
   ChangeRequestCustomerProposal,
   ChangeRequestDetails,
   ChangeRequestStats,
@@ -31,13 +35,18 @@ import type {
 } from "@features/operations/types/changeRequests";
 import type { CaseComment } from "@features/support/types/cases";
 import { ChangeRequestDecisionMode } from "@features/operations/types/changeRequests";
-import type { ChangeRequestWorkflowStage } from "@features/operations/types/changeRequests";
+import type {
+  ChangeRequestWorkflowStage,
+  ChangeRequestWorkflowStageStatus,
+} from "@features/operations/types/changeRequests";
 import {
   formatBackendTimestampForDisplay,
   parseBackendTimestamp,
   resolveDisplayTimeZone,
 } from "@utils/dateTime";
 import { ApiError } from "@utils/ApiError";
+import { buildPdfTableBody, wso2StaffMarkerHooks } from "@utils/pdfStaffMarker";
+import { toPdfSafeText } from "@utils/pdfText";
 
 // --- Change request stats (API → card counts) --------------------------------
 
@@ -796,8 +805,211 @@ function describeCustomerApprovalStage(changeRequest: ChangeRequestDetails): str
   return "Customer approval received";
 }
 
+// --- Approval stages as evidence ---------------------------------------------
+
+/**
+ * The approvals could not be read (the request failed and nothing was read
+ * before it): see {@link ChangeRequestApprovalsRead}. Distinct from an empty
+ * list, which is a read that found no approval.
+ */
+export const APPROVALS_UNAVAILABLE = "unavailable" satisfies ChangeRequestApprovalsRead;
+
+/** The stages of a read, or none when the read failed. */
+function readStages(
+  approvals: ChangeRequestApprovalsRead | null | undefined,
+): ReadonlyArray<ChangeRequestApproval> | null {
+  return approvals === APPROVALS_UNAVAILABLE ? null : (approvals ?? null);
+}
+
+/**
+ * The role of an approval stage in the flow, read from its label. The labels are
+ * the backend's: the stages this codebase provisions ("Peer Approval", "CAB
+ * Approval", "Review", "Customer Approval", "Customer Review"), the historic
+ * "ECAB Approval" an Emergency change may still hold, and the names a stage
+ * migrated from the previous system gets by its position ("Assess", "Authorize").
+ */
+export type ChangeRequestApprovalStageKind =
+  | "peer"
+  | "cab"
+  | "review"
+  | "customer-approval"
+  | "customer-review"
+  | "other";
+
+const APPROVAL_STAGE_KINDS: Readonly<Record<string, ChangeRequestApprovalStageKind>> = {
+  "peer approval": "peer",
+  assess: "peer",
+  "cab approval": "cab",
+  authorize: "cab",
+  "ecab approval": "cab",
+  review: "review",
+  "customer approval": "customer-approval",
+  "customer review": "customer-review",
+};
+
+export function classifyChangeRequestApprovalStage(
+  stage: string | null | undefined,
+): ChangeRequestApprovalStageKind {
+  const key = (stage ?? "").trim().toLowerCase();
+  return APPROVAL_STAGE_KINDS[key] ?? "other";
+}
+
+function isApprovedStatus(status: string | null | undefined): boolean {
+  return (status ?? "").trim().toUpperCase() === "APPROVED";
+}
+
+/**
+ * The APPROVED approver rows of a stage, oldest answer first (a row with no
+ * `respondedOn` keeps its place).
+ */
+function approvedApprovers(stage: ChangeRequestApproval): ChangeRequestApprover[] {
+  const rows = (stage.approvers ?? []).filter((ap) => isApprovedStatus(ap.status));
+  return rows
+    .map((row, index) => ({ row, index, at: parseBackendTimestamp(row.respondedOn ?? "")?.getTime() }))
+    .sort((a, b) => {
+      if (a.at == null && b.at == null) return a.index - b.index;
+      if (a.at == null) return 1;
+      if (b.at == null) return -1;
+      return a.at - b.at || a.index - b.index;
+    })
+    .map(({ row }) => row);
+}
+
+/**
+ * Whether the approvals carry an APPROVED stage of the given kind: the record
+ * that the step happened.
+ *
+ * For the customer's own stages the stage's approver rows are read too (they are
+ * the customer's colleagues' answers, which the customer can see by name): a
+ * stage migrated from the previous system without a label is NAMED "Customer
+ * Approval" by its position (the third stage and later) whether or not it was
+ * the customer's, and such a stage is WSO2's internal one, so its rows are
+ * withheld from the customer. An APPROVED "Customer Approval" with no visible
+ * APPROVED row is therefore not taken as the customer's approval. WSO2's
+ * internal stages are read by label and status alone, which is all a customer
+ * is given of them.
+ */
+export function hasApprovedChangeRequestStage(
+  approvals: ReadonlyArray<ChangeRequestApproval> | null | undefined,
+  kind: ChangeRequestApprovalStageKind,
+): boolean {
+  if (!approvals) return false;
+  const customersOwn = kind === "customer-approval" || kind === "customer-review";
+  return approvals.some(
+    (stage) =>
+      classifyChangeRequestApprovalStage(stage.stage) === kind &&
+      isApprovedStatus(stage.status) &&
+      (!customersOwn || approvedApprovers(stage).length > 0),
+  );
+}
+
+/**
+ * Who approved the change request and when, for the Approval Information card
+ * and the PDF: the record's own `approvedBy` / `approvedOn` when it has either;
+ * otherwise the first APPROVED approver of the CAB (Authorize) stage in the
+ * approvals, with the time they answered; otherwise nothing. Nothing is made up:
+ * a CAB stage whose rows are withheld (a customer is not told who sits on WSO2's
+ * internal stages) yields nothing, and the page says "Not available". When the
+ * record has neither value and the approvals could not be read, the source is
+ * "unavailable": not known, which the PDF says rather than leaving the rows out.
+ */
+export function deriveChangeRequestApproval(
+  changeRequest: Pick<ChangeRequestDetails, "approvedBy" | "approvedOn"> | null | undefined,
+  approvals?: ChangeRequestApprovalsRead | null,
+): ChangeRequestApprovalRecord {
+  const recordedBy = changeRequest?.approvedBy?.label?.trim() || null;
+  const recordedOn = changeRequest?.approvedOn?.trim() || null;
+  if (recordedBy || recordedOn) {
+    return { approvedBy: recordedBy, approvedOn: recordedOn, source: "record" };
+  }
+  if (approvals === APPROVALS_UNAVAILABLE) {
+    return { approvedBy: null, approvedOn: null, source: "unavailable" };
+  }
+  for (const stage of approvals ?? []) {
+    if (classifyChangeRequestApprovalStage(stage.stage) !== "cab" || !isApprovedStatus(stage.status)) {
+      continue;
+    }
+    const [first] = approvedApprovers(stage);
+    const name = first?.name?.trim();
+    if (first && name) {
+      return {
+        approvedBy: name,
+        approvedOn: first.respondedOn?.trim() || null,
+        source: "approvals",
+      };
+    }
+  }
+  return { approvedBy: null, approvedOn: null, source: "none" };
+}
+
+// --- The workflow panel ----------------------------------------------------------
+
+/** The caption of a step the change request passed with nothing on record that says it happened. */
+export const WORKFLOW_NO_APPROVAL_RECORDED = "No approval recorded";
+export const WORKFLOW_NO_REVIEW_RECORDED = "No review recorded";
+/** The caption of a step whose requirement box is off. */
+export const WORKFLOW_NOT_REQUIRED = "Not required";
+/** The caption of a passed step only the approvals could vouch for, when they could not be read. */
+export const WORKFLOW_APPROVAL_UNAVAILABLE = "Approval record could not be loaded";
+export const WORKFLOW_REVIEW_UNAVAILABLE = "Review record could not be loaded";
+
+function stageOf(
+  name: string,
+  description: string,
+  status: ChangeRequestWorkflowStageStatus,
+): ChangeRequestWorkflowStage {
+  return {
+    name,
+    description,
+    status,
+    completed: status === "completed",
+    current: status === "current",
+    disabled: status === "disabled",
+  };
+}
+
+/**
+ * The workflow panel's steps, from the record alone.
+ *
+ * A step before the current one is shown done only when something on record
+ * says it happened; the position of the change request in the flow never
+ * stands in for that. The rule, step by step:
+ *
+ * - New: done once the change request exists and has moved on (its creation is
+ *   a fact).
+ * - Assess / Authorize: done only when the approvals carry an APPROVED Peer /
+ *   CAB stage. A change request past the step with no such stage reads
+ *   "No approval recorded": neutral, not a tick (a change migrated from the
+ *   previous system may be Closed or in progress without its approvals here).
+ * - Customer Approval: done when the customer's approval is on record
+ *   (`hasCustomerApproved`, a proposed time WSO2 accepted, or an APPROVED
+ *   Customer Approval stage). Past it with no such record: "Not required" when
+ *   its requirement box is off, "No approval recorded" when it is on or unknown.
+ *   Its captions while current (a waiting proposal, ...) are unchanged.
+ * - Customer Review: the same with `hasCustomerReviewed`, an APPROVED Customer
+ *   Review stage and the review box.
+ * - Scheduled / Implement / Review: done once the change request has moved past
+ *   them (the state itself is the record).
+ * - Rollback / Closed / Canceled: as before: only ever current or disabled, and
+ *   a canceled change request shows nothing done.
+ *
+ * A response with no approvals and no requirement boxes (the previous system's
+ * shape) therefore shows a tick for nothing it cannot vouch for.
+ *
+ * When the approvals could not be read ({@link APPROVALS_UNAVAILABLE}) a failed
+ * read is not taken for an empty one: a passed Assess / Authorize, and a passed
+ * customer step the detail does not vouch for (and whose box is not off), reads
+ * `unavailable` ("Approval record could not be loaded"), never "No approval
+ * recorded". What the detail itself records still counts.
+ *
+ * @param changeRequest - The change request as returned by the details API.
+ * @param approvals - Its approval stages (`GET .../approvals`) as read: an
+ *   empty list (or none given) is no evidence; {@link APPROVALS_UNAVAILABLE} is
+ *   a read that failed, which is no answer either way.
+ */
 export function buildChangeRequestWorkflowStages(
   changeRequest?: ChangeRequestDetails | null,
+  approvals?: ChangeRequestApprovalsRead | null,
 ): { workflowStages: ChangeRequestWorkflowStage[]; currentStateIndex: number } {
   if (!changeRequest) {
     return { workflowStages: [], currentStateIndex: -1 };
@@ -808,97 +1020,127 @@ export function buildChangeRequestWorkflowStages(
     ChangeRequestStates.NEW;
   const currentIndex = CHANGE_REQUEST_STATE_ORDER.indexOf(currentState);
   const isCanceled = currentState === ChangeRequestStates.CANCELED;
+  const isRollback = currentState === ChangeRequestStates.ROLLBACK;
+  const isClosed = currentState === ChangeRequestStates.CLOSED;
   const allowIndexProgress = !isCanceled && currentIndex >= 0;
+
+  const positionOf = (state: ChangeRequestState) => CHANGE_REQUEST_STATE_ORDER.indexOf(state);
+  const isPast = (state: ChangeRequestState) => allowIndexProgress && currentIndex > positionOf(state);
+  const isCurrent = (state: ChangeRequestState) => currentState === state;
+
+  /** A step the state itself records: done once passed, current when there, pending before. */
+  const byState = (state: ChangeRequestState): ChangeRequestWorkflowStageStatus =>
+    isCurrent(state) ? "current" : isPast(state) ? "completed" : "pending";
+
+  const approvalsUnavailable = approvals === APPROVALS_UNAVAILABLE;
+  const stages = readStages(approvals);
+
+  /**
+   * A step that needs a record: done on evidence; past it without any, "no record"
+   * (or "not required" when its box is off, which also applies before the step),
+   * or "unavailable" when the approvals that could hold the record were not read;
+   * current when there; pending before.
+   */
+  const byEvidence = (
+    state: ChangeRequestState,
+    evidence: boolean,
+    required: boolean | null | undefined,
+  ): ChangeRequestWorkflowStageStatus => {
+    if (isCurrent(state)) return "current";
+    if (isCanceled) return "pending";
+    if (isPast(state) && evidence) return "completed";
+    if (required === false) return "not-required";
+    if (!isPast(state)) return "pending";
+    return approvalsUnavailable ? "unavailable" : "no-record";
+  };
+
+  const peerApproved = hasApprovedChangeRequestStage(stages, "peer");
+  const cabApproved = hasApprovedChangeRequestStage(stages, "cab");
+  const customerApproved =
+    changeRequest.hasCustomerApproved === true ||
+    isProposalAccepted(changeRequest) ||
+    hasApprovedChangeRequestStage(stages, "customer-approval");
+  const customerReviewed =
+    changeRequest.hasCustomerReviewed === true ||
+    hasApprovedChangeRequestStage(stages, "customer-review");
+
+  const assess = byEvidence(ChangeRequestStates.ASSESS, peerApproved, undefined);
+  const authorize = byEvidence(ChangeRequestStates.AUTHORIZE, cabApproved, undefined);
+  const customerApproval = byEvidence(
+    ChangeRequestStates.CUSTOMER_APPROVAL,
+    customerApproved,
+    changeRequest.customerApprovalRequired,
+  );
+  // After a rollback the Customer Review step cannot happen (as before).
+  const customerReview = isRollback
+    ? "disabled"
+    : byEvidence(
+        ChangeRequestStates.CUSTOMER_REVIEW,
+        customerReviewed,
+        changeRequest.customerReviewRequired,
+      );
+
+  const captionFor = (
+    status: ChangeRequestWorkflowStageStatus,
+    usual: string,
+    noRecord: string = WORKFLOW_NO_APPROVAL_RECORDED,
+    unavailable: string = WORKFLOW_APPROVAL_UNAVAILABLE,
+  ): string =>
+    status === "no-record"
+      ? noRecord
+      : status === "unavailable"
+        ? unavailable
+        : status === "not-required"
+          ? WORKFLOW_NOT_REQUIRED
+          : usual;
 
   return {
     currentStateIndex: currentIndex,
     workflowStages: [
-      {
-        name: ChangeRequestStates.NEW,
-        description: "Change request created",
-        completed: allowIndexProgress && currentIndex > 0,
-        current: currentState === ChangeRequestStates.NEW,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.ASSESS,
-        description: "Technical assessment completed",
-        completed: allowIndexProgress && currentIndex > 1,
-        current: currentState === ChangeRequestStates.ASSESS,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.AUTHORIZE,
-        description: "Internal authorization obtained",
-        completed: allowIndexProgress && currentIndex > 2,
-        current: currentState === ChangeRequestStates.AUTHORIZE,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.CUSTOMER_APPROVAL,
-        description: describeCustomerApprovalStage(changeRequest),
-        completed: allowIndexProgress && currentIndex > 3,
-        current: currentState === ChangeRequestStates.CUSTOMER_APPROVAL,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.SCHEDULED,
-        description: "Maintenance window scheduled",
-        completed: allowIndexProgress && currentIndex > 4,
-        current: currentState === ChangeRequestStates.SCHEDULED,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.IMPLEMENT,
-        description: "Change implementation",
-        completed: allowIndexProgress && currentIndex > 5,
-        current: currentState === ChangeRequestStates.IMPLEMENT,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.REVIEW,
-        description: "Internal review",
-        completed: allowIndexProgress && currentIndex > 6,
-        current: currentState === ChangeRequestStates.REVIEW,
-        disabled: false,
-      },
-      {
-        name: ChangeRequestStates.CUSTOMER_REVIEW,
-        description: "Customer validation",
-        completed:
-          allowIndexProgress &&
-          currentIndex > 7 &&
-          currentState !== ChangeRequestStates.ROLLBACK,
-        current: currentState === ChangeRequestStates.CUSTOMER_REVIEW,
-        disabled: currentState === ChangeRequestStates.ROLLBACK,
-      },
-      {
-        name: ChangeRequestStates.ROLLBACK,
-        description: "Change rollback if needed",
-        completed: false,
-        current: currentState === ChangeRequestStates.ROLLBACK,
-        disabled:
-          currentState === ChangeRequestStates.CLOSED ||
-          currentState === ChangeRequestStates.CANCELED,
-      },
-      {
-        name: ChangeRequestStates.CLOSED,
-        description: "Change request completed",
-        completed: false,
-        current: currentState === ChangeRequestStates.CLOSED,
-        disabled:
-          currentState === ChangeRequestStates.CANCELED ||
-          currentState === ChangeRequestStates.ROLLBACK,
-      },
-      {
-        name: ChangeRequestStates.CANCELED,
-        description: "Change request canceled",
-        completed: false,
-        current: currentState === ChangeRequestStates.CANCELED,
-        disabled:
-          currentState === ChangeRequestStates.CLOSED ||
-          currentState === ChangeRequestStates.ROLLBACK,
-      },
+      stageOf(ChangeRequestStates.NEW, "Change request created", byState(ChangeRequestStates.NEW)),
+      stageOf(ChangeRequestStates.ASSESS, captionFor(assess, "Technical assessment completed"), assess),
+      stageOf(
+        ChangeRequestStates.AUTHORIZE,
+        captionFor(authorize, "Internal authorization obtained"),
+        authorize,
+      ),
+      stageOf(
+        ChangeRequestStates.CUSTOMER_APPROVAL,
+        captionFor(customerApproval, describeCustomerApprovalStage(changeRequest)),
+        customerApproval,
+      ),
+      stageOf(
+        ChangeRequestStates.SCHEDULED,
+        "Maintenance window scheduled",
+        byState(ChangeRequestStates.SCHEDULED),
+      ),
+      stageOf(ChangeRequestStates.IMPLEMENT, "Change implementation", byState(ChangeRequestStates.IMPLEMENT)),
+      stageOf(ChangeRequestStates.REVIEW, "Internal review", byState(ChangeRequestStates.REVIEW)),
+      stageOf(
+        ChangeRequestStates.CUSTOMER_REVIEW,
+        captionFor(
+          customerReview,
+          "Customer validation",
+          WORKFLOW_NO_REVIEW_RECORDED,
+          WORKFLOW_REVIEW_UNAVAILABLE,
+        ),
+        customerReview,
+      ),
+      stageOf(
+        ChangeRequestStates.ROLLBACK,
+        "Change rollback if needed",
+        isRollback ? "current" : isClosed || isCanceled ? "disabled" : "pending",
+      ),
+      stageOf(
+        ChangeRequestStates.CLOSED,
+        "Change request completed",
+        isClosed ? "current" : isCanceled || isRollback ? "disabled" : "pending",
+      ),
+      stageOf(
+        ChangeRequestStates.CANCELED,
+        "Change request canceled",
+        isCanceled ? "current" : isClosed || isRollback ? "disabled" : "pending",
+      ),
     ],
   };
 }
@@ -925,10 +1167,20 @@ function getDateOrNA(dateStr: string | null | undefined): string {
 
 /**
  * Generates and downloads a Change Request Details PDF.
+ *
+ * @param changeRequest - The change request as returned by the details API.
+ * @param comments - Its comments, printed under "Notes & Comments" when given.
+ * @param approval - Who approved it and when, as the page prints it
+ *   ({@link deriveChangeRequestApproval}); the record's own values when omitted.
+ *   Printed only when there is something to print: the PDF never says who
+ *   approved a change on no evidence. When it is not known (source
+ *   "unavailable": the approvals could not be read) both rows say
+ *   "Not available", so the PDF does not read as if there were no approval.
  */
 export function generateChangeRequestDetailsPdf(
   changeRequest: ChangeRequestDetails,
   comments?: CaseComment[],
+  approval: ChangeRequestApprovalRecord = deriveChangeRequestApproval(changeRequest),
 ): void {
   const doc = new jsPDF() as jsPDF & { lastAutoTable?: { finalY: number } };
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -962,9 +1214,12 @@ export function generateChangeRequestDetailsPdf(
     ["Rollback Plan", stripHtmlOrNA(changeRequest.rollbackPlan)],
   ];
 
-  if (changeRequest.approvedBy) {
-    tableData.push(["Approved By", changeRequest.approvedBy.label]);
-    tableData.push(["Approved On", getDateOrNA(changeRequest.approvedOn)]);
+  if (approval.source === "unavailable") {
+    tableData.push(["Approved By", "Not available"]);
+    tableData.push(["Approved On", "Not available"]);
+  } else if (approval.approvedBy || approval.approvedOn) {
+    tableData.push(["Approved By", approval.approvedBy || "N/A"]);
+    tableData.push(["Approved On", getDateOrNA(approval.approvedOn)]);
   }
 
   if (changeRequest.product) {
@@ -996,9 +1251,10 @@ export function generateChangeRequestDetailsPdf(
     tableData.push(["Notes & Comments", commentsText]);
   }
 
+  const { body, staffMarkerCells } = buildPdfTableBody(tableData);
   autoTable(doc, {
     startY: 28,
-    body: tableData,
+    body,
     theme: "grid",
     styles: {
       fontSize: 10,
@@ -1019,17 +1275,21 @@ export function generateChangeRequestDetailsPdf(
       },
     },
     margin: { bottom: 25 },
+    ...wso2StaffMarkerHooks(staffMarkerCells),
   });
 
-  const createdDateTime = new Date().toLocaleString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: resolveDisplayTimeZone(),
-  });
+  // Some browsers put U+202F before AM/PM, which jsPDF's built-in font cannot encode.
+  const createdDateTime = toPdfSafeText(
+    new Date().toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: resolveDisplayTimeZone(),
+    }),
+  );
   const totalPages = doc.getNumberOfPages();
 
   for (let i = 1; i <= totalPages; i++) {

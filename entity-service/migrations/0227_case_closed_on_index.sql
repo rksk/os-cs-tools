@@ -1,0 +1,36 @@
+-- Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+--
+-- WSO2 LLC. licenses this file to you under the Apache License,
+-- Version 2.0 (the "License"); you may not use this file except
+-- in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing,
+-- software distributed under the License is distributed on an
+-- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+-- KIND, either express or implied.  See the License for the
+-- specific language governing permissions and limitations
+-- under the License.
+
+-- CaseVolumeTrend's "closed" bucket (case_repo.go) compares
+-- caseLikeOwnClosedOnColumn -- a CASE wi.type ... END expression spanning
+-- the case-like extension tables -- against a day-range window. Same
+-- structural limitation migration 0195 documents for caseLikeStateColumn's
+-- identical cross-table COALESCE: no per-table index can be pushed through
+-- a CASE/COALESCE spanning several joined tables, so this index (and its
+-- two siblings, migrations 0228/0230, for engagement/security_report_analysis
+-- -- the other two case-like types the Case Summary dashboard's own config
+-- actually requests; announcement and service_request are both excluded
+-- there by that config's own type filter, so there is no caller needing an
+-- announcement.closed_on or service_request.closed_on index yet) cannot
+-- currently help that query either. Kept anyway, at the same explicit request as 0195-0198, for
+-- whenever the sargable rewrite (a UNION of per-table range-filtered
+-- branches, rather than one cross-table CASE expression) is done -- that
+-- version is what would actually let the planner use these.
+--
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block, so this
+-- file (like migration 0195, the identical fix for "case".state) stays the
+-- only statement in its own file, run without BEGIN/COMMIT.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_case_closed_on ON "case" (closed_on);

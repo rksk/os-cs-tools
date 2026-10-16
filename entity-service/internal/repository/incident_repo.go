@@ -289,8 +289,6 @@ type IncidentLifecycleUpdate struct {
 	ResolutionNotes     *string // incident.close_notes
 	ResolvedByID        *string
 	DefaultResolvedByID *string // the acting user, used only when entering Resolved without ResolvedByID
-	Impact              *string // incident_impact_enum label
-	Urgency             *string // incident_urgency_enum label
 
 	// WorkNotes and AdditionalComments are written as comment rows in the same transaction as the
 	// state change, so a failed note leaves the state change unsaved too. Nil or blank writes nothing.
@@ -307,6 +305,8 @@ type IncidentLifecycleUpdate struct {
 	Category            *string // incident_category_enum label
 	SubcategoryValue    *string // incident_subcategory.value, looked up under the new or current category
 	ContactType         *string // domain.IncidentContactType; mapped to incident_contact_type_enum here, as on create
+	Impact              *string // incident_impact_enum label
+	Urgency             *string // incident_urgency_enum label
 	Priority            *string // incident_priority_enum label; used only when neither Impact nor Urgency is set
 	ServiceID           *string
 	ServiceOfferingID   *string
@@ -1467,21 +1467,6 @@ func (r *incidentRepo) updateIncidentLifecycleTx(ctx context.Context, tx pgx.Tx,
 	if u.ResolutionNotes != nil {
 		addInc("close_notes = $%d", *u.ResolutionNotes)
 	}
-	if u.Impact != nil || u.Urgency != nil {
-		impact, urgency := derefOr(currentImpact, "LOW"), derefOr(currentUrgency, "LOW")
-		if u.Impact != nil {
-			impact = *u.Impact
-			addInc("impact = $%d::incident_impact_enum", impact)
-		}
-		if u.Urgency != nil {
-			urgency = *u.Urgency
-			addInc("urgency = $%d::incident_urgency_enum", urgency)
-		}
-		// Read under the row lock above, so the priority always matches the stored impact and urgency.
-		if u.PriorityFor != nil {
-			addInc("priority = $%d::incident_priority_enum", u.PriorityFor(impact, urgency))
-		}
-	}
 	enteringResolved := u.State != nil && *u.State == "RESOLVED" && currentState != "RESOLVED"
 	resolvedBy := u.ResolvedByID
 	if resolvedBy == nil && enteringResolved {
@@ -1516,14 +1501,6 @@ func (r *incidentRepo) updateIncidentLifecycleTx(ctx context.Context, tx pgx.Tx,
 		return cascadeIncidentTaskClosure(ctx, tx, id, number, *u.State, actorEmail)
 	}
 	return nil
-}
-
-// derefOr is *v, or fallback when v is nil (the column defaults impact and urgency to LOW).
-func derefOr(v *string, fallback string) string {
-	if v == nil {
-		return fallback
-	}
-	return *v
 }
 
 // addIncidentRecordFields adds the incident columns of the record's own

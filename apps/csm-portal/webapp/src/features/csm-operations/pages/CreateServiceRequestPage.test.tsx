@@ -17,7 +17,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import type { BeProjectMetadata } from "@api/backend/types";
+import type { BeProject, BeProjectMetadata } from "@api/backend/types";
 
 const navigateMock = vi.fn();
 const postCaseMutateAsyncMock = vi.fn();
@@ -102,16 +102,22 @@ vi.mock("@features/csm-operations/api/useSearchCatalogs", () => ({
 vi.mock("@features/csm-operations/api/useCatalogItemVariables", () => ({
   useCatalogItemVariables: () => ({ data: [], isLoading: false, isError: false, isSuccess: true }),
 }));
+// Captures the `filterProject` predicate the page hands to the picker so the
+// "which project types are offered" tests can call it directly.
+let capturedFilterProject: ((project: BeProject) => boolean) | undefined;
 vi.mock("@features/csm-cases/components/ProjectSelectionField", () => ({
   default: ({
     value,
     onChange,
+    filterProject,
   }: {
     value: string;
     onChange: (next: string) => void;
-  }) => (
-    <input aria-label="Project" value={value} onChange={(e) => onChange(e.target.value)} />
-  ),
+    filterProject?: (project: BeProject) => boolean;
+  }) => {
+    capturedFilterProject = filterProject;
+    return <input aria-label="Project" value={value} onChange={(e) => onChange(e.target.value)} />;
+  },
 }));
 // CreateServiceRequestPage imports BackendApiError from the real API client
 // module, which reads window.config at module load and throws outside a
@@ -273,5 +279,34 @@ describe("CreateServiceRequestPage — gating on hasServiceRequestReadAccess", (
       screen.queryByText(/isn't eligible to raise service requests/i),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create service request/i })).toBeEnabled();
+  });
+});
+
+describe("CreateServiceRequestPage — project picker offers eligible subscription types", () => {
+  beforeEach(() => {
+    capturedFilterProject = undefined;
+    projectMetadataResult = { data: undefined, isLoading: false, isError: false };
+  });
+
+  function offered(subscriptionType: string): boolean {
+    render(<CreateServiceRequestPage />);
+    expect(capturedFilterProject).toBeDefined();
+    return capturedFilterProject!({ subscriptionType } as BeProject);
+  }
+
+  it("offers a cloud_support project", () => {
+    expect(offered("cloud_support")).toBe(true);
+  });
+
+  it("still offers a managed_cloud_subscription project", () => {
+    expect(offered("managed_cloud_subscription")).toBe(true);
+  });
+
+  it("does not offer other subscription types", () => {
+    expect(offered("subscription")).toBe(false);
+  });
+
+  it("does not offer cloud_evaluation_support", () => {
+    expect(offered("cloud_evaluation_support")).toBe(false);
   });
 });

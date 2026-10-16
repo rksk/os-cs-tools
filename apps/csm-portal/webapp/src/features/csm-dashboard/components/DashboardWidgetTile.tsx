@@ -35,6 +35,7 @@ import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
 import { useWidgetGroupByData } from "@features/csm-dashboard/api/useWidgetGroupByData";
 import { useCaseFeedbackTrendData } from "@features/csm-dashboard/api/useCaseFeedbackTrendData";
+import { useCaseVolumeTrendData } from "@features/csm-dashboard/api/useCaseVolumeTrendData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
 import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
@@ -53,6 +54,7 @@ import {
 } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
 import DashboardPieChart from "@features/csm-dashboard/components/DashboardPieChart";
 import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarChart";
+import DashboardLineChart from "@features/csm-dashboard/components/DashboardLineChart";
 
 // Hides the per-widget refresh button by default and reveals it on hover or
 // keyboard focus of the ancestor Card carrying the matching
@@ -112,6 +114,10 @@ interface DashboardWidgetTileProps {
    * widget's own search request's `sortBy` (see `useWidgetData`) —
    * opaque, like `filters`. */
   sortBy?: Record<string, unknown>;
+  /** Only meaningful for shape "line" (see `BeDashboardWidget.days`): how
+   * many trailing days the Opened/Closed trend covers. `undefined` lets
+   * `useCaseVolumeTrendData` apply the backend's own default. */
+  days?: number;
   /** The currently selected team's own `creGroupId` (see
    * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
    * current dashboard's family when the "All ABTs" option is selected (see
@@ -246,6 +252,7 @@ function DashboardWidgetTile({
   groupBy,
   columns,
   sortBy,
+  days,
   selectedTeamCreGroupId,
   selectedTeamSreGroupId,
   selectedTeamLabel,
@@ -414,8 +421,8 @@ function DashboardWidgetTile({
       </Tooltip>
     </Box>
   );
-  // Shape "pie" resolves via useWidgetPieData instead (one search per
-  // slice) — skip this one's own network call rather than wasting it, but
+  // Shape "pie"/"bar"/"line" each resolve via their own dedicated hook
+  // instead — skip this one's own network call rather than wasting it, but
   // still call the hook unconditionally (rules of hooks; a widget's shape
   // never changes across this component's lifetime).
   const { data, isLoading: isWidgetDataLoading, isError } = useWidgetData({
@@ -424,7 +431,7 @@ function DashboardWidgetTile({
     filters,
     shape,
     listLimit,
-    enabled: shape !== "pie" && shape !== "bar" && isVisible,
+    enabled: shape !== "pie" && shape !== "bar" && shape !== "line" && isVisible,
     selectedTeamCreGroupId,
     selectedTeamSreGroupId,
     sortBy,
@@ -462,7 +469,23 @@ function DashboardWidgetTile({
     widgetId,
     resourceType,
     filters,
-    shape === "pie" || shape === "bar" ? (groupBy?.bucket ? undefined : groupBy) : undefined,
+    shape === "pie" || shape === "bar"
+      ? groupBy?.bucket
+        ? undefined
+        : // A bar chart has no good way to show an unlabeled "everything
+          // else" catch-all bucket alongside named, comparable categories —
+          // unlike a pie, where "Others" is a legitimate completeness
+          // slice, a bar chart's whole point is comparing named bars, and a
+          // stray extra bar with no real label just reads as confusing
+          // (reported live on "Top customers by open cases"). Forced here,
+          // not left to each widget's own `hideOthers` config: bar charts
+          // never show it, full stop, regardless of what an individual
+          // widget's config (set outside this repo, in deployment-specific
+          // dashboard JSON) happens to say.
+          shape === "bar" && groupBy
+          ? { ...groupBy, hideOthers: true }
+          : groupBy
+      : undefined,
     selectedTeamCreGroupId,
     selectedTeamSreGroupId,
     currentUserId,
@@ -475,6 +498,19 @@ function DashboardWidgetTile({
     isVisible,
   );
   const pieData = groupBy?.bucket ? feedbackTrendData : groupBy ? groupByData : sliceData;
+  // Shape "line" is its own fixed resolution path (`POST
+  // /cases/volume-trend`, always exactly two series) — unrelated to
+  // slices/groupBy, so this is independent of `pieData` above. Called
+  // unconditionally (rules of hooks), gated by its own `enabled` argument.
+  const volumeTrendData = useCaseVolumeTrendData(
+    widgetId,
+    filters,
+    days,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
+    currentUserId,
+    shape === "line" && isVisible,
+  );
   // True while this widget carries a `__current_user__` filter and the
   // signed-in user's profile hasn't loaded yet. `useWidgetData`/
   // `useWidgetPieData` hold their requests in that window (see
@@ -763,6 +799,23 @@ function DashboardWidgetTile({
         onExpandChange?.(expandedSlice && expandedSlice.label === slice.label ? null : slice);
         return;
       }
+      // `groupBy.linkResourceType` sends this bucket to a DIFFERENT
+      // resourceType's own detail page (by `slice.linkId`, the bucket's raw
+      // key) instead of this widget's own resourceType's list — see that
+      // field's own doc comment. Only `useWidgetGroupByData`'s named
+      // buckets ever carry `linkId`; a hand-authored `slices` config has
+      // none, so this branch is a no-op for every widget that doesn't opt
+      // in. Falls through to the normal list click-through if the linked
+      // resourceType's own config has no `detailHref` or the bucket's key
+      // doesn't resolve to one, rather than silently doing nothing.
+      if (groupBy?.linkResourceType && slice.linkId) {
+        const linkConfig = WIDGET_RESOURCE_CONFIG[groupBy.linkResourceType];
+        const detailHref = linkConfig?.detailHref?.({ id: slice.linkId });
+        if (detailHref) {
+          navigate(detailHref, { state: dashboardReturnState });
+          return;
+        }
+      }
       navigate(
         config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query)), {
           widgetId,
@@ -841,6 +894,32 @@ function DashboardWidgetTile({
             />
           </Box>
         </Box>
+      </Card>
+    );
+  }
+
+  if (shape === "line") {
+    // Unlike shape "pie"/"bar", a day's Opened/Closed point is not a single
+    // filterable selector the case list's own search can scope to — there is
+    // no tile-level click-through target here (see `DashboardLineChart`'s own
+    // doc comment), so this Card is plain, non-link chrome, same posture as
+    // the shape "list" branch above for the same underlying reason. No
+    // per-widget refresh button either — the trend's own cache already keeps
+    // today's point fresh server-side (entity-service's case-volume-trend
+    // cache), so a manual refresh here has nothing to accomplish.
+    return (
+      <Card ref={tileRef} variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
+        <Box sx={{ pb: resolvedDescription ? 1 : 2.5 }}>{renderHeader()}</Box>
+        {resolvedDescription && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            {resolvedDescription}
+          </Typography>
+        )}
+        <DashboardLineChart
+          points={volumeTrendData.points}
+          isLoading={volumeTrendData.isLoading}
+          isError={volumeTrendData.isError}
+        />
       </Card>
     );
   }

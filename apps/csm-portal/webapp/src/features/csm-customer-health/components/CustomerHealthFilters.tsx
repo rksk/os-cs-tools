@@ -21,7 +21,7 @@ import RegionFilterSelect from "./RegionFilterSelect";
 import ProductFilterSelect from "./ProductFilterSelect";
 import AbtTeamFilterSelect from "./AbtTeamFilterSelect";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
-import type { RiskFilterKey } from "../api/customerHealthTypes";
+import { HEALTH_STATUS_LABELS, type RiskFilterKey } from "../api/customerHealthTypes";
 
 export interface HealthFilters {
   accountScope: "my-accounts" | "all-accounts";
@@ -49,19 +49,19 @@ function HealthStatusFilterSelect({
         value={selectedStatus || ""}
         onChange={handleChange}
         displayEmpty
-        renderValue={(selected) => {
-          if (!selected) return "All Statuses";
-          return selected === "at_risk" ? "At Risk" : "Healthy";
-        }}
+        renderValue={(selected) => (selected ? HEALTH_STATUS_LABELS[selected] : "All Statuses")}
       >
         <MenuItem value="">
           <ListItemText primary="All Statuses" />
         </MenuItem>
         <MenuItem value="at_risk">
-          <ListItemText primary="At Risk" />
+          <ListItemText primary={HEALTH_STATUS_LABELS.at_risk} />
         </MenuItem>
         <MenuItem value="healthy">
-          <ListItemText primary="Healthy" />
+          <ListItemText primary={HEALTH_STATUS_LABELS.healthy} />
+        </MenuItem>
+        <MenuItem value="to_be_reviewed">
+          <ListItemText primary={HEALTH_STATUS_LABELS.to_be_reviewed} />
         </MenuItem>
       </Select>
     </FormControl>

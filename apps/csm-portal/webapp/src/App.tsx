@@ -116,13 +116,11 @@ import CsmKBArticleEditorPage from "@features/csm-kb-articles/pages/CsmKBArticle
 import CsmKBArticleHistoryDetailPage from "@features/csm-kb-articles/pages/CsmKBArticleHistoryDetailPage";
 import CsmKBReviewQueuePage from "@features/csm-kb-articles/pages/CsmKBReviewQueuePage";
 import CsmKBAdminPage from "@features/csm-kb-articles/pages/CsmKBAdminPage";
-// The four pages below (SLA/CS/Time project reports, User Scan, Usage
-// Metrics, Customer Health) have no modern/entity-service-backed equivalent.
+// The four pages below (Time project report, User Scan, Usage Metrics,
+// Customer Health) have no modern/entity-service-backed equivalent.
 // Relocated out of the former "sales-sa"/"Support Portal Lite" tree (now
 // deleted); routing/audience-gating for each is isSplAudience, except Usage
 // Metrics, which is canViewUsageMetrics — see both flags' own doc comments.
-import SlaReportPage from "@features/csm-reports/pages/SlaReportPage";
-import CsReportPage from "@features/csm-reports/pages/CsReportPage";
 import TimelogsReportPage from "@features/csm-reports/pages/TimelogsReportPage";
 import UserScanPage from "@features/csm-user-scan/pages/UserScanPage";
 import UsageMetricsPage from "@features/csm-usage-metrics/pages/UsageMetricsPage";
@@ -677,16 +675,8 @@ export default function App(): JSX.Element {
                     element={<CustomerHealthDetailPage />}
                   />
 
-                  {/* SLA/CS/Time project reports, launched from a project's
-                      own detail page — same isSplAudience audience as above. */}
-                  <Route
-                    path="customers/projects/:projectId/sla-report/:sysId"
-                    element={<SlaReportPage />}
-                  />
-                  <Route
-                    path="customers/projects/:projectId/cs-report/:sysId"
-                    element={<CsReportPage />}
-                  />
+                  {/* Time project report, launched from a project's own
+                      detail page — same isSplAudience audience as above. */}
                   <Route
                     path="customers/projects/:projectId/timelogs-report"
                     element={<TimelogsReportPage />}

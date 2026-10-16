@@ -16,8 +16,8 @@
  * under the License.
  */
 
-import { describe, expect, it } from "vitest";
-import { awayIsRevertible, rotaRevertRuns } from "./undo";
+import { describe, expect, it, vi } from "vitest";
+import { UndoIncomplete, applyRevertRuns, awayIsRevertible, rotaRevertRuns } from "./undo";
 import { EVENING, REGULAR, TZ1_L1, WEEKEND, shiftMap } from "../test/fixtures";
 
 const SHIFTS = shiftMap(REGULAR, EVENING, WEEKEND, TZ1_L1);
@@ -80,5 +80,34 @@ describe("awayIsRevertible: taking marked leave off again", () => {
   it("is not where something already covered a day, open-ended spans included", () => {
     expect(awayIsRevertible([ab("2026-09-23", "2026-09-30")], "u1", "2026-09-21", "2026-09-23")).toBe(false);
     expect(awayIsRevertible([ab("2026-09-01", null)], "u1", "2026-09-21", "2026-09-23")).toBe(false);
+  });
+});
+
+describe("applyRevertRuns: how far an undo got", () => {
+  const runs = [
+    { code: "REGULAR", from: "2026-09-21", to: "2026-09-23" },
+    { code: "EVENING", from: "2026-09-24", to: "2026-09-24" },
+    { code: "", from: "2026-09-25", to: "2026-09-25" },
+  ];
+
+  it("writes every run, in order", async () => {
+    const apply = vi.fn().mockResolvedValue(undefined);
+    await applyRevertRuns(runs, apply);
+    expect(apply.mock.calls.map(([r]) => r.from)).toEqual(["2026-09-21", "2026-09-24", "2026-09-25"]);
+  });
+
+  it("says where the days still holding the change begin when a later run fails", async () => {
+    const boom = new Error("nope");
+    const apply = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(boom);
+    const err = await applyRevertRuns(runs, apply).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UndoIncomplete);
+    expect((err as UndoIncomplete).remainingFrom).toBe("2026-09-24");
+    expect((err as UndoIncomplete).failure).toBe(boom);
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes a failure on the first run on as it is: nothing was put back", async () => {
+    const boom = new Error("nope");
+    await expect(applyRevertRuns(runs, vi.fn().mockRejectedValue(boom))).rejects.toBe(boom);
   });
 });

@@ -202,8 +202,8 @@ func TestCreateActionItem_UppercasesPriorityOnTheWayIn(t *testing.T) {
 }
 
 // Regression: GetAccountsByHealthStatus's own doc comment promises an empty
-// list for any health status other than "at_risk"/"healthy" -- but
-// entity-service 400s on a value outside its own domain (anything but
+// list for any health status other than "at_risk"/"healthy"/"to_be_reviewed"
+// -- but entity-service 400s on a value outside its own domain (anything but
 // AT_RISK/HEALTHY/TO_BE_REVIEWED), so without filtering before the call, an
 // arbitrary/malformed status broke that contract by surfacing an upstream
 // validation error instead of the promised empty list.
@@ -225,5 +225,33 @@ func TestGetAccountsByHealthStatus_UnsupportedStatusReturnsEmptyWithoutCallingUp
 	}
 	if called {
 		t.Error("entity-service was called for an unsupported status; want no round trip")
+	}
+}
+
+// Regression: "to_be_reviewed" used to be treated the same as an unsupported
+// status above (short-circuited to an empty list with no upstream call) on
+// the mistaken belief that entity-service didn't support it -- it always
+// did. Selecting "To Be Reviewed" on the Customer Health dashboard's
+// health-status filter previously always showed zero accounts for exactly
+// this reason.
+func TestGetAccountsByHealthStatus_ToBeReviewedRoundTripsToUpstream(t *testing.T) {
+	const accountUUID = "aabbccdd-1122-3344-aabb-ccdd11223344"
+	var gotBody map[string]any
+	client := newRiskTestClient(t, "/accounts/", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accountIds":["` + accountUUID + `"]}`))
+	})
+
+	ids, err := client.GetAccountsByHealthStatus(context.Background(), "to_be_reviewed")
+	if err != nil {
+		t.Fatalf("GetAccountsByHealthStatus: %v", err)
+	}
+	if gotBody["status"] != "TO_BE_REVIEWED" {
+		t.Errorf("upstream status = %v, want %q", gotBody["status"], "TO_BE_REVIEWED")
+	}
+	if len(ids) != 1 || ids[0] != "aabbccdd11223344aabbccdd11223344" {
+		t.Errorf("ids = %v, want the single account sys_id converted from the upstream UUID", ids)
 	}
 }

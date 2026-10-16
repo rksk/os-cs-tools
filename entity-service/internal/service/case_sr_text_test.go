@@ -154,9 +154,36 @@ func TestFillServiceRequestText(t *testing.T) {
 		if req.Subject != "Restart LB instance" {
 			t.Errorf("Subject = %q, want 'Restart LB instance'", req.Subject)
 		}
-		want := "<p><strong>Description</strong>: Instance 2 is degraded</p>"
+		want := "<p><strong>Description</strong>:</p>Instance 2 is degraded"
 		if req.Description != want {
 			t.Errorf("Description = %q, want %q", req.Description, want)
+		}
+	})
+
+	t.Run("a Description question's answer is embedded as HTML, not escaped", func(t *testing.T) {
+		// The customer portal's create-SR form renders a question literally
+		// labeled "Description" as a rich-text editor (its own
+		// isDescriptionField, matched on the label alone) and sends the
+		// answer as real HTML. Escaping it here -- as every other, genuinely
+		// plain-text answer correctly is -- showed the raw <p>/<br> tags as
+		// visible text in the composed description instead of rendering them
+		// (found live via a HAR capture of a real SR create).
+		descQuestions := []domain.CatalogItemVariable{
+			{ID: "v-title", QuestionText: "Title", Order: 1},
+			{ID: "v-desc", QuestionText: "Description", Order: 2},
+			{ID: "v-env", QuestionText: "Environment", Order: 3},
+		}
+		cat := fakeSRCatalog{vars: descQuestions, items: catalog.items}
+		s := &caseService{srCatalog: cat}
+		req := srFormRequest(
+			domain.Variable{ID: "v-title", Value: "Request Product Logs"},
+			domain.Variable{ID: "v-desc", Value: `<p>test<br><b><strong class="editor-text-bold">test</strong></b><br>test</p>`},
+			domain.Variable{ID: "v-env", Value: "prod <eu>"},
+		)
+		s.fillServiceRequestText(context.Background(), &req)
+		want := `<p><strong>Description</strong>:</p><p>test<br><b><strong class="editor-text-bold">test</strong></b><br>test</p><p><strong>Environment</strong>: prod &lt;eu&gt;</p>`
+		if req.Description != want {
+			t.Errorf("Description = %q, want %q (Description's HTML embedded as-is, Environment still escaped)", req.Description, want)
 		}
 	})
 

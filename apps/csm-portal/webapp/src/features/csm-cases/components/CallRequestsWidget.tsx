@@ -177,7 +177,6 @@ export function CallRequestsWidget({
         break;
       case "schedule":
       case "reschedule":
-      case "accept":
         setScheduleTarget(cr);
         break;
       case "reject":

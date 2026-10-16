@@ -116,6 +116,55 @@ func TestGetMe(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
+	t.Run("entity 404 but the token grants a portal role answers from the token", func(t *testing.T) {
+		entityClient := &mockEntityUserClient{
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return nil, &apierror.Error{StatusCode: http.StatusNotFound}
+			},
+		}
+		cfg := testAccessConfig()
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil).WithAccessGuard(NewAccessGuard(cfg))
+		user := &middleware.UserInfo{
+			Email: "agent@example.com", UserID: "u-1",
+			FirstName: "Jane", LastName: "Doe",
+			Roles: []string{"test-escalator"},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/users/me", nil)
+		r = r.WithContext(middleware.WithUserInfo(r.Context(), user))
+		w := httptest.NewRecorder()
+		h.GetMe(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		type getMeResp struct {
+			ID        *string  `json:"id"`
+			Email     string   `json:"email"`
+			FirstName *string  `json:"firstName"`
+			LastName  *string  `json:"lastName"`
+			TimeZone  *string  `json:"timeZone"`
+			Roles     []string `json:"roles"`
+			Team      *string  `json:"team"`
+		}
+		resp := decodeJSON[getMeResp](t, w)
+		if resp.Email != "agent@example.com" {
+			t.Errorf("email = %q, want agent@example.com", resp.Email)
+		}
+		if resp.FirstName == nil || *resp.FirstName != "Jane" || resp.LastName == nil || *resp.LastName != "Doe" {
+			t.Errorf("firstName/lastName = %v/%v, want Jane/Doe (from the token)", resp.FirstName, resp.LastName)
+		}
+		if joined(&resp.Roles) != "escalator" {
+			t.Errorf("roles = %s, want escalator", joined(&resp.Roles))
+		}
+		if resp.ID != nil {
+			t.Errorf("id = %v, want null: there is no entity-service user row to source it from", resp.ID)
+		}
+		if resp.TimeZone != nil {
+			t.Errorf("timeZone = %v, want null", resp.TimeZone)
+		}
+		if resp.Team != nil {
+			t.Errorf("team = %v, want null", resp.Team)
+		}
+	})
+
 	t.Run("returns email from JWT when SCIM returns no user", func(t *testing.T) {
 		scimClient := &mockSCIMClient{
 			searchUserFn: func(_ context.Context, _ string) (*scim.UserInfo, error) {
@@ -214,8 +263,10 @@ func TestGetMe(t *testing.T) {
 
 		assertStatus(t, w, http.StatusOK)
 		resp := decodeJSON[map[string]any](t, w)
-		if _, ok := resp["team"]; ok {
-			t.Error("team should be absent when none of the caller's groups is a registry team")
+		if v, ok := resp["team"]; !ok {
+			t.Error("team should be present (null, not omitted) when none of the caller's groups is a registry team")
+		} else if v != nil {
+			t.Errorf("team = %v, want null", v)
 		}
 	})
 

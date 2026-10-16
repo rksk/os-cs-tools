@@ -142,6 +142,52 @@ describe("useFeaturePreviewOverrides", () => {
     rerender();
     expect(result.current.overrides).toBe(first);
   });
+
+  it("picks up a write made by another tab, via the storage event", () => {
+    const { result } = renderHook(() => useFeaturePreviewOverrides("user-1"));
+    expect(result.current.overrides).toEqual({});
+
+    // Another tab's write never calls this tab's own writePreviewOverride --
+    // it only ever reaches localStorage directly, then the browser fires a
+    // `storage` event at every OTHER open document.
+    act(() => {
+      localStorage.setItem(
+        previewStorageKey("user-1"),
+        JSON.stringify({ updates: true }),
+      );
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: previewStorageKey("user-1"),
+          newValue: JSON.stringify({ updates: true }),
+        }),
+      );
+    });
+
+    expect(result.current.overrides).toEqual({ updates: true });
+  });
+
+  it("ignores a storage event for an unrelated localStorage key", () => {
+    const { result } = renderHook(() => useFeaturePreviewOverrides("user-1"));
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "some.other.app.key" }),
+      );
+    });
+    expect(result.current.overrides).toEqual({});
+  });
+
+  it("re-reads on a storage-cleared event (key: null) as a precaution", () => {
+    writePreviewOverride("user-1", "updates", true);
+    const { result } = renderHook(() => useFeaturePreviewOverrides("user-1"));
+    expect(result.current.overrides).toEqual({ updates: true });
+
+    act(() => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+
+    expect(result.current.overrides).toEqual({});
+  });
 });
 
 describe("localStorage unavailable", () => {

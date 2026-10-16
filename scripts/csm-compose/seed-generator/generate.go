@@ -53,7 +53,8 @@ type genUser struct {
 }
 
 type genAccount struct {
-	id, name string
+	id, name  string
+	lifeCycle string
 }
 
 type genAccountContact struct {
@@ -331,18 +332,26 @@ func genAccounts(ctx context.Context, tx pgx.Tx, internalUsers []genUser, summar
 		createdOn := randRecentTime(180, 500)
 		activation := createdOn.AddDate(0, 0, -randRange(0, 30))
 
+		// Customer Health lists only accounts whose life_cycle is "Customer"
+		// (and that own at least one project). The last account is a
+		// Prospect, with projects and cases like the others, so the filter
+		// is exercised rather than a no-op.
+		lifeCycle := "Customer"
+		if i == numAccounts-1 {
+			lifeCycle = "Prospect"
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO account (id, created_on, updated_on, created_by, updated_by,
 				name, number, sf_id, activation_date, customer_success_manager_id,
-				technical_owner_id, account_manager_id)
-			VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6,$7,$8,$9)
+				technical_owner_id, account_manager_id, life_cycle)
+			VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6,$7,$8,$9,$10)
 			ON CONFLICT (id) DO NOTHING`,
 			id, createdOn, name, number, sfID, activation.Format("2006-01-02"),
-			csm.id, techOwner.id, acctMgr.id); err != nil {
+			csm.id, techOwner.id, acctMgr.id, lifeCycle); err != nil {
 			return nil, err
 		}
 		summary.accounts++
-		out = append(out, genAccount{id: id, name: name})
+		out = append(out, genAccount{id: id, name: name, lifeCycle: lifeCycle})
 	}
 	return out, nil
 }
@@ -392,13 +401,24 @@ func genProjects(ctx context.Context, tx pgx.Tx, accounts []genAccount, summary 
 			sfID := fmt.Sprintf("SF-PROJ-GEN-%02d-%d", ai+1, pi+1)
 			name := acc.name + " " + pick([]string{"Production", "Platform", "Core Services", "Integration"})
 			createdOn := randRecentTime(60, 400)
+			// Spread onboarding across the states the customer-health
+			// dashboard's go-live flag reads, so a local run shows both
+			// live and not-yet-live projects.
+			onboardingStatus := pick([]string{"COMPLETED", "COMPLETED", "IN_PROGRESS", "NOT_STARTED"})
+			goLivePlan := createdOn.AddDate(0, 0, randRange(30, 180))
+			var goLive *string
+			if onboardingStatus == "COMPLETED" {
+				d := notAfterNow(goLivePlan).Format("2006-01-02")
+				goLive = &d
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO project (id, created_on, updated_on, created_by, updated_by,
-					key, sf_id, name, account_id, is_active, start_date, project_type_id)
-				VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6,true,$7,$8)
+					key, sf_id, name, account_id, is_active, start_date, project_type_id,
+					onboarding_status, onboarding_go_live_plan_date, onboarding_go_live_date)
+				VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6,true,$7,$8,$9,$10,$11)
 				ON CONFLICT (id) DO NOTHING`,
 				id, createdOn, key, sfID, name, acc.id, createdOn.Format("2006-01-02"),
-				pick(projectTypeIDs)); err != nil {
+				pick(projectTypeIDs), onboardingStatus, goLivePlan.Format("2006-01-02"), goLive); err != nil {
 				return nil, err
 			}
 			summary.projects++
@@ -511,13 +531,20 @@ func genProducts(ctx context.Context, tx pgx.Tx, summary *genSummary) ([]genProd
 		vs := pickN(productVersionNumbers, 2)
 		for _, v := range vs {
 			vid := newUUID()
+			supportStatus := pick([]string{"AVAILABLE", "EXTENDED", "DEPRECATED"})
+			// A DEPRECATED version is already past its support EOL, so any
+			// deployment still running it trips the customer-health EOL flag.
+			eolDate := time.Now().AddDate(0, 0, randRange(120, 720))
+			if supportStatus == "DEPRECATED" {
+				eolDate = time.Now().AddDate(0, 0, -randRange(30, 400))
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO product_version (id, created_on, updated_on, created_by, updated_by,
-					version, product_id, current_support_status, release_date)
-				VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6)
+					version, product_id, current_support_status, release_date, support_eol_date)
+				VALUES ($1,$2,$2,'seed-generator','seed-generator',$3,$4,$5,$6,$7)
 				ON CONFLICT (id) DO NOTHING`,
-				vid, createdOn, v, id, pick([]string{"AVAILABLE", "EXTENDED", "DEPRECATED"}),
-				createdOn.Format("2006-01-02")); err != nil {
+				vid, createdOn, v, id, supportStatus,
+				createdOn.Format("2006-01-02"), eolDate.Format("2006-01-02")); err != nil {
 				return nil, nil, err
 			}
 			summary.productVersions++

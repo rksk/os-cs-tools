@@ -32,11 +32,13 @@ import "encoding/json"
 type Type string
 
 const (
-	TypeCaseCreated     Type = "case.created"
-	TypeCommentAdded    Type = "case.comment_added"
-	TypeStatusChanged   Type = "case.status_changed"
-	TypeCaseAssigned    Type = "case.assigned"
-	TypeIncidentCreated Type = "incident.created"
+	TypeCaseCreated      Type = "case.created"
+	TypeCommentAdded     Type = "case.comment_added"
+	TypeStatusChanged    Type = "case.status_changed"
+	TypeCaseAssigned     Type = "case.assigned"
+	TypeSeverityChanged  Type = "case.severity_changed"
+	TypeCaseAcknowledged Type = "case.acknowledged"
+	TypeIncidentCreated  Type = "incident.created"
 )
 
 // Envelope is the wire shape of every record on the case-events topic.

@@ -67,11 +67,18 @@ type LadderState struct {
 	// reason call i was given up on rather than retried. Only a PERMANENT
 	// failure lands here — the call provider rejecting the request itself
 	// (a 4xx: an invalid or unverified number, a malformed document). A
-	// transient failure (network, 5xx) is not recorded at all; its wake entry
+	// transient failure (network, 5xx, 429) is not recorded; its wake entry
 	// stays and the next tick retries it. Without this a single bad number on
 	// a roster was retried every tick for the ladder's whole life, and since
 	// that call was never "placed", the ladder could never complete.
 	Failed []string `json:"failed,omitempty"`
+	// CardPending is parallel to Plan.Calls too, and set only on a rung that
+	// both rang and posted: CardPending[i] is true once call i has its outcome
+	// (placed, or given up on) while its chat card failed transiently and is
+	// still owed. The wake entry stays and the next tick posts the card alone:
+	// re-dialling somebody because a webhook blinked is the wrong way round.
+	// Absent, as on every ladder stored before it existed, nothing is owed.
+	CardPending []bool `json:"cardPending,omitempty"`
 	// Cancelled is set when an acknowledgement arrived, before the remaining
 	// wake entries are dropped, so a retry of the cancellation knows the
 	// dropping half already happened.
@@ -105,12 +112,38 @@ type LadderState struct {
 // AllSettled reports whether every call in the plan has reached an outcome —
 // dialled, or given up on. It is what decides the ladder has run its course.
 func (s LadderState) AllSettled() bool {
-	for i, done := range s.Placed {
-		if !done && s.failure(i) == "" {
+	for i := range s.Placed {
+		if s.owed(i) {
 			return false
 		}
 	}
 	return true
+}
+
+// owed reports whether call i still has something to deliver: the call
+// itself, or the card it is owed (CardPending).
+func (s LadderState) owed(i int) bool {
+	return (!s.Placed[i] && s.failure(i) == "") || s.cardPending(i)
+}
+
+// cardPending reports whether call i is still owed its chat card.
+func (s LadderState) cardPending(i int) bool {
+	return i < len(s.CardPending) && s.CardPending[i]
+}
+
+// setCardPending records whether call i is still owed its card. Clearing one
+// never recorded writes nothing, so a ladder that never owed a card stores
+// exactly what it did before CardPending existed.
+func (s *LadderState) setCardPending(i int, owed bool) {
+	if !owed && i >= len(s.CardPending) {
+		return
+	}
+	if len(s.CardPending) < len(s.Placed) {
+		grown := make([]bool, len(s.Placed))
+		copy(grown, s.CardPending)
+		s.CardPending = grown
+	}
+	s.CardPending[i] = owed
 }
 
 // failure is the recorded permanent-failure reason for call i, or "".

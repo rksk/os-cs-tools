@@ -4604,6 +4604,61 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/volume-trend:
+    post:
+      summary: Day-bucketed case-volume trend (opened vs. closed), for a dashboard chart.
+      description: >-
+        Returns exactly two series, "Opened" (by created date) and "Closed"
+        (by closed date), one point per UTC calendar day over a trailing
+        window (30 days by default). Deliberately narrow compared to the
+        aggregate operation's open-ended groupBy: this backs exactly one
+        chart, not a platform.
+      operationId: caseVolumeTrend
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseVolumeTrendRequest'
+      responses:
+        "200":
+          description: Daily opened/closed case counts for the requested window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseVolumeTrendResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Case volume trend is only available to internal users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: >-
+            Case volume trend is only supported for the Postgres data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /cases/feedback/search:
     post:
       summary: >-
@@ -4803,7 +4858,13 @@ paths:
 
   /cases/{id}/tags:
     post:
-      summary: Attach a free-text tag to a support case.
+      summary: Attach a free-text tag to a support case or a change request.
+      description: >-
+        The id is a work item id: a case-like work item's, or a change request's (the CSM
+        portal tags change requests through this same route; a change request hidden from a
+        customer caller is 404 here as on every other by-id path). On the dual-write data
+        source a case's tag is mirrored to the previous system; a change request's is not
+        (Postgres-only).
       operationId: addCaseTag
       parameters:
         - name: id
@@ -4812,7 +4873,7 @@ paths:
           schema:
             type: string
             format: uuid
-          description: Case UUID.
+          description: Work item UUID (a case-like work item or a change request).
       requestBody:
         required: true
         content:
@@ -4853,7 +4914,11 @@ paths:
 
   /cases/{id}/tags/{tagId}:
     delete:
-      summary: Detach a tag from a support case.
+      summary: Detach a tag from a support case or a change request.
+      description: >-
+        The id is a work item id: a case-like work item's or a change request's, as for
+        POST /cases/{id}/tags. A change request's tag removal is never mirrored to the
+        previous system.
       operationId: removeCaseTag
       parameters:
         - name: id
@@ -4862,7 +4927,7 @@ paths:
           schema:
             type: string
             format: uuid
-          description: Case UUID.
+          description: Work item UUID (a case-like work item or a change request).
         - name: tagId
           in: path
           required: true
@@ -7098,7 +7163,9 @@ paths:
         whatever that engineer held, because the roster is one slot per person
         per day. A day the window is not worked on — a weekday rotation landing
         on a Saturday — is skipped rather than refused, and reported back in
-        `skippedDates`. The whole range is one transaction.
+        `skippedDates`. The whole range is one transaction. It replaces only
+        that engineer's own rows: an SRE tier somebody else holds is refused
+        with 409, never taken from them.
       operationId: applyScheduleRange
       requestBody:
         required: true
@@ -7133,6 +7200,17 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: >
+            Nothing was applied. Either a day clashes with a turn of another
+            team, or somebody else already holds the SRE tier being set (the
+            same zone, tier and day -- per team, or across every team of the
+            rota on a window shared across teams, such as SaaS TZ3, the night
+            cover). The message names the holder; take them off it first.
           content:
             application/json:
               schema:
@@ -7453,6 +7531,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /team-schedule/rotas/{code}/night-crew:
+    get:
+      summary: The TZ3 people each month of a rota was generated with.
+      description: >
+        The people a lead chose for TZ3 (the SaaS night cover, one crew for
+        Apollo and Artemis) in "Generate month", as each month's last real
+        generation recorded them. The Month roster lists them under the night
+        cover instead of under their team. Every month from..to is listed; a
+        month with nobody chosen has an empty crew. Only SRE_SAAS has one. At
+        most 12 months at once. Internal staff only.
+      operationId: getRotaNightCrew
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            example: SRE_SAAS
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "2026-10"
+          description: First month, YYYY-MM.
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "2026-12"
+          description: Last month, YYYY-MM; not before from.
+      responses:
+        "200":
+          description: The chosen TZ3 people, month by month.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotaNightCrewResponse'
+        "400":
+          description: A bad from or to, to before from, or more than 12 months.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: A rota with no night crew (anything but SRE_SAAS).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /team-schedule/absences/apply:
     post:
       summary: Mark one engineer away across a span, or bring them back over it.
@@ -7628,22 +7775,21 @@ paths:
     get:
       summary: Which teams the caller may edit.
       description: >
-        The registry keys of every team this caller leads. An empty list is a
-        valid answer for somebody who leads nothing; the portal uses it to decide
-        which rows to offer an edit control on.
+        The registry keys of every team this caller may edit: teams they lead,
+        every team in a family they are rota admin for, and teams they are the
+        rota marker for. An empty list is a valid answer for somebody who may
+        edit nothing; the portal uses it to decide which rows to offer an edit
+        control on. markerOnlyTeamKeys are the teams held only as rota marker:
+        the caller may mark their days but may not generate the rota or change
+        the shared tags.
       operationId: getMyLeadTeams
       responses:
         "200":
-          description: The caller's lead teams.
+          description: The caller's editable teams.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  teamKeys:
-                    type: array
-                    items:
-                      type: string
+                $ref: '#/components/schemas/RotaEditTeams'
         "401":
           description: Unauthenticated.
           content:
@@ -7658,6 +7804,270 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/rota-access:
+    get:
+      summary: Who may change the rotas beyond the team leads.
+      description: >
+        The Team Schedule's Rota access tab: every rota admin (cre_rota_admin,
+        sre_rota_admin, sme_rota_admin) and the rota markers of the families
+        the caller may manage, with what the caller may change. A CSM Portal
+        admin -- a token role listed in AUTH_ADMIN_ROLES, the same setting the
+        portal uses -- manages everything; a rota admin manages their own family's
+        markers. Anybody else internal gets an empty answer (200), which is how
+        the portal decides not to show the tab. Needs a user token.
+      operationId: getRotaAccess
+      responses:
+        "200":
+          description: The grants the caller may see, and what they may change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotaAccess'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, or no user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/rota-access/admins/{family}/{userId}:
+    put:
+      summary: Make somebody a rota admin for one family.
+      description: >
+        Grants the family's rota admin role: the holder may edit every team in
+        that family. CSM admin only. The person must be active internal staff --
+        a rota role never makes anyone internal. Audited.
+      operationId: grantRotaAdmin
+      parameters:
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [CRE, SRE, SME]
+          description: The rota family (case-insensitive).
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      responses:
+        "204":
+          description: Done. Granting what is already held, or removing what is not, changes nothing and is not an error.
+        "400":
+          description: Bad request — not CRE, SRE or SME, the user id is not a UUID, or the person is not active internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not a CSM admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Take a family's rota admin role away.
+      description: >
+        Removes every copy of the role from the person. CSM admin only. Audited.
+      operationId: revokeRotaAdmin
+      parameters:
+        - name: family
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [CRE, SRE, SME]
+          description: The rota family (case-insensitive).
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      responses:
+        "204":
+          description: Done. Granting what is already held, or removing what is not, changes nothing and is not an error.
+        "400":
+          description: Bad request — not CRE, SRE or SME, or the user id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not a CSM admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/rota-access/markers/{teamKey}/{userId}:
+    put:
+      summary: Make somebody a team's rota marker.
+      description: >
+        A rota marker may mark the team's rota -- rotations, leave and
+        allocations -- and nothing else: not the shared tags, not Generate month,
+        not the paging chain. A CSM admin may name any team's marker, a rota
+        admin their own family's. The person must be active internal staff and a
+        member of the team; the grant stops counting when they leave it. Audited.
+      operationId: grantRotaMarker
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The team's registry key.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      responses:
+        "204":
+          description: Done. Granting what is already held, or removing what is not, changes nothing and is not an error.
+        "400":
+          description: Bad request — the user id is not a UUID, or the person is not active internal staff on the team.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Neither a CSM admin nor the rota admin for the team's family.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: The team is not on the schedule, or the schedule routes are not registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Take a team's rota marker away.
+      description: >
+        Same permission as granting. The person need not still be on the team. Audited.
+      operationId: revokeRotaMarker
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The team's registry key.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      responses:
+        "204":
+          description: Done. Granting what is already held, or removing what is not, changes nothing and is not an error.
+        "400":
+          description: Bad request — the user id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Neither a CSM admin nor the rota admin for the team's family.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: The team is not on the schedule, or the schedule routes are not registered.
           content:
             application/json:
               schema:
@@ -8350,6 +8760,576 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /team-schedule/case-alerts/settings:
+    get:
+      summary: The Case Alerts chat rooms, group routes and ladder values.
+      description: >
+        The settings section of the Team Schedule's Alert Settings tab: the chat
+        rooms, the ServiceNow group routes and the other ladder values the
+        paging ladders use, the saved and running revision, what the alert
+        service reported it runs with, and what the caller may change.
+        Webhook URLs are never returned, only a hint. Each family's settings
+        are sent only to those who may change them: CRE's to the CRE rota
+        admin and the CRE and CS heads, SRE's to the SRE rota admin, SME's to
+        the SME rota admin, all three to a CSM admin (AUTH_ADMIN_ROLES) or
+        portal admin. Anybody else internal gets an empty answer (200,
+        canManage.view false), which is how the portal decides not to show the
+        section. Needs a user token. csm-notification-service uses everything
+        saved unless PAGING_CONFIG_SOURCE is off.
+      operationId: getCaseAlertSettings
+      responses:
+        "200":
+          description: The settings, and what the caller may change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertSettings'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, or no user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/rooms:
+    put:
+      summary: Create or change a chat room.
+      description: >
+        A ladder's shared room (no teamKey) or an SRE team's own room; one room
+        per scope, so saving a scope again changes it. Audited.
+      operationId: saveCaseAlertRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCaseAlertRoomRequest'
+      responses:
+        "200":
+          description: The room as saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertChatRoom'
+        "400":
+          description: Bad request — not CRE or SRE, no label, a team room that is not an SRE team of the Team Schedule, or teamless on a shared room.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/rooms/{roomId}:
+    delete:
+      summary: Remove a chat room.
+      description: >
+        Removes the room and its webhook URL; the ladder then uses the file
+        mount's room again. Audited.
+      operationId: deleteCaseAlertRoom
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The room.
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          description: Bad request — the room id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such room.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/rooms/{roomId}/webhook:
+    put:
+      summary: Set a chat room's webhook URL.
+      description: >
+        Write-only: the URL is stored as saved (no key needed), never audited
+        and never returned; the room shows a hint instead. It must be a Google Chat incoming webhook
+        (https://chat.googleapis.com/v1/spaces/{space}/messages with key and
+        token). Replacing it clears the last test card.
+      operationId: setCaseAlertWebhook
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The room.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCaseAlertWebhookRequest'
+      responses:
+        "200":
+          description: The room, with its new hint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertChatRoom'
+        "400":
+          description: Bad request — not a Google Chat webhook URL, or the room id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such room.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/rooms/{roomId}/test:
+    post:
+      summary: Send a test card to a chat room.
+      description: >
+        Posts a short card to the room's saved webhook URL now and records
+        whether Google Chat took it (delivered or failed). One test per room
+        every two minutes.
+      operationId: sendCaseAlertTestCard
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The room.
+      responses:
+        "200":
+          description: The test's outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertTestCardResponse'
+        "400":
+          description: Bad request — the room id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such room.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: The room has no URL saved here, or its URL was saved under another key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: A test card was sent less than two minutes ago.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/routes:
+    put:
+      summary: Create or change a group route.
+      description: >
+        Sends a ServiceNow group's alerts to a team of the ladder's family, or
+        (SRE only) to a default rota. One route per group and ladder, so saving
+        a group again changes it. Audited.
+      operationId: saveCaseAlertRoute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCaseAlertRouteRequest'
+      responses:
+        "200":
+          description: The route as saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertGroupRoute'
+        "400":
+          description: Bad request — not CRE or SRE, no group name, not exactly one of teamKey and rotaCode, a team of another family, or a rota that is not an active SRE rota.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/routes/{routeId}:
+    delete:
+      summary: Remove a group route.
+      description: The group is routed by the file mount again. Audited.
+      operationId: deleteCaseAlertRoute
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The route.
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          description: Bad request — the route id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such route.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/values:
+    put:
+      summary: Save ladder values.
+      description: >
+        Saves one or more values of one ladder at once. Each key is a key of
+        csm-notification-service's paging file under cre or sre (teams.abts,
+        timing.interval, heads.cre, ...) and its value is in the file's shape.
+        Every value is checked against its key's limits first, then all are
+        saved together, so a refusal saves none. The switches, channel, safety
+        caps, phones.source and test calls are not among the keys: they stay
+        in the file. A saved value replaces that key of the file when the alert
+        service runs with PAGING_CONFIG_SOURCE=db. Audited.
+      operationId: saveCaseAlertValues
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCaseAlertValuesRequest'
+      responses:
+        "200":
+          description: The ladder's saved values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertValuesResponse'
+        "400":
+          description: Bad request — not CRE or SRE, no values or more than 50, a key that cannot be saved here or is the other ladder's, or a value outside its limits. The message names the key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/values/{valueId}:
+    delete:
+      summary: Remove a saved ladder value.
+      description: The ladder uses the file's value for that key again. Audited.
+      operationId: deleteCaseAlertValue
+      parameters:
+        - name: valueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The saved value.
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          description: Bad request — the value id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, no user token, or not allowed to change this ladder's settings (a CSM admin or portal admin may change both ladders; the CRE or SRE rota admin their own).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such saved value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/runtime:
+    get:
+      summary: The Case Alerts settings with webhook URLs, for csm-notification-service.
+      description: >
+        The enabled rooms with their URL, and the enabled routes. For an
+        internal service client (csm-notification-service's; only those
+        CASE_ALERTS_RUNTIME_CLIENT_IDS names, when set), never a person's
+        token. A room whose URL cannot be read (sealed before 0237 under a key
+        this deployment does not have) is left out, so the ladder keeps the
+        file's room.
+      operationId: getCaseAlertRuntimeSettings
+      responses:
+        "200":
+          description: What the ladders use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAlertRuntimeSettings'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "A person's token, or a client CASE_ALERTS_RUNTIME_CLIENT_IDS (when set) does not list."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team-schedule/case-alerts/settings/applied:
+    put:
+      summary: Report what csm-notification-service loaded.
+      description: >
+        Sent by csm-notification-service after start-up: the revision it
+        loaded, its PAGING_CONFIG_SOURCE mode, and a summary without URLs. The
+        Alert Settings tab shows it as the running revision.
+      operationId: recordCaseAlertSettingsApplied
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseAlertAppliedReport'
+      responses:
+        "204":
+          description: Recorded.
+        "400":
+          description: Bad request — mode not off, shadow or db, a negative revision, or a summary over 32 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "A person's token, or a client CASE_ALERTS_RUNTIME_CLIENT_IDS (when set) does not list."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the schedule routes register only with a database pool.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /groups/search:
     post:
       summary: Search groups.
@@ -11694,6 +12674,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /accounts/{id}/health-detail:
+    get:
+      summary: Return the per-project customer-health breakdown of an account.
+      description: >-
+        For every project of the account (newest first): recent cases grouped by
+        priority, open migration engagements that are delayed or abandoned, deployed
+        products past their support end date, the active deployments, the escalations
+        on the project's work items, and the go-live status. Windows and rules are those
+        of the health summary on POST /accounts/search (recent cases 180 days; delayed and
+        abandoned migrations 60 and 180 days; a work item is a case unless it is an
+        announcement, except for escalations, which count on announcements too).
+        Computed in a fixed number of statements however many projects and cases the
+        account has. Internal callers only. Postgres data source only; the other data
+        source answers 400.
+      operationId: getAccountHealthDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The account's health detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealthDetail'
+        "400":
+          description: Malformed account id, or the data source does not support it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No account with this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /accounts/health-summaries/search:
     post:
       summary: Return GetAccountHealthSummary for many accounts in one query, keyed by account id.
@@ -14146,15 +15174,44 @@ components:
         nightCrew:
           type: object
           description: >
-            Team key -> the people chosen to work that team's TZ3 for the month.
-            Their TZ3 L1, L2 and L3 go round them night by night (weekends
-            included) and they work no other zone; a night they are short is
-            filled from the team and warned about. A team left out keeps the
-            usual nights. Each id must be a member of that team (400 otherwise).
+            Team key -> the people chosen to work TZ3 for the month. TZ3 is one
+            crew for the whole rota (the night cover for every team): every
+            team's choices together are that crew, and the rota's single TZ3
+            L1, L2 and L3 go round them night by night (weekends included).
+            They work no other zone, and nobody else is put on TZ3: a tier they
+            cannot cover on a night is left empty and warned about. With nobody
+            chosen, nights are drawn as usual. Each id must be a member of the
+            team it is listed under (400 otherwise). A real (not dryRun) run
+            records the choice for the month, replacing the month's earlier one
+            (see GET /team-schedule/rotas/{code}/night-crew).
           additionalProperties:
             type: array
             items: {type: string, format: uuid}
           example: {apollo: ["6ed08bc9-1b20-6690-182c-0dc5604bcb6b"]}
+    RotaNightCrewResponse:
+      type: object
+      required: [rotaCode, months]
+      properties:
+        rotaCode:
+          type: string
+          example: SRE_SAAS
+        months:
+          type: array
+          items:
+            type: object
+            required: [month, crew]
+            properties:
+              month:
+                type: string
+                example: "2026-11"
+              crew:
+                type: array
+                items:
+                  type: object
+                  required: [userId, teamKey]
+                  properties:
+                    userId: {type: string, format: uuid}
+                    teamKey: {type: string, example: apollo}
     GeneratedRotaTurn:
       type: object
       properties:
@@ -14983,6 +16040,299 @@ components:
         classification:
           type: string
           description: Filter by account classification (e.g. enterprise).
+        ownerEmail:
+          type: string
+          description: >-
+            Keep accounts where this email is the technical owner, account manager or
+            renewal account manager (any of the three), case-insensitive exact match.
+            Postgres data source only.
+        lifeCycle:
+          type: string
+          description: >-
+            Exact match on the account life cycle (e.g. Customer, Partner, Prospect).
+            Postgres data source only.
+        hasProject:
+          type: boolean
+          description: When true, only accounts with at least one project. Postgres data source only.
+        risks:
+          type: array
+          items:
+            type: string
+            enum:
+              - hasNoGoLive
+              - hasGoneLive
+              - hasRecentCases
+              - noSupportCases6mo
+              - hasEolProduct
+              - hasAbandonedMigrations
+              - hasMigrationDelays
+              - hasRecentEscalations
+          description: >-
+            Customer-health risk filter, OR semantics: keep accounts exhibiting any listed
+            key. An unrecognized key matches nothing; blank entries are ignored. Applied
+            before pagination, so total counts only the matching accounts. Postgres data
+            source only; the ServiceNow data source answers 400.
+            hasNoGoLive: some project has no go-live date, the account was activated on or
+            after 2024-01-01 and at least 6 whole months (days / 30.4375) have passed.
+            hasGoneLive: every project has a go-live date or the account was activated
+            before 2024-01-01 (projects pending a go-live decision are neither).
+            hasRecentCases: a case, service request, engagement or security report analysis
+            created in the last 180 days. noSupportCases6mo: the negation of hasRecentCases.
+            hasEolProduct: a deployed product (not deactivated) on any deployment of any
+            project, deployment active or not, whose product version support end date has
+            passed. hasAbandonedMigrations / hasMigrationDelays: a migration engagement not
+            closed and created at least 180 / 60 days ago. hasRecentEscalations: an
+            escalation created in the last 90 days on one of the account's work items.
+        subRegion:
+          type: array
+          items:
+            type: string
+          description: >-
+            Keep accounts whose sub-region (not region) equals any listed value, exact
+            match. Postgres data source only.
+        product:
+          type: string
+          description: >-
+            Keep accounts with a deployed product of this name (case-insensitive) on any
+            deployment of any project, deployment active or not; a deactivated deployed
+            product does not count. Postgres data source only.
+        abtTeam:
+          type: string
+          description: >-
+            Keep accounts whose CRE or SRE team name equals this value, case-insensitive.
+            Postgres data source only.
+        healthStatus:
+          type: string
+          description: >-
+            Keep accounts whose aggregated project health status is this value. Any other
+            value matches nothing. An account with no project health rows matches none of
+            the three values. Postgres data source only.
+          enum:
+            - at_risk
+            - healthy
+            - to_be_reviewed
+        includeHealthSummary:
+          type: boolean
+          description: >-
+            When true, every returned account carries healthSummary. When false or absent
+            the response is unchanged. Postgres data source only.
+
+    AccountSearchHealthSummary:
+      type: object
+      description: >-
+        Customer-health flags and overall health status of one account. Present only when
+        the search set includeHealthSummary.
+      required:
+        - goLiveStatus
+        - hasRecentCases
+        - hasEolProduct
+        - hasAbandonedMigrations
+        - hasMigrationDelays
+        - hasRecentEscalations
+        - noSupportCases6mo
+        - healthStatus
+      properties:
+        goLiveStatus:
+          type: object
+          required: [status, isRisk, state]
+          properties:
+            status:
+              type: string
+              description: Display text, e.g. "Has Gone Live" or "Hasn't Gone Live Since 3 months".
+            isRisk:
+              type: boolean
+              description: True only when state is failure.
+            state:
+              type: string
+              enum: [success, pending, failure]
+        hasRecentCases:
+          type: boolean
+        hasEolProduct:
+          type: boolean
+        hasAbandonedMigrations:
+          type: boolean
+        hasMigrationDelays:
+          type: boolean
+        hasRecentEscalations:
+          type: boolean
+        noSupportCases6mo:
+          type: boolean
+        healthStatus:
+          type: string
+          enum: [at_risk, healthy, to_be_reviewed]
+          description: at_risk if any project is, else healthy if every project row is, else to_be_reviewed (also when the account has no health rows).
+
+    AccountHealthDetail:
+      type: object
+      description: Per-project customer-health breakdown of one account.
+      required: [accountName, customerProjects]
+      properties:
+        accountName:
+          type: string
+        customerProjects:
+          type: array
+          description: Every project of the account, newest first.
+          items:
+            $ref: '#/components/schemas/ProjectHealthDetail'
+
+    ProjectHealthDetail:
+      type: object
+      description: One project's health flags and the items behind them. Every array is present, empty when nothing qualifies.
+      required:
+        - id
+        - name
+        - hasRecentCases
+        - detailedRecentCases
+        - totalRecentCases
+        - hasAbandonedCases
+        - detailedAbandonedCases
+        - isUsingEolProduct
+        - softwareModel
+        - deployments
+        - hasMigrationDelays
+        - detailedMigrationDelays
+        - hasEscalatedCases
+        - detailedEscalatedCases
+        - goLiveStatus
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        hasRecentCases:
+          type: boolean
+        detailedRecentCases:
+          type: array
+          description: >-
+            Case-like work items (never announcements) created in the last 180 days,
+            grouped by priority in the order each priority first appears, newest case first.
+          items:
+            $ref: '#/components/schemas/HealthCasePriorityGroup'
+        totalRecentCases:
+          type: integer
+        hasAbandonedCases:
+          type: boolean
+        detailedAbandonedCases:
+          type: array
+          description: Open migration engagements created at least 180 days ago, newest first.
+          items:
+            $ref: '#/components/schemas/HealthCaseLink'
+        isUsingEolProduct:
+          type: boolean
+        softwareModel:
+          type: array
+          description: >-
+            Deployed products (deactivated ones excluded) past their support end date, on
+            any deployment of the project, active or not; one entry per product version.
+          items:
+            $ref: '#/components/schemas/HealthEolProduct'
+        deployments:
+          type: array
+          description: The project's active deployments, newest first.
+          items:
+            $ref: '#/components/schemas/HealthDeploymentRef'
+        hasMigrationDelays:
+          type: boolean
+        detailedMigrationDelays:
+          type: array
+          description: Open migration engagements created at least 60 days ago, newest first (includes the abandoned ones).
+          items:
+            $ref: '#/components/schemas/HealthCaseLink'
+        hasEscalatedCases:
+          type: boolean
+        detailedEscalatedCases:
+          type: array
+          description: Every escalation on a work item of the project, newest first.
+          items:
+            $ref: '#/components/schemas/HealthCaseLink'
+        goLiveStatus:
+          $ref: '#/components/schemas/AccountGoLiveStatus'
+
+    AccountGoLiveStatus:
+      type: object
+      required: [status, isRisk, state]
+      properties:
+        status:
+          type: string
+          description: Display text, e.g. "Has Gone Live" or "Hasn't Gone Live Since 3 months".
+        isRisk:
+          type: boolean
+          description: True only when state is failure.
+        state:
+          type: string
+          enum: [success, pending, failure]
+
+    HealthCasePriorityGroup:
+      type: object
+      required: [priority, count, cases]
+      properties:
+        priority:
+          type: string
+          description: The case severity (catastrophic, critical, high, medium, low), or "Unspecified" when there is none.
+        count:
+          type: integer
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthCaseInfo'
+
+    HealthCaseInfo:
+      type: object
+      required: [id, number]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+
+    HealthCaseLink:
+      type: object
+      description: >-
+        A case (id, number), or an escalation and the case it is on (escalationId,
+        escalationNumber, number). A field that does not apply is omitted.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The case id.
+        number:
+          type: string
+          description: The case number.
+        escalationId:
+          type: string
+          format: uuid
+        escalationNumber:
+          type: string
+          description: Repeats the case number; an escalation has no number of its own.
+
+    HealthEolProduct:
+      type: object
+      required: [name, eolDate, deployments]
+      properties:
+        name:
+          type: string
+          description: Product name and version.
+        eolDate:
+          type: string
+          format: date-time
+          description: Support end date, midnight UTC.
+        deployments:
+          type: array
+          description: The distinct deployments running this product version.
+          items:
+            $ref: '#/components/schemas/HealthDeploymentRef'
+
+    HealthDeploymentRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
 
     AccountView:
       type: object
@@ -15059,6 +16409,10 @@ components:
           description: >-
             Whether this account has a primary partner account set. Postgres approximates
             this as having any partner in account_relationship.
+        healthSummary:
+          description: Present only when the search set filters.includeHealthSummary.
+          allOf:
+            - $ref: '#/components/schemas/AccountSearchHealthSummary'
 
     SNSupportTierRef:
       type: object
@@ -15504,6 +16858,13 @@ components:
           type: string
           nullable: true
           description: Hyphenated Title Case, e.g. "In-Progress".
+        onboardingOwner:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PersonRef'
+          description: >
+            The person assigned to run this project's onboarding. Null when no
+            owner is assigned.
         goLiveDate:
           type: string
           format: date-time
@@ -17357,6 +18718,58 @@ components:
             remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
+    CaseVolumeTrendRequest:
+      type: object
+      properties:
+        filters:
+          $ref: '#/components/schemas/SearchCasesFilters'
+        days:
+          type: integer
+          description: >-
+            Size of the trailing window, ending today (UTC). Optional;
+            defaults to 30 when omitted. Must be between 1 and 90.
+
+    CaseVolumeTrendPoint:
+      type: object
+      required: [date, count]
+      properties:
+        date:
+          type: string
+          format: date
+          description: UTC calendar day (YYYY-MM-DD).
+        count:
+          type: integer
+
+    CaseVolumeTrendSeries:
+      type: object
+      required: [label, points]
+      properties:
+        label:
+          type: string
+          description: '"Opened" or "Closed".'
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseVolumeTrendPoint'
+          description: >-
+            One point per day in the requested window, oldest first. A day
+            with no matching cases is still present, with count 0.
+
+    CaseVolumeTrendResponse:
+      type: object
+      required: [days, series]
+      description: >-
+        The result of a day-bucketed case-volume trend query: always exactly
+        two series, "Opened" (by created date) and "Closed" (by closed date).
+      properties:
+        days:
+          type: integer
+          description: The size of the window actually returned.
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseVolumeTrendSeries'
+
     UserReference:
       type: object
       nullable: true
@@ -19169,6 +20582,20 @@ components:
               type: array
               items:
                 type: string
+            tags:
+              type: array
+              nullable: true
+              items:
+                $ref: '#/components/schemas/Tag'
+              description: >-
+                The tags attached to the change request's work item -- the same work_item_tag
+                rows, read the same way, as a case's `tags`, and managed through the same
+                POST /cases/{id}/tags, DELETE /cases/{id}/tags/{tagId} and POST /tags/search,
+                which take a work item id and accept a change request's. Internal bookkeeping:
+                an array (empty when none) for an internal (unrestricted) caller on the
+                PostgreSQL data source; null for a customer's read, on the ServiceNow data
+                source, and when the lookup failed (the rest of the detail is still valid then).
+                A tag added to a change request is never mirrored to the previous system.
             deployments:
               type: array
               items:
@@ -20849,7 +22276,7 @@ components:
           description: Issue-type label to apply on GitHub (e.g. "Type/Patch", "Type/Incident").
         priorityLevel:
           type: string
-          description: Priority label to apply when issueTypeLabel is "Type/Incident".
+          description: GitHub priority label for a Discussion. CSM maps this to Priority/Critical(P1), Priority/High(P2), or Priority/Medium(P3) and also applies Type/Incident.
 
     CaseGithubIssueDetail:
       type: object
@@ -21241,6 +22668,14 @@ components:
             How many people this window is meant to carry, where a target has
             been agreed. Null where none has -- every SRE window today.
         crossesMidnight: { type: boolean }
+        sharedAcrossTeams:
+          type: boolean
+          description: >-
+            True when each tier of this window is held by one person for the
+            whole rota rather than one per team -- SaaS TZ3, the night cover
+            for every SaaS team. Saving the roster (POST
+            /team-schedule/assignments/apply) refuses a second holder of a
+            tier (409); assignment create and update do not check it yet.
         colourToken: { type: string }
         sortOrder: { type: integer }
     ScheduleTeam:
@@ -21841,6 +23276,93 @@ components:
             Why they are paged, for display: a CRE position ("T1 responder ·
             Vega", "Team lead · Vega", "America lead", "CRE head"), the SRE
             tiers held in the range ("L1, L2"), or the SME teams rostered on.
+    RotaEditTeams:
+      type: object
+      description: Which teams the caller may edit, and which of those only as the team's rota marker.
+      required: [teamKeys, markerOnlyTeamKeys]
+      properties:
+        teamKeys:
+          type: array
+          items:
+            type: string
+        markerOnlyTeamKeys:
+          type: array
+          items:
+            type: string
+    RotaAccess:
+      type: object
+      required: [canManage, rotaAdmins, markers]
+      properties:
+        canManage:
+          $ref: '#/components/schemas/RotaAccessRights'
+        rotaAdmins:
+          type: array
+          items:
+            $ref: '#/components/schemas/RotaAdminGrant'
+        markers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RotaMarkerGrant'
+    RotaAccessRights:
+      type: object
+      required: [rotaAdmins, markerFamilies]
+      properties:
+        rotaAdmins:
+          type: boolean
+          description: True for a CSM admin, who alone grants and removes rota admin.
+        markerFamilies:
+          type: array
+          description: The families whose teams' markers the caller may change.
+          items:
+            type: string
+            enum: [CRE, SRE, SME]
+    RotaAdminGrant:
+      type: object
+      required: [family, userId, name, email, grantedBy, grantedOn, active]
+      properties:
+        family:
+          type: string
+          enum: [CRE, SRE, SME]
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+        grantedBy:
+          type: string
+          description: Who granted it, as recorded on the grant (empty when unknown).
+        grantedOn:
+          type: string
+          format: date-time
+        active:
+          type: boolean
+          description: False when the holder is not internal staff; such a grant does nothing.
+    RotaMarkerGrant:
+      type: object
+      required: [teamKey, family, userId, name, email, grantedBy, grantedOn, active]
+      properties:
+        teamKey:
+          type: string
+        family:
+          type: string
+          enum: [CRE, SRE, SME]
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+        grantedBy:
+          type: string
+        grantedOn:
+          type: string
+          format: date-time
+        active:
+          type: boolean
+          description: False once the holder has left the team or is not internal staff; the grant then does nothing.
     PagingPhone:
       type: object
       required: [masked, setBy, setAt]
@@ -21873,6 +23395,262 @@ components:
       required: [lastTestStatus]
       properties:
         lastTestStatus: { type: string, enum: [pending] }
+    CaseAlertSettings:
+      type: object
+      required: [canManage, environment, webhooksEnabled, revision, rooms, routes, values]
+      properties:
+        canManage:
+          $ref: '#/components/schemas/CaseAlertSettingsRights'
+        environment:
+          type: string
+          description: CASE_ALERTS_ENVIRONMENT, e.g. staging or production; empty when unset.
+        webhooksEnabled:
+          type: boolean
+          description: Always true since 0237 (URLs are stored as saved); kept for older pages.
+        revision:
+          $ref: '#/components/schemas/CaseAlertRevision'
+        rooms:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertChatRoom' }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertGroupRoute' }
+        values:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertLadderValue' }
+        running:
+          $ref: '#/components/schemas/CaseAlertRunning'
+        routeOptions:
+          $ref: '#/components/schemas/CaseAlertRouteOptions'
+    CaseAlertRouteOptions:
+      type: object
+      required: [groups, teams, rotas]
+      description: >
+        What a group route can be made of, so the tab offers lists instead of
+        free text: the CSM Portal teams a route can be for (a route matches the
+        assignment group by its name), the Team Schedule teams it can send the
+        alert to, and the active SRE rotas. Absent for somebody who may see
+        nothing.
+      properties:
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertTeamOption' }
+        teams:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertTeamOption' }
+        rotas:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertRotaOption' }
+    CaseAlertTeamOption:
+      type: object
+      required: [key, name, family]
+      description: A team by key, name and family.
+      properties:
+        key: { type: string, example: apollo }
+        name: { type: string, example: Apollo }
+        family: { type: string, enum: [CRE, SRE, SME] }
+    CaseAlertRotaOption:
+      type: object
+      required: [code, label]
+      description: An active SRE rota.
+      properties:
+        code: { type: string, example: SRE_SAAS }
+        label: { type: string, example: "SaaS · Apollo & Artemis" }
+    CaseAlertLadderValue:
+      type: object
+      required: [id, ladder, key, value, updatedBy, updatedOn]
+      properties:
+        id: { type: string, format: uuid }
+        ladder: { type: string, enum: [CRE, SRE, SME] }
+        key: { type: string, example: teams.abts, description: "A key of the paging file under cre or sre." }
+        value: { description: "The value in the file's shape: a list, a number, true or false, text, or a head's name and email." }
+        updatedBy: { type: string }
+        updatedOn: { type: string, format: date-time }
+    SaveCaseAlertValuesRequest:
+      type: object
+      required: [ladder, values]
+      properties:
+        ladder: { type: string, enum: [CRE, SRE, SME] }
+        values:
+          type: object
+          additionalProperties: true
+          minProperties: 1
+          maxProperties: 50
+          example: { "teams.abts": ["atlas", "vega"], "timing.interval": "5m" }
+          description: >
+            Key to value. CRE and SRE: trigger.priorities, trigger.teams,
+            trigger.excludeTeams, trigger.shifts, trigger.requireKnownTeam,
+            onLeave, teams.abtType, teams.abts. CRE: teams.americas,
+            teams.leadership, teams.teamLeadsToCall, teams.teamLeads,
+            teams.rotaMembersToCall, teams.americasWeekendRotaShifts,
+            teams.rotaTeams, teams.unassignedTeamLead,
+            teams.unassignedTeamLeadCount, heads.cre, heads.cs (name and email
+            only), alertDuty.tiers, alertDuty.perTeam,
+            acknowledgement.requireBoth. SRE: teams.defaultRota,
+            timing.initialWait (0s to 30m), timing.interval (1m to 30m),
+            timing.includeL4, unansweredChat, smeHandoffChat. SME:
+            timing.initialWait (0s to 30m), timing.interval (1m to 30m),
+            onLeave, unansweredChat, teams (Special Ops team key to SME team
+            key).
+    CaseAlertValuesResponse:
+      type: object
+      required: [values]
+      properties:
+        values:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertLadderValue' }
+    CaseAlertRunning:
+      type: object
+      required: [ladders]
+      description: What csm-notification-service reported it runs with at its last start in shadow or db mode. Absent after a start in off mode.
+      properties:
+        reportedAt: { type: string, format: date-time }
+        mode: { type: string, enum: [shadow, db] }
+        ladders:
+          type: object
+          description: Ladder (CRE, SRE) to key to its value and source. A key the file leaves unset is absent.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: object
+              required: [value, source]
+              properties:
+                value: { description: "The value in the file's shape." }
+                source: { type: string, enum: [file, saved] }
+        fileOnly:
+          type: object
+          description: >
+            Ladder (CRE, SRE) to what only the file sets, shown read-only:
+            enabled, channel, safety.maxCallsPerLadder, safety.maxLevel (absent
+            when there is no cap), safety.allowedNumbers (a count, never the
+            numbers), safety.callWithoutVerifiedLeads,
+            safety.callHeadsWithoutLowerTiers, phones.source.
+          additionalProperties:
+            type: object
+            additionalProperties: true
+    CaseAlertSettingsRights:
+      type: object
+      required: [view, roomLadders, routeLadders]
+      properties:
+        view: { type: boolean }
+        roomLadders:
+          type: array
+          description: >
+            The ladders whose rooms and values the caller may see and change: CRE for the CRE
+            rota admin and the CRE and CS heads, SRE for the SRE rota admin, SME for the SME
+            rota admin, all three for a CSM or portal admin. Another ladder's rooms, routes,
+            values and running settings are never sent.
+          items: { type: string, enum: [CRE, SRE, SME] }
+        routeLadders:
+          type: array
+          items: { type: string, enum: [CRE, SRE] }
+    CaseAlertRevision:
+      type: object
+      required: [saved]
+      properties:
+        saved: { type: integer, format: int64, description: "Moves on with every change to a room, its URL, a route or a ladder value." }
+        changedAt: { type: string, format: date-time }
+        applied: { type: integer, format: int64, description: "The revision csm-notification-service last reported it loaded." }
+        appliedAt: { type: string, format: date-time }
+        appliedMode: { type: string, enum: [off, shadow, db] }
+    CaseAlertChatRoom:
+      type: object
+      required: [id, ladder, label, enabled, teamless, hasWebhook, updatedBy, updatedOn]
+      properties:
+        id: { type: string, format: uuid }
+        ladder: { type: string, enum: [CRE, SRE, SME] }
+        teamKey: { type: string, description: "The SRE or SME team whose room it is; absent for the ladder's shared room (CRE, SRE). An SME room is always a team's." }
+        label: { type: string }
+        enabled: { type: boolean }
+        teamless: { type: boolean, description: "Also gets the cards of an incident with no SRE team of its own." }
+        channel: { type: string, enum: [log, chat, call, both], description: "A team room only: how this team's alerts go out. Absent is the ladder's channel (the alert service's file); a team never does more than its ladder." }
+        hasWebhook: { type: boolean }
+        webhookHint: { type: string, example: "spaces/AAAAabcdefg · …wxyz", description: "The space id and the last characters of the URL's token. The URL itself is never returned." }
+        webhookSetAt: { type: string, format: date-time }
+        webhookSetBy: { type: string }
+        lastTestAt: { type: string, format: date-time }
+        lastTestStatus: { type: string, enum: [delivered, failed] }
+        updatedBy: { type: string }
+        updatedOn: { type: string, format: date-time }
+    CaseAlertGroupRoute:
+      type: object
+      required: [id, ladder, groupName, enabled, updatedBy, updatedOn]
+      properties:
+        id: { type: string, format: uuid }
+        ladder: { type: string, enum: [CRE, SRE] }
+        groupName: { type: string, description: "Lower-cased, as the case or incident carries it." }
+        teamKey: { type: string }
+        rotaCode: { type: string }
+        enabled: { type: boolean }
+        updatedBy: { type: string }
+        updatedOn: { type: string, format: date-time }
+    SaveCaseAlertRoomRequest:
+      type: object
+      required: [ladder, label]
+      properties:
+        ladder: { type: string, enum: [CRE, SRE, SME] }
+        teamKey: { type: string, description: "An SRE or SME team of the Team Schedule (required for SME); omit for the ladder's shared room." }
+        label: { type: string, maxLength: 100 }
+        enabled: { type: boolean, default: true }
+        teamless: { type: boolean, default: false, description: "SRE team rooms only." }
+        channel: { type: string, enum: ["", log, chat, call, both], description: "An SRE team room only: chat, call, both or log; an empty string goes back to the ladder's. Refused on a ladder's shared room and on an SME room." }
+    SetCaseAlertWebhookRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, maxLength: 2048, description: "A Google Chat incoming webhook URL. Write-only." }
+    SaveCaseAlertRouteRequest:
+      type: object
+      required: [ladder, groupName]
+      properties:
+        ladder: { type: string, enum: [CRE, SRE] }
+        groupName: { type: string, maxLength: 255 }
+        teamKey: { type: string }
+        rotaCode: { type: string, description: "SRE only. An active SRE rota, e.g. SRE_SAAS." }
+        enabled: { type: boolean, default: true }
+    CaseAlertTestCardResponse:
+      type: object
+      required: [lastTestStatus, lastTestAt]
+      properties:
+        lastTestStatus: { type: string, enum: [delivered, failed] }
+        lastTestAt: { type: string, format: date-time }
+    CaseAlertRuntimeSettings:
+      type: object
+      required: [revision, rooms, routes, values]
+      properties:
+        revision: { type: integer, format: int64 }
+        rooms:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertRuntimeRoom' }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/CaseAlertGroupRoute' }
+        values:
+          type: array
+          items:
+            type: object
+            required: [ladder, key, value]
+            properties:
+              ladder: { type: string, enum: [CRE, SRE, SME] }
+              key: { type: string }
+              value: { description: "The value in the file's shape." }
+    CaseAlertRuntimeRoom:
+      type: object
+      required: [ladder, label, teamless, webhookUrl]
+      properties:
+        ladder: { type: string, enum: [CRE, SRE, SME] }
+        teamKey: { type: string }
+        label: { type: string }
+        teamless: { type: boolean }
+        webhookUrl: { type: string, description: "The opened webhook URL, or empty for a team room saved only for its channel. Returned only on this service-only route." }
+        channel: { type: string, enum: [log, chat, call, both], description: "A team room's own channel; absent is the ladder's." }
+    CaseAlertAppliedReport:
+      type: object
+      required: [revision, mode]
+      properties:
+        revision: { type: integer, format: int64 }
+        mode: { type: string, enum: [off, shadow, db] }
+        summary: { type: object, additionalProperties: true, description: "What was used, by name and source, at most 32 KiB. Never a URL. Its running entry ({ladders: {CRE: {key: {value, source}}}}) is shown on the tab as what is in use." }
     PagingTestResultRequest:
       type: object
       required: [status, testedAt]
@@ -23014,7 +24792,12 @@ components:
           `incident_state` is a distinct field that exists independently on
           the same incident row. Kept only for exact parity with SN's native
           incident dashboards; prefer state for general-purpose state
-          filtering.
+          filtering. The PostgreSQL data source has no separate
+          `incident_state` column, so it applies the keys to `state`
+          (1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed,
+          8 Canceled) and ANDs them with any state filter; a key with no
+          state (4, 5, ...) is a 400, and so is a state filter that shares no
+          state with the keys.
 
     SearchIncidentsRequest:
       type: object

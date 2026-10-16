@@ -35,6 +35,16 @@ var feedbackRatingLabels = map[int]string{
 	5: "Very Satisfied",
 }
 
+// feedbackReasonRatings maps each "reasons_*" bucket to the rating whose
+// recorded reasons it counts.
+var feedbackReasonRatings = map[domain.FeedbackBucket]int{
+	domain.FeedbackBucketReasonsVeryDissatisfied: 1,
+	domain.FeedbackBucketReasonsDissatisfied:     2,
+	domain.FeedbackBucketReasonsNeutral:          3,
+	domain.FeedbackBucketReasonsSatisfied:        4,
+	domain.FeedbackBucketReasonsVerySatisfied:    5,
+}
+
 const feedbackBucketErrMsg = "bucket must be one of: day, week, month, rating, reasons_very_dissatisfied, reasons_dissatisfied, reasons_neutral, reasons_satisfied, reasons_very_satisfied"
 
 // pgFeedbackService implements FeedbackService over Postgres
@@ -42,9 +52,9 @@ const feedbackBucketErrMsg = "bucket must be one of: day, week, month, rating, r
 // the customer-facing product and lands in this table via sync, so there is
 // nothing for the CSM side to write.
 //
-// The table stores rating, label and comment but not which follow-up reason
-// chips the customer ticked, so every "reasons_*" bucket aggregates to an
-// empty result (see AggregateFeedback).
+// The ticked follow-up reason chips live in work_item_feedback_reason; each
+// "reasons_*" bucket aggregates the reasons recorded on feedback of one rating
+// (see feedbackReasonRatings).
 type pgFeedbackService struct {
 	repo repository.FeedbackRepository
 }
@@ -139,7 +149,12 @@ func (s *pgFeedbackService) AggregateFeedback(ctx context.Context, req domain.Ag
 			buckets = append(buckets, domain.FeedbackBucketResult{BucketStart: label, AvgRating: row.AvgRating, Count: row.Count})
 		}
 	default:
-		// reasons_*: the reason chips are not stored in work_item_feedback.
+		// reasons_*: validFeedbackBuckets admits nothing else, so the bucket
+		// is always in feedbackReasonRatings here.
+		buckets, err = s.repo.AggregateFeedbackReasons(ctx, filter, feedbackReasonRatings[req.Bucket])
+		if err != nil {
+			return domain.AggregateFeedbackResponse{}, err
+		}
 	}
 	if buckets == nil {
 		buckets = []domain.FeedbackBucketResult{}

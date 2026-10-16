@@ -23,8 +23,8 @@ import ProductVulnerabilitiesTableHeader from "@features/security/components/Pro
 import ProductVulnerabilitiesFilters from "@features/security/components/ProductVulnerabilitiesFilters";
 import ProductVulnerabilitiesList from "@features/security/components/ProductVulnerabilitiesList";
 import {
-  PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT,
   PRODUCT_VULNERABILITIES_DEFAULT_ROWS_PER_PAGE,
+  PRODUCT_VULNERABILITIES_FETCH_ALL_REQUEST,
   PRODUCT_VULNERABILITIES_SEARCH_DEBOUNCE_MS,
 } from "@features/security/constants/securityConstants";
 import type {
@@ -33,19 +33,13 @@ import type {
 } from "@features/security/types/security";
 import { countProductVulnerabilityTableActiveFilters } from "@features/security/utils/productVulnerabilitiesTable";
 
-// Stable request object — fetches the full dataset once.
-// The BFF transparently paginates through the entity service in batches of 50.
-// Kept at module level so the React Query cache key is stable across re-renders.
-const FETCH_ALL_REQUEST = {
-  filters: {},
-  pagination: { offset: 0, limit: PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT },
-};
-
 /**
  * Product Vulnerabilities table.
  *
  * Architecture note:
- * - All ~1500 records are fetched once via a single "fetch all" request.
+ * - All ~1500 records are fetched once via a single "fetch all" request, using
+ *   the shared PRODUCT_VULNERABILITIES_FETCH_ALL_REQUEST so the vulnerability
+ *   details page resolves to the same React Query cache entry.
  * - The BFF handles batching to the entity service (which is capped at 50/request).
  * - All filtering, sorting, and pagination are performed client-side for instant response.
  */
@@ -79,7 +73,7 @@ const ProductVulnerabilitiesTable = ({
     data: allData,
     isLoading,
     isError,
-  } = usePostProductVulnerabilitiesSearch(FETCH_ALL_REQUEST);
+  } = usePostProductVulnerabilitiesSearch(PRODUCT_VULNERABILITIES_FETCH_ALL_REQUEST);
 
   const allVulnerabilities = useMemo(
     (): ProductVulnerability[] => allData?.productVulnerabilities ?? [],

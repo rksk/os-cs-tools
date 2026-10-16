@@ -50,6 +50,10 @@ const mocks = vi.hoisted(() => ({
   isPending: { value: false },
 }));
 
+vi.mock("@features/operations/api/useGetChangeRequestApprovals", () => ({
+  default: () => ({ data: { approvals: [] }, isPending: false, isError: false }),
+}));
+
 vi.mock("@features/operations/api/useGetChangeRequestDetails", () => ({
   default: () => ({
     data: mocks.changeRequest.value,

@@ -62,14 +62,17 @@ import {
   getUserEditableVariables,
   isAttachmentField,
 } from "@features/csm-operations/utils/catalogVariables";
+import { canRaiseServiceRequests } from "@features/csm-projects/utils/subscriptionType";
 import type { CreateServiceRequestFromCaseNavState } from "@features/csm-cases/types/csmCases";
 
-// Service requests are a managed-cloud-only artefact — the underlying
-// catalog/deployment flow only makes sense for a managed-cloud subscription's
-// project. Module-level (not per-render) so `ProjectSelectionField`'s
-// `filterProject` prop keeps a stable identity across re-renders.
-function isManagedCloudProject(project: BeProject): boolean {
-  return project.subscriptionType === "managed_cloud_subscription";
+// Managed-cloud and Cloud Support projects are offered in the project picker
+// (see `canRaiseServiceRequests`). Per-project eligibility is still decided
+// after selection by `BeProject.hasSr` and
+// `features.hasServiceRequestReadAccess`. Module-level (not per-render) so
+// `ProjectSelectionField`'s `filterProject` prop keeps a stable identity
+// across re-renders.
+function isOfferedProject(project: BeProject): boolean {
+  return canRaiseServiceRequests(project.subscriptionType);
 }
 
 export default function CreateServiceRequestPage(): JSX.Element {
@@ -417,7 +420,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
               onChange={onProjectChange}
               lockedProjectId={lockedProjectId}
               required
-              filterProject={isManagedCloudProject}
+              filterProject={isOfferedProject}
             />
           </Grid>
 

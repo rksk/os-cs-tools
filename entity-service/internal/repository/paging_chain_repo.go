@@ -286,11 +286,14 @@ func (r *pagingChainRepository) SetRole(ctx context.Context, actorEmail, members
 			}
 		}
 		// A lead or head holds no responder slot (constraint
-		// team_member_alert_tier_not_lead), so a promotion clears it.
+		// team_member_alert_tier_not_lead), so a promotion clears it. $2 is
+		// typed once, as the column's varchar: used both as the new role and
+		// in the IN list, it was otherwise deduced two ways and every role
+		// change failed (SQLSTATE 42P08).
 		return mustTouch(tx.Exec(ctx, `
 			UPDATE team_member
-			   SET role = $2,
-			       alert_tier = CASE WHEN $2 IN ('lead', 'americas_team_lead', 'cre_head', 'cs_head') THEN NULL ELSE alert_tier END,
+			   SET role = $2::varchar,
+			       alert_tier = CASE WHEN $2::varchar IN ('lead', 'americas_team_lead', 'cre_head', 'cs_head') THEN NULL ELSE alert_tier END,
 			       updated_on = now(), updated_by = $3
 			 WHERE id = $1::uuid`, membershipID, role, actorEmail))
 	})
@@ -506,8 +509,7 @@ func (r *pagingChainRepository) ReadinessFacts(ctx context.Context, from, to str
 		        JOIN team_schedule_absence_kind k ON k.id = ab.kind_id
 		        WHERE ab.user_id = a.user_id
 		          AND daterange(ab.starts_on, ab.ends_on, '[]') @> a.rota_date
-		          AND NOT (k.moves_to_team_key IS NOT NULL
-		                   AND lower(k.moves_to_team_key) = lower(a.team_key)))
+		          AND NOT `+movedWithinRota+`)
 		 ORDER BY a.rota_date, ro.code, z.code, 8`, from, to); err != nil {
 		return f, fmt.Errorf("query paging readiness assignments: %w", err)
 	}

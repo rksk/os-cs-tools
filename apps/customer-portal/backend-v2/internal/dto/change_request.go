@@ -261,6 +261,21 @@ type ChangeRequestDetails struct {
 	// be refused. Omitted when entity-service did not say, which is not "not held".
 	IsOnHold *bool `json:"isOnHold,omitempty"`
 
+	// CustomerApprovalRequired / CustomerReviewRequired are the change request's
+	// two requirement boxes: whether it needs the customer's approval before it is
+	// scheduled, and the customer's review before it is closed. They are the
+	// REQUIREMENT, never the outcome (hasCustomerApproved / hasCustomerReviewed
+	// record that), and the webapp's workflow reads them only to say "Not
+	// required" of a customer step the change passed with no approval on record.
+	// Present only when entity-service computed the read for a customer on the
+	// PostgreSQL data source (the read that also carries customerCanAnswer);
+	// omitted otherwise, which means "unknown", never "not required": on the
+	// previous system's data source entity-service sends them as false without
+	// computing them, and passing that on would call a change "not required" on
+	// no evidence.
+	CustomerApprovalRequired *bool `json:"customerApprovalRequired,omitempty"`
+	CustomerReviewRequired   *bool `json:"customerReviewRequired,omitempty"`
+
 	// CustomerProposal is the conversation about a time a customer proposed: present when one was
 	// (entity-service derives it from the proposed start and its confirmation, customer_updated_on /
 	// customer_updated_date_confirmation). While it is pending the planned window (startDate /
@@ -300,7 +315,7 @@ func mapChangeRequestCustomerProposal(p *entity.ChangeRequestCustomerProposal) *
 
 // MapChangeRequestDetails builds the portal response from entity-service's ChangeRequest.
 func MapChangeRequestDetails(r entity.ChangeRequest) ChangeRequestDetails {
-	return ChangeRequestDetails{
+	out := ChangeRequestDetails{
 		ChangeRequestSummary: mapChangeRequestSummary(r.SearchChangeRequestView),
 		CreatedBy:            r.CreatedBy,
 		Justification:        r.Justification,
@@ -317,6 +332,16 @@ func MapChangeRequestDetails(r entity.ChangeRequest) ChangeRequestDetails {
 		IsOnHold:             r.OnHold,
 		CustomerProposal:     mapChangeRequestCustomerProposal(r.CustomerProposal),
 	}
+	// The requirement boxes are known only where entity-service computed the
+	// read for a customer on the PostgreSQL data source, which is the read that
+	// carries customerCanAnswer; everywhere else (the previous system's data
+	// source, which sends the boxes as false without computing them) they stay
+	// out, so that an unknown requirement is never passed on as "not required".
+	if r.CustomerCanAnswer != nil {
+		out.CustomerApprovalRequired = r.CustomerApprovalRequired
+		out.CustomerReviewRequired = r.CustomerReviewRequired
+	}
+	return out
 }
 
 // ChangeRequestUpdateResponse is the portal's response for PATCH /change-requests/{id}.

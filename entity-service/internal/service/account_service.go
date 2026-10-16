@@ -19,6 +19,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -73,6 +74,24 @@ func (s *accountService) GetAccountByID(ctx context.Context, id string) (domain.
 		return domain.AccountDetail{}, err
 	}
 	return accountRowToDetail(row), nil
+}
+
+// GetAccountHealthDetail implements AccountService.
+func (s *accountService) GetAccountHealthDetail(ctx context.Context, id string) (domain.AccountHealthDetail, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return domain.AccountHealthDetail{}, err
+	}
+	row, err := s.repo.GetAccountHealthDetail(ctx, id)
+	if err != nil {
+		return domain.AccountHealthDetail{}, err
+	}
+	projects := make([]domain.ProjectHealthDetail, 0, len(row.Projects))
+	for _, p := range row.Projects {
+		detail := p.Detail
+		detail.GoLiveStatus = accountGoLiveStatus(p.GoLiveState, row.GoLiveMonths, row.ActivationDate)
+		projects = append(projects, detail)
+	}
+	return domain.AccountHealthDetail{AccountName: row.AccountName, CustomerProjects: projects}, nil
 }
 
 // UpdateAccountTeams implements AccountService.
@@ -196,6 +215,52 @@ func accountRowToView(row repository.AccountRow) domain.AccountView {
 		UpdatedOn:              row.UpdatedOn.Format(time.RFC3339),
 		IsPartner:              accountIsPartner(row.Classification),
 		HasPrimaryPartner:      &row.HasPartner,
+		HealthSummary:          accountHealthSummaryFromRow(row),
+	}
+}
+
+// accountHealthSummaryFromRow maps the health columns a health-summary search
+// read onto the response shape, or returns nil when the search did not ask
+// for them.
+func accountHealthSummaryFromRow(row repository.AccountRow) *domain.AccountSearchHealthSummary {
+	h := row.Health
+	if h == nil {
+		return nil
+	}
+	return &domain.AccountSearchHealthSummary{
+		GoLiveStatus:           accountGoLiveStatus(h.GoLiveState, h.GoLiveMonths, row.ActivationDate),
+		HasRecentCases:         h.HasRecentCases,
+		HasEolProduct:          h.HasEolProduct,
+		HasAbandonedMigrations: h.HasAbandonedMigrations,
+		HasMigrationDelays:     h.HasMigrationDelays,
+		HasRecentEscalations:   h.HasRecentEscalations,
+		NoSupportCases6mo:      !h.HasRecentCases,
+		HealthStatus:           h.HealthStatus,
+	}
+}
+
+// accountGoLiveStatus builds the display status for the state the search
+// computed. Pending has four variants, told apart by the activation date and
+// the whole months elapsed since it (nil months: no date, or one in the
+// future).
+func accountGoLiveStatus(state string, months *int, activation *time.Time) domain.AccountGoLiveStatus {
+	switch state {
+	case "success":
+		return domain.AccountGoLiveStatus{Status: "Has Gone Live", State: "success"}
+	case "failure":
+		return domain.AccountGoLiveStatus{Status: "Hasn't Gone Live in 6 months", IsRisk: true, State: "failure"}
+	}
+	switch {
+	case activation == nil:
+		return domain.AccountGoLiveStatus{Status: "N/A (No Start Date)", State: "pending"}
+	case months == nil:
+		return domain.AccountGoLiveStatus{Status: "N/A (Activation Date in Future)", State: "pending"}
+	case *months == 0:
+		return domain.AccountGoLiveStatus{Status: "Recently Activated (Less than a month)", State: "pending"}
+	case *months == 1:
+		return domain.AccountGoLiveStatus{Status: "Hasn't Gone Live Since 1 month", State: "pending"}
+	default:
+		return domain.AccountGoLiveStatus{Status: fmt.Sprintf("Hasn't Gone Live Since %d months", *months), State: "pending"}
 	}
 }
 

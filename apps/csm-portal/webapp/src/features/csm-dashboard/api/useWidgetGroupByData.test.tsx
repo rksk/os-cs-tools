@@ -78,11 +78,13 @@ describe("useWidgetGroupByData", () => {
         label: "Critical",
         query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
         value: 3,
+        linkId: "critical",
       },
       {
         label: "High",
         query: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
         value: 5,
+        linkId: "high",
       },
       { label: "Others", query: {}, navigable: false, value: 2 },
     ]);
@@ -103,7 +105,9 @@ describe("useWidgetGroupByData", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.slices).toEqual([{ label: "P1", query: { priority: "P1" }, value: 4 }]);
+    expect(result.current.slices).toEqual([
+      { label: "P1", query: { priority: "P1" }, value: 4, linkId: "P1" },
+    ]);
   });
 
   it("scopes an incident's state bucket to the nested filter-array shape with op 'in', not a flat key", async () => {
@@ -125,6 +129,7 @@ describe("useWidgetGroupByData", () => {
         label: "New",
         query: { filters: [{ field: "state", op: "in", values: ["NEW"] }] },
         value: 4,
+        linkId: "NEW",
       },
     ]);
   });
@@ -148,6 +153,7 @@ describe("useWidgetGroupByData", () => {
         label: "New",
         query: { filters: [{ field: "state", op: "in", values: ["NEW"] }] },
         value: 2,
+        linkId: "NEW",
       },
     ]);
   });
@@ -167,7 +173,7 @@ describe("useWidgetGroupByData", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.slices).toEqual([
-      { label: "New", query: { states: ["-5"] }, value: 6 },
+      { label: "New", query: { states: ["-5"] }, value: 6, linkId: "-5" },
     ]);
   });
 
@@ -212,6 +218,7 @@ describe("useWidgetGroupByData", () => {
         label: "Critical",
         query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
         value: 3,
+        linkId: "critical",
       },
       { label: "Everything else", query: {}, navigable: false, value: 4 },
     ]);
@@ -242,6 +249,7 @@ describe("useWidgetGroupByData", () => {
         label: "Acme Corp",
         query: { filters: [{ field: "account", op: "in", values: ["acme"] }] },
         value: 10,
+        linkId: "acme",
       },
     ]);
     // total is derived from the slices actually rendered, not the response's
@@ -269,6 +277,7 @@ describe("useWidgetGroupByData", () => {
         label: "Critical",
         query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
         value: 3,
+        linkId: "critical",
       },
     ]);
     expect(result.current.total).toBe(3);

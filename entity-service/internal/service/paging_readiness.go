@@ -70,7 +70,7 @@ var rotaLocation = func() *time.Location {
 
 // GetPagingReadiness implements PagingChainService.
 func (s *pagingChainService) GetPagingReadiness(ctx context.Context, daysParam string) (domain.PagingReadinessResponse, error) {
-	if err := RequireInternalCaller(ctx, s.access, "paging readiness is only available to internal staff"); err != nil {
+	if err := RequireInternalCaller(ctx, s.access, "alert readiness is only available to internal staff"); err != nil {
 		return domain.PagingReadinessResponse{}, err
 	}
 	days := pagingReadinessDefaultDays
@@ -504,7 +504,7 @@ func sreReadiness(f repository.PagingReadinessFacts, rotaCode, label string, dat
 // exists. A missing L1 is an error (the ladder reaches nobody); a missing L2
 // or L3 is a warning (it stops climbing early).
 func smeReadiness(f repository.PagingReadinessFacts, handoff *SpecialistHandoffConfig, dates []time.Time) domain.PagingReadinessChain {
-	c := domain.PagingReadinessChain{Chain: familySME, Label: "SME page"}
+	c := domain.PagingReadinessChain{Chain: familySME, Label: "SME chain"}
 	smeRota := map[string]bool{}
 	for _, r := range f.Rotas {
 		if r.Family == familySME {

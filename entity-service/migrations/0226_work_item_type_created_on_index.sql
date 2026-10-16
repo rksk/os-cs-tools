@@ -1,0 +1,36 @@
+-- Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+--
+-- WSO2 LLC. licenses this file to you under the Apache License,
+-- Version 2.0 (the "License"); you may not use this file except
+-- in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing,
+-- software distributed under the License is distributed on an
+-- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+-- KIND, either express or implied.  See the License for the
+-- specific language governing permissions and limitations
+-- under the License.
+
+-- CaseRepository.CaseVolumeTrend (POST /cases/volume-trend, the Case Summary
+-- dashboard's "opened vs. closed per day" trend) filters work_item by
+-- type IN (...) AND created_on within a day-range window -- the same
+-- (type, timestamp) shape migration 0152's idx_work_item_type_updated_on
+-- already serves for updated_on, just for created_on instead. Confirmed as
+-- a real bottleneck against a real staging database (505k work_item rows,
+-- no index on created_on at all): a single day's query forced a full
+-- sequential scan of work_item (measured ~380ms for one day; a 30-day
+-- cold-cache window took over 3s), not from latency, a genuinely
+-- per-query cost. See CaseVolumeTrend's own doc comment for why the query
+-- itself also had to change (a plain to_char(created_on)=ANY(days)
+-- predicate is non-sargable regardless of any index on created_on) --
+-- this index is what the rewritten, sargable range half of that query
+-- actually uses.
+--
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block, so this
+-- file (like migration 0152, the identical fix for updated_on) stays the
+-- only statement in its own file, run without BEGIN/COMMIT.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_work_item_type_created_on
+    ON work_item (type, created_on);

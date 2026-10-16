@@ -27,6 +27,8 @@ import {
   extractInlineImageRefId,
   isInlineImageRefSrc,
   isNoveraOrBotSender,
+  withSystemAuthor,
+  SYSTEM_AUTHOR_LABEL,
   hasSingleCodeWrapper,
   hasSubmittableEditorContent,
   linkifyBareUrls,
@@ -639,5 +641,32 @@ describe("collapseCodeBlockWhitespace / collapseCommentSourceWhitespace", () => 
     );
     expect(collapseCommentSourceWhitespace("<p>a</p>\n<p>b</p>")).toBe("<p>a</p><p>b</p>");
     expect(collapseCommentSourceWhitespace("")).toBe("");
+  });
+});
+
+describe("withSystemAuthor", () => {
+  it("labels an author-less comment as System", () => {
+    expect(withSystemAuthor({ createdBy: null }).createdBy).toBe(
+      SYSTEM_AUTHOR_LABEL,
+    );
+    expect(withSystemAuthor({ createdBy: "  " }).createdBy).toBe(
+      "System",
+    );
+    expect(withSystemAuthor<{ createdBy?: string | null }>({}).createdBy).toBe("System");
+  });
+
+  it("keeps real authors, full names and bot rows untouched", () => {
+    const real = { createdBy: "jane.doe@example.com" };
+    expect(withSystemAuthor(real)).toBe(real);
+    const named = { createdBy: null, createdByFullName: "Jane Doe" };
+    expect(withSystemAuthor(named)).toBe(named);
+    const bot = { createdBy: "", type: "bot" };
+    expect(withSystemAuthor(bot)).toBe(bot);
+  });
+
+  it("does not mutate its input", () => {
+    const input = { createdBy: null };
+    withSystemAuthor(input);
+    expect(input.createdBy).toBeNull();
   });
 });

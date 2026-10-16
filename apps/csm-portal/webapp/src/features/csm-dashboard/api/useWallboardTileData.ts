@@ -105,7 +105,12 @@ export function useWallboardTileData({
     ),
     currentUserId,
   );
-  const href = config ? config.buildHref(resolvedFilters) : undefined;
+  const resolvedDisplayName = resolveWidgetText(displayName, selectedTeamLabel) ?? displayName;
+  // The widget's own id and name, so a tile whose filters its list page cannot
+  // hold can still link to the preview page that applies all of them.
+  const href = config
+    ? config.buildHref(resolvedFilters, { widgetId, displayName: resolvedDisplayName })
+    : undefined;
 
   const state: WallboardTileState =
     isLoading || awaitingCurrentUser ? "loading" : isError && !data ? "error" : "value";
@@ -121,7 +126,7 @@ export function useWallboardTileData({
 
   return {
     total: data?.total ?? 0,
-    resolvedDisplayName: resolveWidgetText(displayName, selectedTeamLabel) ?? displayName,
+    resolvedDisplayName,
     state,
     linkHref: linkable ? href : undefined,
   };

@@ -664,6 +664,95 @@ describe("DashboardWidgetPreviewPage — a case-family widget with anyOf skips t
 });
 
 /**
+ * `anyOf` is one predicate the case list cannot hold; any other one has the
+ * same consequence. A widget counting cases of an account with an active
+ * escalation must not open an editable filter bar that quietly has no such
+ * filter, and one counting SLA breaches must open a list that does apply it.
+ */
+describe("DashboardWidgetPreviewPage — which case-family widgets get the editable filter bar", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it("a widget with a predicate the list cannot hold posts its filters verbatim, without the editable filter bar", async () => {
+    postMock.mockResolvedValue({
+      cases: [{ id: "c1", number: "CS-1", subject: "Disk full", state: "open" }],
+      total: 1,
+      limit: 10,
+      offset: 0,
+    });
+    const filters = [
+      { field: "accountEscalationActive", op: "eq", values: ["true"] },
+      { field: "state", op: "in", values: ["open"] },
+    ];
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        resourceType: "case",
+        widgetId: "escalated",
+        displayName: "Escalated Cases",
+        filters: { filters },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    expect(screen.queryByRole("combobox", { name: "Severity" })).not.toBeInTheDocument();
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      expect.objectContaining({
+        filters: expect.objectContaining({ filters: expect.arrayContaining(filters) }),
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("a widget filtering by SLA breach gets the editable list, and the request still carries the breach filter", async () => {
+    mockPost({
+      cases: {
+        cases: [{ id: "c1", number: "CS-1", subject: "Disk full", state: "open" }],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      },
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        resourceType: "case",
+        widgetId: "sla_violations",
+        displayName: "SLA Violations",
+        filters: {
+          filters: [
+            { field: "slaBreached", op: "eq", values: ["true"] },
+            { field: "state", op: "in", values: ["open"] },
+          ],
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    // The filter bar opens in Advanced mode, where the breach filter is a row
+    // the viewer can see and change.
+    expect(screen.getByText("Advanced filters")).toBeInTheDocument();
+    const fieldSelects = screen.getAllByRole("combobox", { name: "Field" });
+    expect(fieldSelects.map((el) => el.textContent)).toContain("SLA breached");
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          filters: expect.arrayContaining([
+            { field: "slaBreached", op: "eq", values: ["true"] },
+            { field: "state", op: "in", values: ["open"] },
+          ]),
+        }),
+      }),
+    );
+  });
+});
+
+/**
  * Reported live: a case-family widget's "View more" landed on a static
  * "Filtered by:" chip summary, unlike every other list page in the app,
  * which has a real, editable filter bar. `CaseFamilyWidgetPreview` (in

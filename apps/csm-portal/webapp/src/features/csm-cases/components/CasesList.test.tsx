@@ -21,12 +21,20 @@ import type { JSX, ReactElement } from "react";
 import { useLocation, MemoryRouter, Route, Routes } from "react-router";
 import "@testing-library/jest-dom/vitest";
 
-// The real client reads runtime config at module load, which isn't present
-// under vitest (same approach as CaseActivitiesFeed.test.tsx). CasesList
-// renders a CasePreviewDrawer alongside every row (closed by default here,
-// since no test opens it), which calls useGetCsmCaseComments — the mock just
-// keeps that hook's useBackendApi() call from throwing on missing runtime
-// config; its query stays disabled (no caseId) so it's never actually invoked.
+// CasesList's import tree reads this at module load (apiConfig throws
+// without it). The real value comes from public/config.js, which vitest
+// does not load. hoisted so it runs before that import.
+vi.hoisted(() => {
+  window.config = {
+    ...window.config,
+    CSM_PORTAL_BACKEND_BASE_URL: "http://localhost:9090",
+  };
+});
+
+// CasesList renders a CasePreviewDrawer alongside every row (closed by
+// default here, since no test opens it), which calls useGetCsmCaseComments.
+// The mock keeps that hook's useBackendApi() call from throwing; its query
+// stays disabled (no caseId) so it's never actually invoked.
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: vi.fn().mockResolvedValue({ comments: [] }) }),
 }));
@@ -553,5 +561,17 @@ describe("CasesList sortable headers", () => {
     ["Created", "Severity", "State", "Updated"].forEach((label) => {
       expect(screen.getByText(label).closest(".MuiTableSortLabel-root")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("CasesList background fetch", () => {
+  it("keeps the current rows and shows a progress bar while a new result is loading", () => {
+    renderWithProviders(
+      <CasesList cases={[CASE]} isLoading={false} isFetching />,
+      ["/cases"],
+    );
+
+    expect(screen.getByText("Cluster fails to start")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Updating the list" })).toBeInTheDocument();
   });
 });

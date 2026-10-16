@@ -116,7 +116,7 @@ describe("CasePagingPanel: the CRE chain as a team-by-level matrix", () => {
     const tier3 = within(rowOf(/^Level 2/)).getAllByRole("cell");
     expect(tier3).toHaveLength(2);
     expect(tier3[0]).toHaveAttribute("colspan", "2");
-    expect(tier3[0]).toHaveTextContent("The ABT Team leads above, longest since paged first");
+    expect(tier3[0]).toHaveTextContent("The ABT Team leads above, longest since called first");
     expect(tier3[1]).toHaveTextContent("Oz Owl");
     for (const tier of [/^Level 3/, /^Level 4/]) {
       const cells = within(rowOf(tier)).getAllByRole("cell");

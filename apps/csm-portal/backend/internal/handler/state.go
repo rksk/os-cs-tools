@@ -55,6 +55,13 @@ const (
 // caller (injectNextStates): `caseStateReopened` is reused as a signal that
 // this closed case is still within its related-case window, since the
 // frontend has no real reopen to offer, only "create a related case".
+//
+// reopened -> work_in_progress is this file's own addition, not ported from
+// the legacy ServiceNow scoped-app's SUPERUSER_STATE_TRANSITIONS table (that
+// table has no entry for reopened at all; the legacy customer-facing table
+// only allows reopened -> closed). Confirmed as the intended agent behavior
+// rather than a porting gap: an agent treats a reopened case like a fresh
+// open one and picks it back up into active work, so this stays as-is.
 func nextStates(state string) []string {
 	switch state {
 	case caseStateOpen:

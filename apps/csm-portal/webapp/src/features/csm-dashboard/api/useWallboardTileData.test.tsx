@@ -74,6 +74,27 @@ describe("useWallboardTileData", () => {
     expect(result.current.linkHref).toBeTruthy();
   });
 
+  it("links a tile whose filters its list cannot hold to the preview page, under the widget's own name", async () => {
+    postMock.mockResolvedValue({ total: 3, incidents: [], limit: 1, offset: 0, hasMore: false });
+    const { result } = renderHook(
+      () =>
+        useWallboardTileData({
+          ...baseInput,
+          widgetId: "new_incidents",
+          displayName: "New incidents",
+          filters: { filters: [{ field: "state", op: "in", values: ["NEW"] }] },
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.state).toBe("value"));
+
+    const href = result.current.linkHref ?? "";
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(href.startsWith("/dashboard/preview/incidents?")).toBe(true);
+    expect(params.get("w")).toBe("new_incidents");
+    expect(params.get("n")).toBe("New incidents");
+  });
+
   it("keeps state 'value' with the last good total AND its link through a failed background refetch, not 'error'", async () => {
     postMock.mockResolvedValueOnce({ total: 7, incidents: [], limit: 1, offset: 0, hasMore: false });
     const { result } = renderHook(() => useWallboardTileData(baseInput), {

@@ -220,6 +220,19 @@ export const FAKE_BETA_CONTACT: FakeUser = { id: "00000000-0000-0000-0000-000000
 
 export const FAKE_CR_ID = "00000000-0000-0000-0000-00000000c001";
 
+/** A tag of the shared vocabulary (`tag` rows: id and label, no colour on this data source). */
+export interface FakeTag {
+  id: string;
+  label: string;
+}
+
+/** The tag vocabulary `POST /tags/search` offers; `POST /cases/{id}/tags` grows it for an unknown label. */
+export const FAKE_TAG_VOCABULARY: FakeTag[] = [
+  { id: "00000000-0000-0000-0000-0000000000a1", label: "apim-upgrade" },
+  { id: "00000000-0000-0000-0000-0000000000a2", label: "maintenance-window" },
+  { id: "00000000-0000-0000-0000-0000000000a3", label: "Migrated-Window" },
+];
+
 // ---------------------------------------------------------------------------
 // Customer scope fixtures: three projects (Gamma has no deployments and no
 // registered contacts); each deployment has a type (its environment role) and
@@ -560,6 +573,14 @@ export interface FakeChangeRequestApi {
   planned(): { start: string; end: string };
   /** The approval stages as the fake holds them (stage name -> status). */
   stages(): Array<{ stage: string; status: string; approvers: Array<{ name: string; status: string }> }>;
+  /** The change request's tags as the fake holds them (labels, by label). */
+  tags(): string[];
+  /**
+   * Tags the change request already carries (what the sync migrated, or an
+   * earlier edit): each label is attached from the vocabulary, added to it
+   * first when unknown. The open page is not refreshed.
+   */
+  seedTags(labels: string[]): void;
   /**
    * Makes `GET /groups/{id}` fail with this HTTP status (for the dialog's
    * error state), or serve normally again with `null`.
@@ -768,6 +789,13 @@ export async function installFakeChangeRequestApi(
     projectId ? (contacts.get(projectId) ?? []).filter((u) => u.id !== FAKE_CREATOR.id) : [];
   /** When set, GET /groups/{id} fails with this status. */
   let groupFailure: number | null = null;
+  // Tags: the change request's work_item_tag rows, managed through the CASE tag
+  // routes (they take a work item id) -- `POST /cases/{id}/tags` attaches a label
+  // from the shared vocabulary (found or created, like the backend), `DELETE
+  // /cases/{id}/tags/{tagId}` detaches it, `POST /tags/search` searches the
+  // vocabulary. The detail carries them as `tags` (by label, like the backend).
+  let tags: FakeTag[] = [];
+  const vocabulary: FakeTag[] = [...FAKE_TAG_VOCABULARY];
   let plannedStartOn = "2030-03-01 09:00:00";
   let plannedEndOn = "2030-03-01 11:00:00";
   // The previous system's own proposal pair (`customer_updated_on`, as an RFC 3339 instant, and WSO2's answer), and whether the change's last
@@ -982,6 +1010,7 @@ export async function installFakeChangeRequestApi(
     deploymentProducts: FAKE_DEPLOYMENT_PRODUCTS.filter((p) => scope.deploymentProductIds.includes(p.id)).map(({ id, name }) => ({ id, name })),
     customerContacts: currentContacts().map(({ id, name, email }) => ({ id, name, email })),
     category: scope.category,
+    tags: [...tags].sort((a, b) => a.label.localeCompare(b.label)).map(({ id, label }) => ({ id, label, color: null })),
   });
 
   /**
@@ -1353,6 +1382,49 @@ export async function installFakeChangeRequestApi(
     bodies.push({ request: label, body });
     return body;
   };
+
+  // The tag vocabulary's type-ahead (the Add tag dialog's `POST /tags/search`).
+  await page.route(
+    (url) => url.pathname.endsWith("/tags/search"),
+    async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      if (!(await isApiCall(route))) return;
+      const body = record(route, "POST /tags/search");
+      const q = String(((body?.filters as { searchQuery?: string } | undefined)?.searchQuery) ?? "").toLowerCase();
+      const found = vocabulary.filter((t) => t.label.toLowerCase().includes(q)).map(({ id, label }) => ({ id, label, color: null }));
+      return json(route, { tags: found, total: found.length });
+    },
+  );
+
+  // The change request's tags, through the case tag routes (a work item id).
+  await page.route(
+    (url) => new RegExp(`/cases/${FAKE_CR_ID}/tags(/[0-9a-f-]{36})?$`).test(url.pathname),
+    async (route) => {
+      const req = route.request();
+      if (!(await isApiCall(route))) return;
+      const path = new URL(req.url()).pathname.replace(/^.*\/cases\//, "/cases/");
+      const body = record(route, `${req.method()} ${path}`);
+      if (req.method() === "POST" && path === `/cases/${FAKE_CR_ID}/tags`) {
+        const label = String(body?.label ?? "").trim();
+        if (!label) return json(route, { message: "label is required" }, 400);
+        // Found or created by label (case-insensitively), attached once.
+        let tag = vocabulary.find((t) => t.label.toLowerCase() === label.toLowerCase());
+        if (!tag) {
+          tag = { id: `00000000-0000-0000-0000-0000000000${(vocabulary.length + 10).toString(16).padStart(2, "0")}`, label };
+          vocabulary.push(tag);
+        }
+        if (!tags.some((t) => t.id === tag!.id)) tags = [...tags, tag];
+        return json(route, { id: tag.id, label: tag.label, color: null }, 201);
+      }
+      if (req.method() === "DELETE") {
+        const tagId = path.split("/").pop()!;
+        if (!tags.some((t) => t.id === tagId)) return json(route, { message: "tag not found on this case" }, 404);
+        tags = tags.filter((t) => t.id !== tagId);
+        return route.fulfill({ status: 204, headers: cors(route) });
+      }
+      return route.fallback();
+    },
+  );
 
   // Customer Project picker.
   await page.route(
@@ -1774,5 +1846,15 @@ export async function installFakeChangeRequestApi(
         status: st.status,
         approvers: st.approvers.map((a) => ({ name: a.name, status: a.status })),
       })),
+    tags: () => [...tags].sort((a, b) => a.label.localeCompare(b.label)).map((t) => t.label),
+    seedTags: (labels) => {
+      tags = labels.map((label) => {
+        const known = vocabulary.find((t) => t.label.toLowerCase() === label.toLowerCase());
+        if (known) return known;
+        const created = { id: `00000000-0000-0000-0000-0000000000${(vocabulary.length + 10).toString(16).padStart(2, "0")}`, label };
+        vocabulary.push(created);
+        return created;
+      });
+    },
   };
 }

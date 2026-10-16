@@ -181,7 +181,7 @@ func (r *conversationRepo) fetchMessageStats(ctx context.Context, workItemIDs []
 		SELECT work_item_id, COUNT(*),
 		       (ARRAY_AGG(content ORDER BY created_on ASC))[1]
 		FROM comment
-		WHERE work_item_id = ANY($1::uuid[])
+		WHERE work_item_id = ANY($1::uuid[])`+deletedCommentFilter(ctx, "")+`
 		GROUP BY work_item_id`, workItemIDs)
 	if err != nil {
 		return nil, fmt.Errorf("fetch conversation message stats: %w", err)

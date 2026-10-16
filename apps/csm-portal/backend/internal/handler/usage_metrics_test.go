@@ -27,7 +27,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
 
-// mockUsageMetricsClient is a test double for usageMetricsServiceNowClient.
+// mockUsageMetricsClient is a test double for usageMetricsClient.
 type mockUsageMetricsClient struct {
 	response []byte
 	err      error
@@ -266,4 +266,28 @@ func TestUsageMetricsHandler_GetDeployedProductMetrics_RequiresID(t *testing.T) 
 	h.GetDeployedProductMetrics(w, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestValidateMetricsDateRange(t *testing.T) {
+	tests := []struct {
+		name      string
+		startDate string
+		endDate   string
+		wantErr   bool
+	}{
+		{"valid same-day range", "2026-01-01", "2026-01-01", false},
+		{"valid range within limit", "2026-01-01", "2026-06-01", false},
+		{"end before start", "2026-06-01", "2026-01-01", true},
+		{"malformed start date", "not-a-date", "2026-01-01", true},
+		{"malformed end date", "2026-01-01", "not-a-date", true},
+		{"range exceeds 366 days", "2025-01-01", "2026-06-01", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMetricsDateRange(tt.startDate, tt.endDate)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateMetricsDateRange(%q, %q) error = %v, wantErr %v", tt.startDate, tt.endDate, err, tt.wantErr)
+			}
+		})
+	}
 }

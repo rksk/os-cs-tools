@@ -242,6 +242,13 @@ cre:
     # incident up. Set false to accept either gesture on its own.
     requireBoth: true
 
+  # When the ladder stops -- acknowledged, the case closed, or its severity
+  # changed -- reply in its thread, where the rung cards went: who
+  # acknowledged it, who was paged and how many calls were cancelled. Only
+  # once a rung has gone out. On when absent (not on the Alert Settings tab
+  # yet); uncomment to turn it off:
+  # ackChat: false
+
   # Someone who holds a rung but is on leave that day: skip (the default)
   # leaves them out, so the rung goes to whoever else holds it or the ladder
   # climbs past; call rings them anyway, after anyone available on the same
@@ -369,6 +376,11 @@ sre:
   # (teamChats, else chat): who escalated it, that SRE paging stopped, and
   # that the SMEs are being paged. Off here for the same reason as above.
   smeHandoffChat: false
+
+  # When the ladder stops (assigned, the case closed, its severity changed),
+  # reply in its thread, where the rung cards went. Covers the SME ladders
+  # too. On when absent; uncomment to turn it off:
+  # ackChat: false
 
   teams:
     # The other ABT, as team.type spells it: sre-abt holds two teams.

@@ -55,7 +55,7 @@ func TestPostgresViewerAccountClient_GetEscalationsByAccount(t *testing.T) {
 			Total: 2,
 		},
 	}
-	c := NewPostgresViewerAccountClient(fake, nil)
+	c := NewPostgresViewerAccountClient(fake)
 
 	got, err := c.GetEscalationsByAccount(context.Background(), "account-1", 0, 10)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestPostgresViewerAccountClient_GetEscalationsByAccount_NoCases(t *testing.
 	fake := &fakeEntityEscalationsClient{
 		cases: entitySearchCasesResponse{Cases: nil, Total: 0},
 	}
-	c := NewPostgresViewerAccountClient(fake, nil)
+	c := NewPostgresViewerAccountClient(fake)
 
 	got, err := c.GetEscalationsByAccount(context.Background(), "account-1", 0, 10)
 	if err != nil {

@@ -134,10 +134,20 @@ func TestCaseLikeStateLookupClause(t *testing.T) {
 		t.Errorf("announcement branch missing CLOSE normalization: %s", got)
 	}
 
-	// negate=true renders <> ALL(ARRAY(...)), for the ExcludeStates (notIn) filter.
+	// negate=true renders an anti-join, for the ExcludeStates (notIn) filter --
+	// never "<> ALL(ARRAY(...))", which compares every row with every excluded
+	// id and took tens of seconds for "notIn closed" on production-volume data.
 	got = caseLikeStateLookupClause([]string{"case"}, "$1::text[]", true)
-	if !strings.Contains(got, "wi.id <> ALL(ARRAY(") {
-		t.Errorf("negate=true should render <> ALL(ARRAY(...)): %s", got)
+	wantNegated := `NOT EXISTS (SELECT 1 FROM (SELECT id FROM "case" WHERE state::TEXT = ANY($1::text[])) excluded WHERE excluded.id = wi.id)`
+	if got != wantNegated {
+		t.Errorf("negate=true = %s\nwant %s", got, wantNegated)
+	}
+	if strings.Contains(got, "<> ALL(ARRAY(") {
+		t.Errorf("negate=true must not render <> ALL(ARRAY(...)): %s", got)
+	}
+	got = caseLikeStateLookupClause(nil, "$1::text[]", true)
+	if !strings.HasPrefix(got, "NOT EXISTS (SELECT 1 FROM (") || !strings.Contains(got, " UNION ALL ") || !strings.HasSuffix(got, ") excluded WHERE excluded.id = wi.id)") {
+		t.Errorf("negate=true over every type should be one anti-join over the UNION ALL: %s", got)
 	}
 
 	// A type with no case-like state branch (reachable only from an anyOf

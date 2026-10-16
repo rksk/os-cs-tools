@@ -175,3 +175,17 @@ func TestSendIncidentAssignedAlert_CarriesTheLinkAndFallsBackToTheID(t *testing.
 		t.Errorf("body = %q, want a View incident link", sectionText(card.Sections[0]))
 	}
 }
+
+// A group's incident messages go to its INCIDENT_CHAT_FANOUT groups, matched ignoring case, else to the group itself.
+func TestIncidentGroups(t *testing.T) {
+	fanout := map[string][]string{"Default SRE Group": {"Apollo SRE Group", "Artemis SRE Group"}}
+	if got := IncidentGroups(fanout, " default sre group "); len(got) != 2 || got[0] != "Apollo SRE Group" {
+		t.Errorf("fanned-out group = %v; want both SaaS groups", got)
+	}
+	if got := IncidentGroups(fanout, "MS/PC SRE Group"); len(got) != 1 || got[0] != "MS/PC SRE Group" {
+		t.Errorf("own group = %v; want just itself", got)
+	}
+	if got := IncidentGroups(fanout, "  "); got != nil {
+		t.Errorf("no group = %v; want none", got)
+	}
+}

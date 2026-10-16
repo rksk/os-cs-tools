@@ -16,6 +16,8 @@
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { buildPdfTableBody, wso2StaffMarkerHooks } from "@utils/pdfStaffMarker";
+import { toPdfSafeText } from "@utils/pdfText";
 
 export type PdfColumnStyle = {
   cellWidth: number;
@@ -24,6 +26,9 @@ export type PdfColumnStyle = {
 
 /**
  * Generates and downloads a PDF file with a titled table.
+ * The title, headers and cells are passed through {@link toPdfSafeText}: one character
+ * jsPDF cannot encode garbles the whole cell. The "ⓦ" on WSO2 staff names, which jsPDF
+ * cannot draw, is drawn by {@link wso2StaffMarkerHooks} after the name.
  *
  * @param filename - Download filename (should end with .pdf).
  * @param title - Heading text printed above the table.
@@ -41,10 +46,11 @@ export function downloadPdfFile(
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   doc.setFontSize(12);
   doc.setTextColor(40, 40, 40);
-  doc.text(title, 14, 14);
+  doc.text(toPdfSafeText(title), 14, 14);
+  const { body, staffMarkerCells } = buildPdfTableBody(rows);
   autoTable(doc, {
-    head: [headers],
-    body: rows,
+    head: [headers.map(toPdfSafeText)],
+    body,
     startY: 20,
     margin: { left: 14, right: 14 },
     styles: {
@@ -62,6 +68,7 @@ export function downloadPdfFile(
     alternateRowStyles: { fillColor: [245, 247, 250] },
     columnStyles: columnStyles ?? {},
     tableWidth: "auto",
+    ...wso2StaffMarkerHooks(staffMarkerCells),
   });
   doc.save(filename);
 }

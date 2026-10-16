@@ -32,7 +32,16 @@ import {
   isProposalAccepted,
   isProposalNotAccepted,
   isProposalPending,
+  APPROVALS_UNAVAILABLE,
   buildChangeRequestWorkflowStages,
+  classifyChangeRequestApprovalStage,
+  deriveChangeRequestApproval,
+  hasApprovedChangeRequestStage,
+  WORKFLOW_APPROVAL_UNAVAILABLE,
+  WORKFLOW_NO_APPROVAL_RECORDED,
+  WORKFLOW_NO_REVIEW_RECORDED,
+  WORKFLOW_NOT_REQUIRED,
+  WORKFLOW_REVIEW_UNAVAILABLE,
   mapChangeRequestStats,
   resolveCustomerDecisionMode,
   stripChangeRequestCustomTags,
@@ -49,6 +58,7 @@ import {
   ChangeRequestErrorCode,
 } from "@features/operations/utils/changeRequests";
 import { ChangeRequestDecisionMode } from "@features/operations/types/changeRequests";
+import type { ChangeRequestApprover } from "@features/operations/types/changeRequests";
 import { ApiError } from "@utils/ApiError";
 
 describe("changeRequests utils", () => {
@@ -539,65 +549,462 @@ describe("describeChangeRequestActionError", () => {
   });
 });
 
+// The workflow's steps are read from the record, never from the change's position in the flow.
+const APPROVED_PEER = { stage: "Peer Approval", approverType: "STATIC_GROUP", approverName: "", status: "APPROVED", approvers: [] };
+const APPROVED_CAB = { stage: "CAB Approval", approverType: "STATIC_GROUP", approverName: "", status: "APPROVED", approvers: [] };
+const APPROVED_CUSTOMER_APPROVAL = {
+  stage: "Customer Approval",
+  approverType: "STATIC_GROUP",
+  approverName: "Customer Group",
+  status: "APPROVED",
+  approvers: [{ id: "u-1", name: "A Contact", status: "APPROVED", respondedOn: "2026-05-02T10:00:00Z" }],
+};
+const APPROVED_CUSTOMER_REVIEW = {
+  stage: "Customer Review",
+  approverType: "STATIC_GROUP",
+  approverName: "Customer Group",
+  status: "APPROVED",
+  approvers: [{ id: "u-1", name: "A Contact", status: "APPROVED", respondedOn: "2026-05-09T10:00:00Z" }],
+};
+const STATE = {
+  new: { id: "-5", label: "New" },
+  assess: { id: "-4", label: "Assess" },
+  authorize: { id: "-3", label: "Authorize" },
+  approval: { id: "5", label: "Customer Approval" },
+  scheduled: { id: "-2", label: "Scheduled" },
+  implement: { id: "-1", label: "Implement" },
+  review: { id: "0", label: "Review" },
+  customerReview: { id: "1", label: "Customer Review" },
+  rollback: { id: "2", label: "Rollback" },
+  closed: { id: "3", label: "Closed" },
+  canceled: { id: "4", label: "Canceled" },
+};
+const NO_OUTCOME = { hasCustomerApproved: false, hasCustomerReviewed: false };
+type ApprovalsArg = object[] | null | typeof APPROVALS_UNAVAILABLE;
+const stagesOf = (changeRequest: object, approvals?: ApprovalsArg) =>
+  buildChangeRequestWorkflowStages(changeRequest as never, approvals as never).workflowStages;
+const stepOf = (changeRequest: object, name: string, approvals?: ApprovalsArg) =>
+  stagesOf(changeRequest, approvals).find((s) => s.name === name)!;
+const statusesOf = (changeRequest: object, approvals?: ApprovalsArg) =>
+  Object.fromEntries(stagesOf(changeRequest, approvals).map((s) => [s.name, s.status]));
+
 describe("buildChangeRequestWorkflowStages", () => {
   it("shows Authorize as current for the raw state a customer's proposal leaves the change in", () => {
     const { workflowStages, currentStateIndex } = buildChangeRequestWorkflowStages({
       state: { label: "authorize" },
-      hasCustomerApproved: false,
-      hasCustomerReviewed: false,
+      ...NO_OUTCOME,
     } as never);
     expect(workflowStages.find((s) => s.current)?.name).toBe("Authorize");
     expect(currentStateIndex).toBe(2);
     expect(workflowStages.filter((s) => s.current)).toHaveLength(1);
-    expect(workflowStages[0]).toMatchObject({ name: "New", completed: true, current: false });
+    expect(workflowStages[0]).toMatchObject({ name: "New", completed: true, current: false, status: "completed" });
   });
 
   it("still marks Customer Approval current, with the old gate's stamp untouched", () => {
-    const { workflowStages } = buildChangeRequestWorkflowStages({
-      state: { id: "5", label: "Customer Approval" },
-      hasCustomerApproved: false,
-      hasCustomerReviewed: false,
-    } as never);
-    expect(workflowStages.find((s) => s.current)?.name).toBe("Customer Approval");
-  });
-
-  it("marks Customer Approval completed once moved past Customer Approval (e.g. Scheduled)", () => {
-    const { workflowStages } = buildChangeRequestWorkflowStages({
-      state: { id: "-2", label: "Scheduled" },
-      hasCustomerApproved: false,
-      hasCustomerReviewed: false,
-    } as never);
-    const customerApproval = workflowStages.find((s) => s.name === "Customer Approval");
-    expect(customerApproval).toMatchObject({
-      completed: true,
-      current: false,
-      disabled: false,
+    expect(stepOf({ state: STATE.approval, ...NO_OUTCOME }, "Customer Approval")).toMatchObject({
+      current: true,
+      status: "current",
       description: "Customer approval received",
     });
   });
 
-  it("marks Customer Approval and Customer Review completed when Closed", () => {
-    const { workflowStages } = buildChangeRequestWorkflowStages({
-      state: { id: "3", label: "Closed" },
-      hasCustomerApproved: false,
-      hasCustomerReviewed: false,
-    } as never);
-    const approval = workflowStages.find((s) => s.name === "Customer Approval");
-    const review = workflowStages.find((s) => s.name === "Customer Review");
-    expect(approval).toMatchObject({ completed: true, disabled: false });
-    expect(review).toMatchObject({ completed: true, disabled: false });
+  it("keeps the booleans in step with the status", () => {
+    for (const stage of stagesOf({ state: STATE.rollback, hasCustomerApproved: true, hasCustomerReviewed: false }, [APPROVED_PEER])) {
+      expect(stage.completed, stage.name).toBe(stage.status === "completed");
+      expect(stage.current, stage.name).toBe(stage.status === "current");
+      expect(stage.disabled, stage.name).toBe(stage.status === "disabled");
+    }
   });
 
-  it("marks Customer Review disabled and not completed when Rollback", () => {
-    const { workflowStages } = buildChangeRequestWorkflowStages({
-      state: { id: "-7", label: "Rollback" },
-      hasCustomerApproved: false,
-      hasCustomerReviewed: false,
-    } as never);
-    const approval = workflowStages.find((s) => s.name === "Customer Approval");
-    const review = workflowStages.find((s) => s.name === "Customer Review");
-    expect(approval).toMatchObject({ completed: true, disabled: false });
-    expect(review).toMatchObject({ completed: false, disabled: true });
+  describe("a change migrated without its approvals (Closed, no stages, no requirement boxes)", () => {
+    const migrated = { state: STATE.closed, ...NO_OUTCOME, customerApprovalRequired: null, customerReviewRequired: null };
+
+    it("ticks only what the state itself records, and says 'no record' of the approval steps", () => {
+      expect(statusesOf(migrated, [])).toEqual({
+        New: "completed",
+        Assess: "no-record",
+        Authorize: "no-record",
+        "Customer Approval": "no-record",
+        Scheduled: "completed",
+        Implement: "completed",
+        Review: "completed",
+        "Customer Review": "no-record",
+        Rollback: "disabled",
+        Closed: "current",
+        Canceled: "disabled",
+      });
+      expect(stepOf(migrated, "Assess", []).description).toBe(WORKFLOW_NO_APPROVAL_RECORDED);
+      expect(stepOf(migrated, "Authorize", []).description).toBe(WORKFLOW_NO_APPROVAL_RECORDED);
+      expect(stepOf(migrated, "Customer Approval", []).description).toBe(WORKFLOW_NO_APPROVAL_RECORDED);
+      expect(stepOf(migrated, "Customer Review", []).description).toBe(WORKFLOW_NO_REVIEW_RECORDED);
+    });
+
+    it("reads approvals that were never given (none passed) as no evidence", () => {
+      for (const approvals of [undefined, null]) {
+        expect(statusesOf(migrated, approvals)).toEqual(statusesOf(migrated, []));
+        expect(statusesOf({ state: STATE.closed, ...NO_OUTCOME }, approvals)).toEqual(statusesOf(migrated, []));
+      }
+    });
+
+    // The guard against the old rule: a step before the current one is never "completed" by position alone.
+    it("never ticks an approval step by position alone, in any state past it", () => {
+      const past = {
+        Assess: [STATE.authorize, STATE.approval, STATE.scheduled, STATE.implement, STATE.review, STATE.customerReview, STATE.rollback, STATE.closed],
+        Authorize: [STATE.approval, STATE.scheduled, STATE.implement, STATE.review, STATE.customerReview, STATE.rollback, STATE.closed],
+        "Customer Approval": [STATE.scheduled, STATE.implement, STATE.review, STATE.customerReview, STATE.rollback, STATE.closed],
+        "Customer Review": [STATE.closed],
+      };
+      for (const [name, states] of Object.entries(past)) {
+        for (const state of states) {
+          const step = stepOf({ state, ...NO_OUTCOME }, name, []);
+          expect(step.completed, `${name} in ${state.label}`).toBe(false);
+          expect(step.status, `${name} in ${state.label}`).toBe("no-record");
+        }
+      }
+    });
+  });
+
+  describe("the requirement boxes", () => {
+    it("says 'Not required' of a customer step whose box is off, passed or not", () => {
+      const off = { ...NO_OUTCOME, customerApprovalRequired: false, customerReviewRequired: false };
+      for (const state of [STATE.closed, STATE.scheduled]) {
+        expect(stepOf({ state, ...off }, "Customer Approval", [])).toMatchObject({
+          status: "not-required",
+          completed: false,
+          description: WORKFLOW_NOT_REQUIRED,
+        });
+      }
+      expect(stepOf({ state: STATE.closed, ...off }, "Customer Review", [])).toMatchObject({
+        status: "not-required",
+        description: WORKFLOW_NOT_REQUIRED,
+      });
+      // Before the step the box still says the step will not apply.
+      expect(stepOf({ state: STATE.assess, ...off }, "Customer Approval", []).status).toBe("not-required");
+      expect(stepOf({ state: STATE.assess, ...off }, "Customer Review", []).status).toBe("not-required");
+    });
+
+    it("says 'No approval recorded', never 'Not required', when the box is on or unknown", () => {
+      for (const customerApprovalRequired of [true, undefined, null]) {
+        expect(
+          stepOf({ state: STATE.closed, ...NO_OUTCOME, customerApprovalRequired }, "Customer Approval", []),
+          String(customerApprovalRequired),
+        ).toMatchObject({ status: "no-record", description: WORKFLOW_NO_APPROVAL_RECORDED });
+      }
+    });
+
+    it("lets evidence win over a box that is off", () => {
+      expect(
+        stepOf({ state: STATE.closed, hasCustomerApproved: true, hasCustomerReviewed: true, customerApprovalRequired: false, customerReviewRequired: false }, "Customer Approval", []).status,
+      ).toBe("completed");
+      expect(
+        stepOf({ state: STATE.closed, hasCustomerApproved: true, hasCustomerReviewed: true, customerApprovalRequired: false, customerReviewRequired: false }, "Customer Review", []).status,
+      ).toBe("completed");
+    });
+
+    it("keeps the current step current, box or no box", () => {
+      expect(stepOf({ state: STATE.approval, ...NO_OUTCOME, customerApprovalRequired: false }, "Customer Approval", []).status).toBe("current");
+      expect(stepOf({ state: STATE.customerReview, ...NO_OUTCOME, customerReviewRequired: false }, "Customer Review", []).status).toBe("current");
+    });
+  });
+
+  describe("approvals as evidence", () => {
+    it("ticks Assess on an APPROVED Peer stage, under either name the backend uses", () => {
+      for (const stage of ["Peer Approval", "Assess", " peer approval "]) {
+        expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Assess", [{ ...APPROVED_PEER, stage }]), stage).toMatchObject({
+          status: "completed",
+          description: "Technical assessment completed",
+        });
+      }
+    });
+
+    it("ticks Authorize on an APPROVED CAB stage, under any of its names", () => {
+      for (const stage of ["CAB Approval", "Authorize", "ECAB Approval"]) {
+        expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Authorize", [{ ...APPROVED_CAB, stage }]), stage).toMatchObject({
+          status: "completed",
+          description: "Internal authorization obtained",
+        });
+      }
+    });
+
+    it("does not read a stage that is not APPROVED, or not that stage, as evidence", () => {
+      for (const status of ["PENDING", "REJECTED", "", "approved?"]) {
+        expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Assess", [{ ...APPROVED_PEER, status }]).status, status).toBe("no-record");
+      }
+      // A CAB approval says nothing about the peer step, and vice versa.
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Assess", [APPROVED_CAB]).status).toBe("no-record");
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Authorize", [APPROVED_PEER]).status).toBe("no-record");
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Authorize", [{ ...APPROVED_CAB, stage: "Review" }]).status).toBe("no-record");
+    });
+
+    it("ticks Customer Approval / Customer Review on the customer's own APPROVED stage", () => {
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Approval", [APPROVED_CUSTOMER_APPROVAL])).toMatchObject({
+        status: "completed",
+        description: "Customer approval received",
+      });
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Review", [APPROVED_CUSTOMER_REVIEW])).toMatchObject({
+        status: "completed",
+        description: "Customer validation",
+      });
+    });
+
+    // A stage migrated without a label is named "Customer Approval" by its position (third and later) whether or
+    // not it was the customer's; such a stage is WSO2's, so its rows are withheld from the customer. Without a
+    // visible APPROVED row it is not the customer's approval.
+    it("does not take an APPROVED 'Customer Approval' with no visible approved row as the customer's approval", () => {
+      for (const approvers of [[], undefined, [{ id: "u-1", name: "A Contact", status: "REQUESTED" }]]) {
+        expect(
+          stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Approval", [{ ...APPROVED_CUSTOMER_APPROVAL, approvers }]).status,
+        ).toBe("no-record");
+        expect(
+          stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Review", [{ ...APPROVED_CUSTOMER_REVIEW, approvers }]).status,
+        ).toBe("no-record");
+      }
+    });
+
+    it("reads the detail's own outcome flags as evidence too", () => {
+      expect(stepOf({ state: STATE.scheduled, hasCustomerApproved: true, hasCustomerReviewed: false }, "Customer Approval", []).status).toBe("completed");
+      expect(stepOf({ state: STATE.closed, hasCustomerApproved: false, hasCustomerReviewed: true }, "Customer Review", []).status).toBe("completed");
+    });
+
+    it("ticks everything on a change with the whole record", () => {
+      expect(
+        statusesOf({ state: STATE.closed, hasCustomerApproved: true, hasCustomerReviewed: true }, [
+          APPROVED_PEER,
+          APPROVED_CAB,
+          APPROVED_CUSTOMER_APPROVAL,
+          APPROVED_CUSTOMER_REVIEW,
+        ]),
+      ).toEqual({
+        New: "completed",
+        Assess: "completed",
+        Authorize: "completed",
+        "Customer Approval": "completed",
+        Scheduled: "completed",
+        Implement: "completed",
+        Review: "completed",
+        "Customer Review": "completed",
+        Rollback: "disabled",
+        Closed: "current",
+        Canceled: "disabled",
+      });
+    });
+  });
+
+  // A failed read is not a negative result: what the approvals would say is unknown, never "no record".
+  describe("approvals that could not be read", () => {
+    it("reads a passed step only the approvals could vouch for as 'unavailable', never 'no record' and never a tick", () => {
+      expect(statusesOf({ state: STATE.closed, ...NO_OUTCOME }, APPROVALS_UNAVAILABLE)).toEqual({
+        New: "completed",
+        Assess: "unavailable",
+        Authorize: "unavailable",
+        "Customer Approval": "unavailable",
+        Scheduled: "completed",
+        Implement: "completed",
+        Review: "completed",
+        "Customer Review": "unavailable",
+        Rollback: "disabled",
+        Closed: "current",
+        Canceled: "disabled",
+      });
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Assess", APPROVALS_UNAVAILABLE)).toMatchObject({
+        completed: false,
+        description: WORKFLOW_APPROVAL_UNAVAILABLE,
+      });
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Authorize", APPROVALS_UNAVAILABLE).description).toBe(
+        WORKFLOW_APPROVAL_UNAVAILABLE,
+      );
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Approval", APPROVALS_UNAVAILABLE).description).toBe(
+        WORKFLOW_APPROVAL_UNAVAILABLE,
+      );
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Customer Review", APPROVALS_UNAVAILABLE).description).toBe(
+        WORKFLOW_REVIEW_UNAVAILABLE,
+      );
+      // An empty read is a different answer: it found nothing.
+      expect(stepOf({ state: STATE.closed, ...NO_OUTCOME }, "Assess", []).status).toBe("no-record");
+    });
+
+    it("still counts what the detail records, and a box that is off", () => {
+      expect(
+        statusesOf(
+          { state: STATE.closed, hasCustomerApproved: true, hasCustomerReviewed: false, customerReviewRequired: false },
+          APPROVALS_UNAVAILABLE,
+        ),
+      ).toMatchObject({
+        Assess: "unavailable",
+        Authorize: "unavailable",
+        "Customer Approval": "completed",
+        "Customer Review": "not-required",
+      });
+      for (const customerApprovalRequired of [true, undefined, null]) {
+        expect(
+          stepOf({ state: STATE.closed, ...NO_OUTCOME, customerApprovalRequired }, "Customer Approval", APPROVALS_UNAVAILABLE).status,
+          String(customerApprovalRequired),
+        ).toBe("unavailable");
+      }
+    });
+
+    it("changes nothing for the current step, the steps ahead, or a canceled change request", () => {
+      expect(statusesOf({ state: STATE.authorize, ...NO_OUTCOME }, APPROVALS_UNAVAILABLE)).toMatchObject({
+        Assess: "unavailable",
+        Authorize: "current",
+        "Customer Approval": "pending",
+        "Customer Review": "pending",
+      });
+      const canceled = stagesOf({ state: STATE.canceled, ...NO_OUTCOME }, APPROVALS_UNAVAILABLE);
+      expect(canceled.filter((s) => s.status === "unavailable" || s.completed)).toEqual([]);
+    });
+  });
+
+  describe("the current step and the ones ahead", () => {
+    it("marks the step the change is in current, whatever the record says of it", () => {
+      for (const [state, name] of [
+        [STATE.new, "New"],
+        [STATE.assess, "Assess"],
+        [STATE.authorize, "Authorize"],
+        [STATE.approval, "Customer Approval"],
+        [STATE.scheduled, "Scheduled"],
+        [STATE.implement, "Implement"],
+        [STATE.review, "Review"],
+        [STATE.customerReview, "Customer Review"],
+      ] as const) {
+        const stages = stagesOf({ state, ...NO_OUTCOME }, [APPROVED_PEER, APPROVED_CAB]);
+        expect(stages.filter((s) => s.current).map((s) => s.name), state.label).toEqual([name]);
+      }
+    });
+
+    it("leaves the steps ahead pending, evidence or not", () => {
+      const stages = stagesOf({ state: STATE.assess, hasCustomerApproved: true, hasCustomerReviewed: true }, [APPROVED_CAB]);
+      for (const name of ["Authorize", "Customer Approval", "Scheduled", "Implement", "Review", "Customer Review", "Rollback", "Closed", "Canceled"]) {
+        expect(stages.find((s) => s.name === name)?.status, name).toBe("pending");
+      }
+      expect(stages.find((s) => s.name === "New")?.status).toBe("completed");
+    });
+  });
+
+  describe("Rollback and Canceled, as before", () => {
+    it("shows nothing done for a canceled change request, record or no record", () => {
+      const stages = stagesOf({ state: STATE.canceled, hasCustomerApproved: true, hasCustomerReviewed: true }, [APPROVED_PEER, APPROVED_CAB]);
+      expect(stages.filter((s) => s.completed)).toEqual([]);
+      expect(stages.filter((s) => s.current).map((s) => s.name)).toEqual(["Canceled"]);
+      expect(stages.filter((s) => s.disabled).map((s) => s.name)).toEqual(["Rollback", "Closed"]);
+      expect(stages.filter((s) => s.status === "no-record")).toEqual([]);
+    });
+
+    it("after a rollback: Customer Review and Closed / Canceled are out, and the earlier steps follow the record", () => {
+      expect(statusesOf({ state: STATE.rollback, hasCustomerApproved: true, hasCustomerReviewed: false }, [APPROVED_PEER])).toEqual({
+        New: "completed",
+        Assess: "completed",
+        Authorize: "no-record",
+        "Customer Approval": "completed",
+        Scheduled: "completed",
+        Implement: "completed",
+        Review: "completed",
+        "Customer Review": "disabled",
+        Rollback: "current",
+        Closed: "disabled",
+        Canceled: "disabled",
+      });
+    });
+
+    it("marks Customer Review disabled and not completed when Rollback", () => {
+      const approval = stepOf({ state: { id: "-7", label: "Rollback" }, ...NO_OUTCOME }, "Customer Approval", []);
+      const review = stepOf({ state: { id: "-7", label: "Rollback" }, ...NO_OUTCOME }, "Customer Review", []);
+      expect(approval).toMatchObject({ completed: false, disabled: false, status: "no-record" });
+      expect(review).toMatchObject({ completed: false, disabled: true });
+    });
+  });
+});
+
+describe("the approval stage vocabulary", () => {
+  it("classifies the backend's labels, whatever their case or spacing", () => {
+    expect(classifyChangeRequestApprovalStage("Peer Approval")).toBe("peer");
+    expect(classifyChangeRequestApprovalStage("Assess")).toBe("peer");
+    expect(classifyChangeRequestApprovalStage("CAB Approval")).toBe("cab");
+    expect(classifyChangeRequestApprovalStage("Authorize")).toBe("cab");
+    expect(classifyChangeRequestApprovalStage("ECAB Approval")).toBe("cab");
+    expect(classifyChangeRequestApprovalStage("Review")).toBe("review");
+    expect(classifyChangeRequestApprovalStage("Customer Approval")).toBe("customer-approval");
+    expect(classifyChangeRequestApprovalStage(" customer review ")).toBe("customer-review");
+    for (const other of ["", null, undefined, "Customer Group", "Devops Approval", "Something"]) {
+      expect(classifyChangeRequestApprovalStage(other), String(other)).toBe("other");
+    }
+  });
+
+  it("finds an approved stage of a kind, and nothing on no approvals", () => {
+    expect(hasApprovedChangeRequestStage([APPROVED_PEER, APPROVED_CAB], "cab")).toBe(true);
+    expect(hasApprovedChangeRequestStage([APPROVED_PEER], "cab")).toBe(false);
+    expect(hasApprovedChangeRequestStage([{ ...APPROVED_CAB, status: "approved" }], "cab")).toBe(true);
+    expect(hasApprovedChangeRequestStage([], "peer")).toBe(false);
+    expect(hasApprovedChangeRequestStage(null, "peer")).toBe(false);
+    expect(hasApprovedChangeRequestStage(undefined, "peer")).toBe(false);
+  });
+});
+
+describe("deriveChangeRequestApproval (Approved By / Approved Date)", () => {
+  const cabWith = (...approvers: ChangeRequestApprover[]) => ({ ...APPROVED_CAB, approvers });
+
+  it("uses the record's own approver and date when it has them", () => {
+    expect(
+      deriveChangeRequestApproval({ approvedBy: { id: "u", label: "Recorded Approver" }, approvedOn: "2026-05-01T09:00:00Z" }, [
+        cabWith({ id: "c", name: "Cab Member", status: "APPROVED", respondedOn: "2026-05-02T09:00:00Z" }),
+      ]),
+    ).toEqual({ approvedBy: "Recorded Approver", approvedOn: "2026-05-01T09:00:00Z", source: "record" });
+    // Either value on record is the record: nothing is mixed in from the approvals.
+    expect(deriveChangeRequestApproval({ approvedBy: { id: "u", label: "Recorded Approver" }, approvedOn: null }, [cabWith({ id: "c", name: "Cab Member", status: "APPROVED", respondedOn: "2026-05-02T09:00:00Z" })])).toEqual({
+      approvedBy: "Recorded Approver",
+      approvedOn: null,
+      source: "record",
+    });
+  });
+
+  it("derives them from the CAB stage's approved approver, the earliest answer first", () => {
+    expect(
+      deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [
+        APPROVED_PEER,
+        cabWith(
+          { id: "c2", name: "Later Member", status: "APPROVED", respondedOn: "2026-05-03T09:00:00Z" },
+          { id: "c3", name: "Asked Member", status: "REQUESTED" },
+          { id: "c1", name: "First Member", status: "APPROVED", respondedOn: "2026-05-02T09:00:00Z" },
+        ),
+      ]),
+    ).toEqual({ approvedBy: "First Member", approvedOn: "2026-05-02T09:00:00Z", source: "approvals" });
+  });
+
+  it("keeps 'not available' when nothing can be derived: no CAB stage, one not approved, one whose rows are withheld, no approvals", () => {
+    const none = { approvedBy: null, approvedOn: null, source: "none" };
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [APPROVED_PEER])).toEqual(none);
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [{ ...cabWith({ id: "c", name: "Cab Member", status: "APPROVED" }), status: "PENDING" }])).toEqual(none);
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [cabWith()])).toEqual(none);
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [cabWith({ id: "c", name: "Cab Member", status: "REQUESTED" })])).toEqual(none);
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [])).toEqual(none);
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, null)).toEqual(none);
+    expect(deriveChangeRequestApproval(null, [cabWith({ id: "c", name: "Cab Member", status: "APPROVED" })])).toEqual({
+      approvedBy: "Cab Member",
+      approvedOn: null,
+      source: "approvals",
+    });
+    expect(deriveChangeRequestApproval(undefined)).toEqual(none);
+  });
+
+  // A failed read is not a negative result: "unavailable", which the PDF prints, never "none", which it leaves out.
+  it("says 'unavailable', not 'none', when the record has neither value and the approvals could not be read", () => {
+    expect(deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, APPROVALS_UNAVAILABLE)).toEqual({
+      approvedBy: null,
+      approvedOn: null,
+      source: "unavailable",
+    });
+    expect(
+      deriveChangeRequestApproval({ approvedBy: { id: "u", label: "Recorded Approver" }, approvedOn: null }, APPROVALS_UNAVAILABLE),
+    ).toEqual({ approvedBy: "Recorded Approver", approvedOn: null, source: "record" });
+  });
+
+  it("never takes a peer or customer approver for the approver of record", () => {
+    expect(
+      deriveChangeRequestApproval({ approvedBy: null, approvedOn: null }, [
+        { ...APPROVED_PEER, approvers: [{ id: "p", name: "Peer Member", status: "APPROVED", respondedOn: "2026-05-01T09:00:00Z" }] },
+        APPROVED_CUSTOMER_APPROVAL,
+      ]),
+    ).toEqual({ approvedBy: null, approvedOn: null, source: "none" });
   });
 });
 
@@ -636,12 +1043,12 @@ describe("buildChangeRequestWorkflowStages and a proposed time", () => {
       { ...base, state: scheduled, customerProposal: { startDate: "2030-03-01 09:00:00", answer: "agreed" } },
       "Customer Approval",
     );
-    expect(step).toMatchObject({ completed: true, current: false, disabled: false });
+    expect(step).toMatchObject({ completed: true, current: false, disabled: false, status: "completed" });
     expect(step?.description).toBe("Proposed time accepted by WSO2");
-    // Without a proposed time the change still shows Customer Approval done once in Scheduled.
+    // Without a proposed time, and with nothing else on record, Scheduled alone does not show the step done.
     const without = stageOf({ ...base, state: scheduled }, "Customer Approval");
-    expect(without).toMatchObject({ completed: true, current: false, disabled: false });
-    expect(without?.description).toBe("Customer approval received");
+    expect(without).toMatchObject({ completed: false, current: false, disabled: false, status: "no-record" });
+    expect(without?.description).toBe(WORKFLOW_NO_APPROVAL_RECORDED);
   });
 
   // An `agreed` answer is not cleared when the customers are asked again: back in Customer Approval it must not read as done.
@@ -655,14 +1062,17 @@ describe("buildChangeRequestWorkflowStages and a proposed time", () => {
     expect(step?.description).not.toMatch(/accepted/i);
   });
 
-  it("does not grey the step out in Implement or Review after an accepted proposal or regular approval", () => {
+  it("does not grey the step out in Implement or Review after an accepted proposal or a recorded approval", () => {
     for (const state of [{ id: "-1", label: "Implement" }, { id: "0", label: "Review" }]) {
       const accepted = stageOf(
         { ...base, state, customerProposal: { startDate: "2030-03-01 09:00:00", answer: "agreed" } },
         "Customer Approval",
       );
       expect(accepted, state.label).toMatchObject({ completed: true, disabled: false });
-      expect(stageOf({ ...base, state }, "Customer Approval"), state.label).toMatchObject({ completed: true, disabled: false });
+      expect(stageOf({ ...base, state, hasCustomerApproved: true }, "Customer Approval"), state.label).toMatchObject({
+        completed: true,
+        disabled: false,
+      });
     }
   });
 
@@ -674,12 +1084,13 @@ describe("buildChangeRequestWorkflowStages and a proposed time", () => {
     expect(canceled?.completed).toBe(false);
   });
 
-  it("a pending answer left on a change that moved on is not shown as pending", () => {
+  it("a pending answer left on a change that moved on is neither shown as pending nor as done", () => {
     const step = stageOf(
       { ...base, state: scheduled, customerProposal: { startDate: "2030-03-01 09:00:00", answer: "pending" } },
       "Customer Approval",
     );
-    expect(step?.description).toBe("Customer approval received");
+    expect(step?.description).toBe(WORKFLOW_NO_APPROVAL_RECORDED);
+    expect(step?.status).toBe("no-record");
   });
 });
 

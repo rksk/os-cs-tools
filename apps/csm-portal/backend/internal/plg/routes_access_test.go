@@ -78,7 +78,6 @@ func testAccessConfig() csmhandler.AccessConfig {
 		Admin:                []string{"test-admin"},
 		TimecardApprover:     []string{"test-timecard-approver"},
 		DashboardDesigner:    []string{"test-dashboard-designer"},
-		PlgAdmin:             []string{"test-plg-admin"},
 	}
 }
 
@@ -98,15 +97,8 @@ func testAccessConfig() csmhandler.AccessConfig {
 // back 204.
 func plgMux(t *testing.T) *http.ServeMux {
 	t.Helper()
-	return plgMuxWith(t, testAccessConfig())
-}
-
-// plgMuxWith is plgMux with the access configuration supplied, for the cases
-// that turn a role off to check what an unconfigured deployment does.
-func plgMuxWith(t *testing.T, cfg csmhandler.AccessConfig) *http.ServeMux {
-	t.Helper()
 	mux := http.NewServeMux()
-	guard := csmhandler.NewAccessGuard(cfg)
+	guard := csmhandler.NewAccessGuard(testAccessConfig())
 	route := func(pattern string, perm csmhandler.Permission, h http.HandlerFunc) {
 		mux.HandleFunc(pattern, guard.Require(perm, h))
 	}
@@ -271,53 +263,5 @@ func TestRoutes_EveryRouteIsCovered(t *testing.T) {
 	sort.Strings(missing)
 	for _, pattern := range missing {
 		t.Errorf("%s is registered in plg.go but no entry in this file reaches it — add one to everydayRoutes or playbookManagementRoutes", pattern)
-	}
-}
-
-// TestRoutes_PlgAdminReachesEveryPlgRoute drives the dedicated role through the
-// REAL registered route table.
-//
-// plg_admin is PLG's own administrator: the same reach inside PLG that admin
-// has, without being the portal's administrator. So every one of the 24 routes
-// answers — the 20 everyday ones and the 4 that author a template.
-//
-// Read it against TestRoutes_CsEngineerWorksTheQueueButCannotAuthorPlaybooks,
-// which is the other half of the matrix: cs_engineer gets the same 20 and is
-// refused the same 4. The two together are what stop the roles drifting into
-// each other.
-func TestRoutes_PlgAdminReachesEveryPlgRoute(t *testing.T) {
-	mux := plgMux(t)
-	plgAdmin := []string{"test-plg-admin"}
-
-	all := append(append([]struct{ method, path string }{}, everydayRoutes...), playbookManagementRoutes...)
-	if len(all) != 24 {
-		t.Fatalf("expected 24 PLG routes, found %d — update this test with the route table", len(all))
-	}
-	for _, r := range all {
-		if got := statusAs(t, mux, r.method, r.path, plgAdmin); got != http.StatusNoContent {
-			t.Errorf("%s %s as plg admin: status = %d, want 204", r.method, r.path, got)
-		}
-	}
-}
-
-// TestRoutes_PlgAdminIsAdditive is the deployment guard at route level.
-//
-// AUTH_PLG_ADMIN_ROLES is unset until someone configures it, so an unset
-// variable has to leave the four authoring routes reachable by admin and by
-// nobody else. Expressed here rather than only in the handler package because
-// this is the composition that actually serves requests.
-func TestRoutes_PlgAdminIsAdditive(t *testing.T) {
-	cfg := testAccessConfig()
-	cfg.PlgAdmin = nil
-	mux := plgMuxWith(t, cfg)
-
-	for _, r := range playbookManagementRoutes {
-		if got := statusAs(t, mux, r.method, r.path, []string{"test-admin"}); got != http.StatusNoContent {
-			t.Errorf("%s %s as admin with the role unset: status = %d, want 204 — "+
-				"admin must keep authoring regardless", r.method, r.path, got)
-		}
-		if got := statusAs(t, mux, r.method, r.path, []string{"test-plg-admin"}); got != http.StatusForbidden {
-			t.Errorf("%s %s as an unconfigured plg admin: status = %d, want 403", r.method, r.path, got)
-		}
 	}
 }

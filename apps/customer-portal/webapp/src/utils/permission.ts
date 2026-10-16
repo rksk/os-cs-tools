@@ -204,10 +204,30 @@ function hasSeverityMatch(
  */
 export function shouldRestrictToPrimaryProductionDeployments(
   projectTypeLabel: string | null | undefined,
+  projectFeatures?: ProjectFeatures | null,
 ): boolean {
   return (
     projectTypeLabel === ProjectType.CLOUD_SUPPORT ||
-    projectTypeLabel === ProjectType.CLOUD_EVALUATION_SUPPORT
+    projectTypeLabel === ProjectType.CLOUD_EVALUATION_SUPPORT ||
+    lacksDeploymentAccess(projectFeatures)
+  );
+}
+
+/**
+ * Whether the loaded project features grant neither deployment read nor write
+ * access. Case/SR flows then skip the deployment picker and use the primary
+ * production deployment. Returns false while features are not yet loaded.
+ *
+ * @param projectFeatures - Payload from `/projects/{projectId}/features`.
+ * @returns True when deployment access is explicitly absent.
+ */
+export function lacksDeploymentAccess(
+  projectFeatures?: ProjectFeatures | null,
+): boolean {
+  if (!projectFeatures) return false;
+  return (
+    !projectFeatures.hasDeploymentReadAccess &&
+    !projectFeatures.hasDeploymentWriteAccess
   );
 }
 
@@ -323,10 +343,16 @@ export function filterDeploymentsForCaseCreation<
 >(
   deployments: T[] | undefined,
   projectTypeLabel: string | null | undefined,
+  projectFeatures?: ProjectFeatures | null,
 ): T[] {
   if (projectTypeLabel === undefined) return [];
   const list = deployments ?? [];
-  if (!shouldRestrictToPrimaryProductionDeployments(projectTypeLabel)) {
+  if (
+    !shouldRestrictToPrimaryProductionDeployments(
+      projectTypeLabel,
+      projectFeatures,
+    )
+  ) {
     return list;
   }
   const target = PRIMARY_PRODUCTION_DEPLOYMENT_TYPE_LABEL.toLowerCase();

@@ -88,6 +88,30 @@ describe("AnnouncementDetailsPanel", () => {
     expect(table).toHaveTextContent("4.2.0");
   });
 
+  it("opens a link the author set to target=_blank in a new tab, safely", () => {
+    const { container } = render(
+      <AnnouncementDetailsPanel
+        data={{
+          title: "Advisory",
+          number: "ANN-102",
+          description:
+            '<p><a href="https://example.test/a.pdf" target="_blank" rel="noopener noreferrer">Download here</a> <a href="https://example.test/b">Other</a></p>',
+          status: { id: "1", label: "Open" },
+          createdOn: "2024-01-15T10:00:00Z",
+        } as never}
+        isLoading={false}
+        isError={false}
+        caseId="case-1"
+        projectId="proj-1"
+        onBack={() => {}}
+      />,
+    );
+    const download = container.querySelector('a[href="https://example.test/a.pdf"]');
+    expect(download?.getAttribute("target")).toBe("_blank");
+    expect(download?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(container.querySelector('a[href="https://example.test/b"]')?.hasAttribute("target")).toBe(false);
+  });
+
   it("shows a Security chip when announcementType is SECURITY", () => {
     render(
       <AnnouncementDetailsPanel
@@ -149,6 +173,42 @@ describe("AnnouncementDetailsPanel", () => {
       />,
     );
     expect(screen.getByText("Security")).toBeInTheDocument();
+  });
+
+  it("keeps the action row mounted after close so the feedback modal is not torn down", () => {
+    // Closing an announcement PATCHes state to Closed and then opens
+    // CaseFeedbackModal inside CaseDetailsActionRow. If this panel unmounts
+    // the row as soon as status is Closed, the modal flashes and disappears.
+    const openData = {
+      title: "Maintenance window",
+      number: "ANN-100",
+      description: "<p>Scheduled downtime</p>",
+      status: { id: "1", label: "Open" },
+      createdOn: "2024-01-15T10:00:00Z",
+    };
+    const { rerender } = render(
+      <AnnouncementDetailsPanel
+        data={openData as never}
+        isLoading={false}
+        isError={false}
+        caseId="case-1"
+        projectId="proj-1"
+        onBack={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("case-details-actions")).toBeInTheDocument();
+
+    rerender(
+      <AnnouncementDetailsPanel
+        data={{ ...openData, status: { id: "3", label: "Closed" } } as never}
+        isLoading={false}
+        isError={false}
+        caseId="case-1"
+        projectId="proj-1"
+        onBack={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("case-details-actions")).toBeInTheDocument();
   });
 
   it("renders back button while loading", () => {

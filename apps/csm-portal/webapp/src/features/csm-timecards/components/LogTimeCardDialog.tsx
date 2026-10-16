@@ -202,11 +202,12 @@ function ActivityRow({
     >
       <Typography variant="body2">{label}</Typography>
       <TextField
-        type="number"
+        type="text"
         size="small"
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => onChange(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-        slotProps={{ htmlInput: { min: 0, step: 1, "aria-label": label } }}
+        onFocus={(e) => e.target.select()}
+        slotProps={{ htmlInput: { inputMode: "numeric", "aria-label": label } }}
         onBlur={onBlur}
         sx={{ width: 96 }}
       />

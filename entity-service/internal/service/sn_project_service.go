@@ -135,13 +135,39 @@ const snCreatedOnLayout = "2006-01-02 15:04:05"
 // parseSNDateTime, the Go-side tolerant parser that works around it.
 const snAltCreatedOnLayout = "01-02-2006 15:04:05"
 
+// snSlashCreatedOnLayout is a third datetime format ServiceNow has started
+// sending for these same fields: slash-separated, day-first (DD/MM/YYYY),
+// e.g. "15/10/2026 13:48:20" — observed repeatedly in sn_writeback_failures
+// under entity_type=case_comment, operation=create. Same root cause as
+// snAltCreatedOnLayout (GlideRecord.getDisplayValue() rendering per session
+// locale instead of the canonical getValue()), just a different locale's
+// date ordering/separator.
+const snSlashCreatedOnLayout = "02/01/2006 15:04:05"
+
 // snDateLayout is the date-only format used by the Choreo API for start/end dates.
 const snDateLayout = "2006-01-02"
 
-// parseSNDateTime parses a ServiceNow datetime string, tolerating both formats
-// observed in production. It tries snCreatedOnLayout first — the overwhelmingly
-// common case, and the fast path — and only on failure falls back to
-// snAltCreatedOnLayout.
+// snDateTimeLayout names one of the layouts parseSNDateTime tries, paired
+// with the description logged when it's the one that ends up matching.
+type snDateTimeLayout struct {
+	layout string
+	desc   string
+}
+
+// snDateTimeLayouts is the ordered, tolerant fallback chain parseSNDateTime
+// tries: snCreatedOnLayout first (the overwhelmingly common case, and the
+// fast path), then each known locale variant in the order they were
+// discovered in production. Add a newly observed locale variant here rather
+// than another sequential if/else branch.
+var snDateTimeLayouts = []snDateTimeLayout{
+	{snCreatedOnLayout, "canonical"},
+	{snAltCreatedOnLayout, "alternate MM-DD-YYYY"},
+	{snSlashCreatedOnLayout, "alternate DD/MM/YYYY"},
+}
+
+// parseSNDateTime parses a ServiceNow datetime string, tolerating every
+// format observed in production (snDateTimeLayouts). It tries each layout in
+// order and returns on the first one that matches.
 //
 // Before this helper existed, a bare time.Parse(snCreatedOnLayout, ...) on one
 // of these fields would return an error, and callers turned that into a 500 —
@@ -150,21 +176,27 @@ const snDateLayout = "2006-01-02"
 // and sn_comment_service.go.
 //
 // callSite and field identify where the value came from, for the WARN logged
-// when the fallback format is the one that actually matched: this keeps the
-// upstream format drift visible/monitorable instead of silently masked. If
-// neither format parses, the original snCreatedOnLayout error is returned
-// unchanged — a genuinely malformed value still fails the request.
+// when a fallback format (anything past the first) is the one that actually
+// matched: this keeps upstream format drift visible/monitorable instead of
+// silently masked. If no layout matches, the original snCreatedOnLayout error
+// is returned unchanged — a genuinely malformed value still fails the request.
 func parseSNDateTime(ctx context.Context, callSite, field, value string) (time.Time, error) {
-	t, err := time.Parse(snCreatedOnLayout, value)
-	if err == nil {
+	var firstErr error
+	for i, l := range snDateTimeLayouts {
+		t, err := time.Parse(l.layout, value)
+		if err != nil {
+			if i == 0 {
+				firstErr = err
+			}
+			continue
+		}
+		if i > 0 {
+			slog.WarnContext(ctx, fmt.Sprintf("sn date field in %s format, applied fallback parse", l.desc),
+				"callSite", callSite, "field", field)
+		}
 		return t, nil
 	}
-	if alt, altErr := time.Parse(snAltCreatedOnLayout, value); altErr == nil {
-		slog.WarnContext(ctx, "sn date field in alternate MM-DD-YYYY format, applied fallback parse",
-			"callSite", callSite, "field", field)
-		return alt, nil
-	}
-	return time.Time{}, err
+	return time.Time{}, firstErr
 }
 
 // isProjectContractEnded reports whether endDate's day has fully elapsed as

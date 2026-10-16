@@ -34,7 +34,9 @@ type fakeChat struct {
 	unanswered []notifications.EscalationUnanswered
 	// handoffs is every escalated-to-SME message posted (sre.smeHandoffChat).
 	handoffs []notifications.EscalationHandoff
-	err      error
+	// stopped is every stopped-ladder reply posted (ackChat).
+	stopped []notifications.EscalationStopped
+	err     error
 	// noRoom lists audiences GOOGLE_CHAT_SPACES has no space for. Empty means
 	// every audience has one, which is what the older tests assume.
 	noRoom map[string]bool
@@ -47,6 +49,14 @@ func (f *fakeChat) SendEscalationHandoff(_ context.Context, h notifications.Esca
 		return f.err
 	}
 	f.handoffs = append(f.handoffs, h)
+	return nil
+}
+
+func (f *fakeChat) SendEscalationStopped(_ context.Context, s notifications.EscalationStopped) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.stopped = append(f.stopped, s)
 	return nil
 }
 

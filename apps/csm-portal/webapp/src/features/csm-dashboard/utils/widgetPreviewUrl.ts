@@ -130,6 +130,21 @@ const OP_SEPARATOR = "~";
  * skipped for being value-less. */
 const VALUELESS_OPS = new Set(["isEmpty", "isNotEmpty"]);
 
+/** Writes one filter entry's values under `key`. Two entries with the same
+ * field and op would land on the same key; for `notIn` they simply add up
+ * ("none of A" and "none of B" is "none of A or B"), so the second must extend
+ * the first rather than replace it. Any other repeated op (a second `in` is an
+ * intersection, a second bound is a second bound) has no one-param encoding
+ * and the later entry wins. */
+function setFilterParam(q: URLSearchParams, key: string, op: string, values: string[]): void {
+  const existing = q.get(key);
+  if (op === "notIn" && existing) {
+    q.set(key, [...new Set([...existing.split(","), ...values])].join(","));
+    return;
+  }
+  q.set(key, values.join(","));
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
@@ -282,13 +297,18 @@ export function buildWidgetPreviewHref(params: {
           // it survives the round trip instead of silently decoding back as
           // `in` (which inverted `notIn` -- a tag EXCLUSION became a tag
           // filter).
-          q.set(op === "in" ? entry.field : `${entry.field}${OP_SEPARATOR}${op}`, masked.join(","));
+          setFilterParam(
+            q,
+            op === "in" ? entry.field : `${entry.field}${OP_SEPARATOR}${op}`,
+            op,
+            masked,
+          );
         } else {
           const taggedKey =
             op === "in"
               ? `${NESTED_FILTER_PARAM_PREFIX}${entry.field}`
               : `${NESTED_FILTER_PARAM_PREFIX}${entry.field}${OP_SEPARATOR}${op}`;
-          q.set(taggedKey, masked.join(","));
+          setFilterParam(q, taggedKey, op, masked);
         }
       }
       continue;
@@ -350,6 +370,17 @@ export interface WidgetFilterSummaryEntry {
   value: string;
 }
 
+/** More values than this are summarised by their count. A widget scoped to a
+ * long list of ids (every business service of a team, say) would otherwise
+ * print a chip several screens wide. */
+const MAX_LISTED_FILTER_VALUES = 6;
+
+function summariseFilterValues(values: string[]): string {
+  return values.length > MAX_LISTED_FILTER_VALUES
+    ? `${values.length} values`
+    : values.join(", ");
+}
+
 /**
  * Flattens a widget's (already fully-resolved — no `__current_team__`/`@me`
  * placeholders left in it) filters object into a readable list of active
@@ -378,7 +409,7 @@ export function describeWidgetFilters(
       entries.push({
         field: entry.field,
         op: op === "in" ? undefined : op,
-        value: values.length > 0 ? values.join(", ") : "(no value)",
+        value: values.length > 0 ? summariseFilterValues(values) : "(no value)",
       });
     }
     return entries;
@@ -388,7 +419,7 @@ export function describeWidgetFilters(
     if (RESERVED_PARAMS.has(key)) continue;
     if (isStringArray(value)) {
       if (value.length === 0) continue;
-      entries.push({ field: key, value: value.join(", ") });
+      entries.push({ field: key, value: summariseFilterValues(value) });
     } else if (typeof value === "string" && value.length > 0) {
       entries.push({ field: key, value });
     }

@@ -124,3 +124,45 @@ func TestHandle_NilHub_DoesNotPanic(t *testing.T) {
 		t.Errorf("Handle() error = %v, want nil", err)
 	}
 }
+
+func TestHandle_ForwardedTypes_BroadcastIDOnlyPayload(t *testing.T) {
+	for _, typ := range []string{
+		"case.comment_added",
+		"case.status_changed",
+		"case.assigned",
+		"case.severity_changed",
+		"case.acknowledged",
+	} {
+		t.Run(typ, func(t *testing.T) {
+			hub := &mockHub{}
+			h := NewHandler(hub)
+			record := eventbus.Record{
+				Value: []byte(`{"type":"` + typ + `","entityId":"CASE-5","payload":{"timestamp":"2026-08-13T00:00:00Z","assignee":"jane.doe@example.com","comment":"secret"}}`),
+			}
+			if err := h.Handle(t.Context(), record); err != nil {
+				t.Fatalf("Handle() error = %v, want nil", err)
+			}
+			if len(hub.calls) != 1 {
+				t.Fatalf("hub.Publish called %d times, want 1", len(hub.calls))
+			}
+			want := `{"caseId":"CASE-5","type":"` + typ + `","timestamp":"2026-08-13T00:00:00Z"}`
+			if hub.calls[0].caseID != "CASE-5" || hub.calls[0].payload != want {
+				t.Errorf("Publish = (%q, %q), want (CASE-5, %q)", hub.calls[0].caseID, hub.calls[0].payload, want)
+			}
+		})
+	}
+}
+
+func TestHandle_NonForwardedTypes_DoNotBroadcast(t *testing.T) {
+	for _, typ := range []string{"case.created", "incident.created", "case.unknown"} {
+		hub := &mockHub{}
+		h := NewHandler(hub)
+		record := eventbus.Record{Value: []byte(`{"type":"` + typ + `","entityId":"CASE-6","payload":{}}`)}
+		if err := h.Handle(t.Context(), record); err != nil {
+			t.Fatalf("Handle() error = %v, want nil", err)
+		}
+		if len(hub.calls) != 0 {
+			t.Errorf("hub.Publish called %d times, want 0 for %s", len(hub.calls), typ)
+		}
+	}
+}

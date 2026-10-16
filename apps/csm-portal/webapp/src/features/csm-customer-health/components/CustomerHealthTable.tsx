@@ -24,7 +24,7 @@ import { DownloadIcon, InfoIcon } from "@wso2/oxygen-ui-icons-react";
 import { useTheme } from "@wso2/oxygen-ui";
 import QueryErrorState from "@components/QueryErrorState";
 import { useCustomerHealthSummary } from "../api/useCustomerHealthSummary";
-import { TOOLTIP_TEXT, type AccountSummary, type RiskFilterKey } from "../api/customerHealthTypes";
+import { HEALTH_STATUS_LABELS, TOOLTIP_TEXT, type AccountSummary, type RiskFilterKey } from "../api/customerHealthTypes";
 
 type CustomerHealthTableProps = {
   accountScope: "my-accounts" | "all-accounts";
@@ -106,8 +106,8 @@ export default function CustomerHealthTable(props: CustomerHealthTableProps): Re
           Accounts Overview{" "}
           <Typography component="span" variant="body2" color="text.secondary">
             ({totalCount} accounts found
-            {props.healthStatus === "at_risk" && " · Filtered by: At Risk"}
-            {props.healthStatus === "healthy" && " · Filtered by: Healthy"})
+            {props.healthStatus && HEALTH_STATUS_LABELS[props.healthStatus] &&
+              ` · Filtered by: ${HEALTH_STATUS_LABELS[props.healthStatus]}`})
           </Typography>
         </Typography>
         <Button
@@ -130,7 +130,7 @@ export default function CustomerHealthTable(props: CustomerHealthTableProps): Re
                   Account Name
                 </TableCell>
                 <TableCell rowSpan={2} align="center" sx={{ verticalAlign: "middle", width: "12%" }}>
-                  <HeaderTooltip label="Health Status" text={TOOLTIP_TEXT.healthStatus} />
+                  <HeaderTooltip label="Health Status" sub={null} text={TOOLTIP_TEXT.healthStatus} />
                 </TableCell>
                 <TableCell
                   colSpan={6}
@@ -142,15 +142,15 @@ export default function CustomerHealthTable(props: CustomerHealthTableProps): Re
               </TableRow>
               <TableRow sx={{ bgcolor: "action.hover" }}>
                 {[
-                  { label: "Has Gone Live", tip: TOOLTIP_TEXT.goLive },
-                  { label: "Support Activity (Last 6 Mo)", tip: TOOLTIP_TEXT.support },
-                  { label: "Using EOL Products", tip: TOOLTIP_TEXT.eol },
-                  { label: "Abandoned Migrations", tip: TOOLTIP_TEXT.abandoned },
-                  { label: "Migration Delays", tip: TOOLTIP_TEXT.delays },
-                  { label: "Escalations\n(Last 3 Mo)", tip: TOOLTIP_TEXT.escalations },
-                ].map(({ label, tip }) => (
+                  { label: "Has Gone Live", sub: null, tip: TOOLTIP_TEXT.goLive },
+                  { label: "Support Activity", sub: "(Last 6 Mo)", tip: TOOLTIP_TEXT.support },
+                  { label: "Using EOL Products", sub: null, tip: TOOLTIP_TEXT.eol },
+                  { label: "Abandoned Migrations", sub: null, tip: TOOLTIP_TEXT.abandoned },
+                  { label: "Migration Delays", sub: null, tip: TOOLTIP_TEXT.delays },
+                  { label: "Escalations", sub: "(Last 3 Mo)", tip: TOOLTIP_TEXT.escalations },
+                ].map(({ label, sub, tip }) => (
                   <TableCell key={label} align="center" sx={{ width: "11.5%" }}>
-                    <HeaderTooltip label={label} text={tip} />
+                    <HeaderTooltip label={label} sub={sub} text={tip} />
                   </TableCell>
                 ))}
               </TableRow>
@@ -280,28 +280,33 @@ function StatusIndicator({ isRisk, state, riskShowsYes = false }: { isRisk: bool
   return <Chip label={riskShowsYes ? "N" : "Y"} size="small" color="success" sx={{ fontWeight: 700, minWidth: 32 }} />;
 }
 
-// Renders as plain inline content (no flex row) so the label can wrap onto a
-// second line within a narrow column instead of forcing the table to scroll
-// horizontally -- the info icon is just the last inline "word", so it wraps
-// along with the label text rather than pinning the column to one line. A
-// "\n" in label forces a break at that exact point (e.g. "Escalations" /
-// "(Last 3 Mo)") rather than leaving it to the browser's own word-wrap.
-function HeaderTooltip({ label, text }: { label: string; text: string }) {
-  const lines = label.split("\n");
+// Every risk-indicator header renders as exactly two lines, always in the
+// same shape: the label alone on line 1, and the info icon -- preceded by
+// `sub` (a parenthetical qualifier like "(Last 6 Mo)") when there is one --
+// on line 2. This replaced an earlier version where the icon was just the
+// last inline "word" of a single wrapping block of text: a short label
+// (e.g. "Has Gone Live") stayed on one line with the icon trailing right
+// after it, while a longer one (e.g. "Support Activity (Last 6 Mo)") wrapped
+// the browser's own way, landing the icon on its own line in some columns
+// but not others -- reported live as visibly inconsistent icon placement
+// across the header row. Forcing every column through the same two-line
+// template (label / qualifier+icon) fixes both: the icon is always on line 2
+// in the same relative position, and no column is one line while its
+// neighbours are two.
+function HeaderTooltip({ label, sub, text }: { label: string; sub?: string | null; text: string }) {
   return (
-    <Typography component="span" variant="body2" sx={{ fontWeight: 600, whiteSpace: "normal", lineHeight: 1.3 }}>
-      {lines.map((line, i) => (
-        <span key={i}>
-          {i > 0 && <br />}
-          {line}
-          {i === lines.length - 1 && " "}
-        </span>
-      ))}
-      <Tooltip title={text} arrow placement="top">
-        <Box component="span" sx={{ display: "inline-flex", verticalAlign: "middle", color: "text.secondary", cursor: "help", "&:hover": { color: "text.primary" } }}>
-          <InfoIcon size={14} />
-        </Box>
-      </Tooltip>
+    <Typography component="span" variant="body2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+      <Box component="span" sx={{ display: "block", whiteSpace: "normal" }}>
+        {label}
+      </Box>
+      <Box component="span" sx={{ display: "block", whiteSpace: "nowrap" }}>
+        {sub && `${sub} `}
+        <Tooltip title={text} arrow placement="top">
+          <Box component="span" sx={{ display: "inline-flex", verticalAlign: "middle", color: "text.secondary", cursor: "help", "&:hover": { color: "text.primary" } }}>
+            <InfoIcon size={14} />
+          </Box>
+        </Tooltip>
+      </Box>
     </Typography>
   );
 }

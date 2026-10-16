@@ -282,6 +282,21 @@ func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// CaseVolumeTrend handles POST /cases/volume-trend.
+func (h *CaseHandler) CaseVolumeTrend(w http.ResponseWriter, r *http.Request) {
+	var req domain.CaseVolumeTrendRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.CaseVolumeTrend(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // CreateCaseAttachment handles POST /attachments.
 func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateAttachmentRequest

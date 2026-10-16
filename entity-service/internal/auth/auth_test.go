@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -195,7 +196,7 @@ func TestMiddleware_NilValidatorIsADefensiveFallbackNotADeploymentMode(t *testin
 	if code != http.StatusOK || !called {
 		t.Fatalf("a nil validator must pass through, got %d called=%v", code, called)
 	}
-	if id != (Identity{}) {
+	if !reflect.DeepEqual(id, Identity{}) {
 		t.Fatalf("unvalidated identity must be empty, got %+v", id)
 	}
 }
@@ -335,5 +336,38 @@ func TestNewValidator_FailsWhenJWKSUnreachable(t *testing.T) {
 	cfg.JWKSURL = "http://127.0.0.1:1/jwks"
 	if _, err := NewValidator(context.Background(), cfg); err == nil {
 		t.Fatal("want an error at startup when the JWKS cannot be fetched")
+	}
+}
+
+// The "roles" claim is read for rota access, and comes as one string or a
+// list. Any other shape reads as no roles: the token stays valid, since
+// nothing was ever refused for its roles.
+func TestValidateUserToken_Roles(t *testing.T) {
+	key := newKey(t)
+	v := staticValidator(key)
+	for name, tc := range map[string]struct {
+		claim any
+		want  []string
+	}{
+		"a list":        {[]string{"cs_admin", "cs_engineer"}, []string{"cs_admin", "cs_engineer"}},
+		"one string":    {"cs_admin", []string{"cs_admin"}},
+		"an empty one":  {"", nil},
+		"another shape": {map[string]any{"x": 1}, nil},
+		"none":          {nil, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tok := sign(t, key, userClaims(func(c jwt.MapClaims) {
+				if tc.claim != nil {
+					c["roles"] = tc.claim
+				}
+			}))
+			uc, err := v.ValidateUserToken(tok)
+			if err != nil {
+				t.Fatalf("a token is never refused for its roles: %v", err)
+			}
+			if len(uc.Roles) != len(tc.want) || (len(tc.want) > 0 && !reflect.DeepEqual(uc.Roles, tc.want)) {
+				t.Fatalf("roles = %#v, want %#v", uc.Roles, tc.want)
+			}
+		})
 	}
 }

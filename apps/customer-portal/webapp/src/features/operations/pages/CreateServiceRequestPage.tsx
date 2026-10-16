@@ -257,14 +257,16 @@ export default function CreateServiceRequestPage(): JSX.Element {
   );
   const isPrimaryProductionOnly = shouldRestrictToPrimaryProductionDeployments(
     projectDetails?.type?.label,
+    projectFeatures,
   );
   const projectDeployments = useMemo(
     () =>
       filterDeploymentsForCaseCreation(
         allProjectDeployments,
         projectDetails?.type?.label,
+        projectFeatures,
       ),
-    [allProjectDeployments, projectDetails?.type?.label],
+    [allProjectDeployments, projectDetails?.type?.label, projectFeatures],
   );
   const isDeploymentsLoading = deploymentsQuery.isLoading;
 
@@ -424,6 +426,15 @@ export default function CreateServiceRequestPage(): JSX.Element {
       void deploymentsQuery.fetchNextPage();
     }
   }, [searchParams, allProjectDeployments, deploymentsQuery]);
+
+  // Restricted mode filters client-side, so the permitted deployment may sit on a
+  // later page. Keep paging until one shows up or the pages run out.
+  useEffect(() => {
+    if (!isPrimaryProductionOnly || projectDeployments.length > 0) return;
+    if (deploymentsQuery.hasNextPage && !deploymentsQuery.isFetchingNextPage) {
+      void deploymentsQuery.fetchNextPage();
+    }
+  }, [isPrimaryProductionOnly, projectDeployments.length, deploymentsQuery]);
 
   // For Cloud Support / Cloud Evaluation Support: auto-pick the first primary
   // production deployment so the hidden field still resolves to a valid value.
@@ -714,7 +725,14 @@ export default function CreateServiceRequestPage(): JSX.Element {
           metadata={{ deploymentTypes: baseDeploymentOptions }}
           isDeploymentLoading={isProjectLoading || isDeploymentsLoading}
           isProductDropdownDisabled={isProductDropdownDisabled}
-          isProductLoading={!!selectedDeploymentId && deploymentProductsLoading}
+          isProductLoading={
+            (isPrimaryProductionOnly &&
+              projectDeployments.length === 0 &&
+              (deploymentsQuery.isLoading ||
+                deploymentsQuery.isFetchingNextPage ||
+                !!deploymentsQuery.hasNextPage)) ||
+            (!!selectedDeploymentId && deploymentProductsLoading)
+          }
           onLoadMoreDeployments={() => {
             if (
               deploymentsQuery.hasNextPage &&

@@ -210,7 +210,7 @@ func (h *ScheduleHandler) GetMyLeadTeams(w http.ResponseWriter, r *http.Request)
 		writeServiceError(w, r, err)
 		return
 	}
-	writeScheduleJSON(w, http.StatusOK, map[string]any{"teamKeys": teams})
+	writeScheduleJSON(w, http.StatusOK, teams)
 }
 
 // ApplyScheduleRange handles POST /team-schedule/assignments/apply.

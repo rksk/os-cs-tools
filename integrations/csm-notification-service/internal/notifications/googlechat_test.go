@@ -25,17 +25,13 @@ import (
 	"testing"
 )
 
-// TestSendCaseCreatedAlert_SendsExpectedCard verifies the redesigned
-// case.created card: the case reference leads the header, prefixed with a
-// "🆕" marker (no separate "New case" row — see SendCaseCreatedAlert's own
-// doc comment for why); the header subtitle is the case title alone,
-// unstyled. The body leads with team (muted gray, via teamPart) as its
-// own first line — right under the header — then up to two more
-// plain-text lines, no leading icon on either (dropped for width on
-// mobile — see SendCaseCreatedAlert's own doc comment): severity alone,
-// then product (bold) on its own line, then a visible "View case" link
-// on its own line below it — no button, since navigating to the case
-// isn't a genuine action.
+// TestSendCaseCreatedAlert_SendsExpectedCard verifies the case.created card:
+// no header (a header is always drawn above everything, so the team could
+// never lead), then two text widgets with a divider between them. Above it:
+// team (bold, in the one team gray), severity (colored) and product (bold).
+// Below it: the case reference as a link — with no "new" marker — then the
+// case subject as escaped plain text; no button and no separate "View case" line,
+// since the case reference itself is the link to the case.
 func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,27 +55,27 @@ func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 		t.Fatalf("CardsV2 length = %d, want 1", len(capturedBody.CardsV2))
 	}
 	card := capturedBody.CardsV2[0].Card
-	if card.Header == nil {
-		t.Fatal("Header = nil, want a header leading with the case reference")
+	if card.Header != nil {
+		t.Errorf("Header = %+v, want nil — a header would sit above the team line", card.Header)
 	}
-	if card.Header.Title != "🆕 CS0001001 · WSO2-1000" {
-		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "🆕 CS0001001 · WSO2-1000")
+	top, ref, label := cardParts(t, card)
+	wantTop := `<font color="#5F6368"><b>Team Nova</b></font><br><font color="#DC2626"><b>Critical (P1)</b></font><br><b>WSO2 API Manager</b>`
+	wantRef := `<a href="https://csm.example.com/cases/CASE-1">CS0001001 · WSO2-1000</a>`
+	wantLabel := `Tom & Jerry <script>` // a plain label, so verbatim, not HTML-escaped
+	if top != wantTop {
+		t.Errorf("top text = %q, want %q", top, wantTop)
 	}
-	if card.Header.Subtitle != `Tom & Jerry <script>` {
-		t.Errorf("Header.Subtitle = %q, want the case title verbatim (headers aren't HTML, and team no longer lives here)", card.Header.Subtitle)
+	if ref != wantRef {
+		t.Errorf("case reference text = %q, want %q", ref, wantRef)
 	}
-	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
-		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
-	}
-	want := `<font color="#5F6368">Team Nova</font><br><font color="#DC2626"><b>Critical (P1)</b></font><br><b>WSO2 API Manager</b><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
-		t.Errorf("card text = %q, want %q", got, want)
+	if label != wantLabel {
+		t.Errorf("description label = %q, want %q", label, wantLabel)
 	}
 }
 
 // TestSendCaseCreatedAlert_OmitsEmptyOptionalParts verifies severity/
 // product/team are each dropped entirely (no stray " · " separators) when
-// the caller doesn't supply one — the "View case" link is never omitted.
+// the caller doesn't supply one — the linked case reference is never omitted.
 func TestSendCaseCreatedAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,15 +93,15 @@ func TestSendCaseCreatedAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header.Title != "🆕 CS0001001" {
-		t.Errorf("Header.Title = %q, want just the 🆕 marker and case number with no WSO2CaseID separator", card.Header.Title)
+	top, ref, label := cardParts(t, card)
+	if top != "" {
+		t.Errorf("top text = %q, want none (no team, severity or product)", top)
 	}
-	if card.Header.Subtitle != "" {
-		t.Errorf("Header.Subtitle = %q, want empty when title and team are both empty", card.Header.Subtitle)
+	if want := `<a href="https://csm.example.com/cases/CASE-1">CS0001001</a>`; ref != want {
+		t.Errorf("case reference text = %q, want %q", ref, want)
 	}
-	want := `<a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
-		t.Errorf("card text = %q, want %q", got, want)
+	if label != "" {
+		t.Errorf("description label = %q, want none when there is no title", label)
 	}
 }
 
@@ -117,11 +113,9 @@ func TestSendCaseCreatedAlert_RejectsEmptyCaseNumber(t *testing.T) {
 }
 
 // TestSendSecurityReportAnalysisAlert_SendsExpectedCard verifies the
-// security_report_analysis card's shape: same header convention as
-// SendCaseCreatedAlert (case reference + "🆕" marker as the title, case
-// title as the subtitle, unstyled), but a fixed "Security Report Analysis"
-// label in place of a severity line, since severity is never set for this
-// case type.
+// security_report_analysis card's shape: the same headerless two-block layout
+// as SendCaseCreatedAlert, but a fixed "Security Report Analysis" label in
+// place of a severity line, since severity is never set for this case type.
 func TestSendSecurityReportAnalysisAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,28 +139,28 @@ func TestSendSecurityReportAnalysisAlert_SendsExpectedCard(t *testing.T) {
 		t.Fatalf("CardsV2 length = %d, want 1", len(capturedBody.CardsV2))
 	}
 	card := capturedBody.CardsV2[0].Card
-	if card.Header == nil {
-		t.Fatal("Header = nil, want a header leading with the case reference")
+	if card.Header != nil {
+		t.Errorf("Header = %+v, want nil — a header would sit above the team line", card.Header)
 	}
-	if card.Header.Title != "🆕 CS0001001 · WSO2-1000" {
-		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "🆕 CS0001001 · WSO2-1000")
+	top, ref, label := cardParts(t, card)
+	wantTop := `<font color="#5F6368"><b>Team Nova</b></font><br><b>Security Report Analysis</b><br><b>WSO2 API Manager</b>`
+	wantRef := `<a href="https://csm.example.com/cases/CASE-1">CS0001001 · WSO2-1000</a>`
+	wantLabel := `Tom & Jerry <script>` // a plain label, so verbatim, not HTML-escaped
+	if top != wantTop {
+		t.Errorf("top text = %q, want %q", top, wantTop)
 	}
-	if card.Header.Subtitle != `Tom & Jerry <script>` {
-		t.Errorf("Header.Subtitle = %q, want the case title verbatim", card.Header.Subtitle)
+	if ref != wantRef {
+		t.Errorf("case reference text = %q, want %q", ref, wantRef)
 	}
-	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
-		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
-	}
-	want := `<font color="#5F6368">Team Nova</font><br><b>Security Report Analysis</b><br><b>WSO2 API Manager</b><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
-		t.Errorf("card text = %q, want %q", got, want)
+	if label != wantLabel {
+		t.Errorf("description label = %q, want %q", label, wantLabel)
 	}
 }
 
 // TestSendSecurityReportAnalysisAlert_OmitsEmptyOptionalParts verifies
 // team/product are each dropped entirely when the caller doesn't supply
-// one — the fixed "Security Report Analysis" label and the "View case"
-// link are never omitted.
+// one — the fixed "Security Report Analysis" label and the linked case
+// reference are never omitted.
 func TestSendSecurityReportAnalysisAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,15 +178,15 @@ func TestSendSecurityReportAnalysisAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header.Title != "🆕 CS0001001" {
-		t.Errorf("Header.Title = %q, want just the 🆕 marker and case number with no WSO2CaseID separator", card.Header.Title)
+	top, ref, label := cardParts(t, card)
+	if want := `<b>Security Report Analysis</b>`; top != want {
+		t.Errorf("top text = %q, want %q", top, want)
 	}
-	if card.Header.Subtitle != "" {
-		t.Errorf("Header.Subtitle = %q, want empty when title is empty", card.Header.Subtitle)
+	if want := `<a href="https://csm.example.com/cases/CASE-1">CS0001001</a>`; ref != want {
+		t.Errorf("case reference text = %q, want %q", ref, want)
 	}
-	want := `<b>Security Report Analysis</b><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
-		t.Errorf("card text = %q, want %q", got, want)
+	if label != "" {
+		t.Errorf("description label = %q, want none when there is no title", label)
 	}
 }
 
@@ -278,15 +272,12 @@ func TestSendCaseAcknowledgedAlert_RejectsMissingRequiredArgs(t *testing.T) {
 	}
 }
 
-// TestSendSeverityChangedAlert_SendsExpectedCard verifies the redesigned
-// case.severity_changed card: case reference in the header, the case
-// title alone as subtitle (unstyled). The body leads with team (muted
-// gray, via teamPart) as its own first line, then up to two more
-// plain-text lines, no leading icon on either (dropped for width on
-// mobile — see SendCaseCreatedAlert's own doc comment): an old→new
-// severity transition — both severities colored, not just the new one —
-// on its own line, then a visible "View case" link alone on the next, no
-// button.
+// TestSendSeverityChangedAlert_SendsExpectedCard verifies the
+// case.severity_changed card has the same headerless two-block layout as the
+// created card, differing only in the severity slot. Above the divider: team
+// (bold, colored), the old→new severity transition — both severities colored,
+// not just the new one — and product. Below it: the case reference as a link,
+// then the case subject; no button and no separate "View case" line.
 func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -300,27 +291,27 @@ func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{AudienceSpaces: []GoogleChatAudienceSpace{{Audience: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
-		"High (P2)", "#EA580C", "Low (P4)", "#6B7280", "CS0001002", "WSO2-1001", "Gateway returns 502", "Team Nova", "https://csm.example.com/cases/CASE-1")
+		"High (P2)", "#EA580C", "Low (P4)", "#6B7280", "CS0001002", "WSO2-1001", "WSO2 API Manager", "Gateway returns 502", "Team Nova", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header == nil {
-		t.Fatal("Header = nil, want a header leading with the case reference")
+	if card.Header != nil {
+		t.Errorf("Header = %+v, want nil — a header would sit above the team line", card.Header)
 	}
-	if card.Header.Title != "CS0001002 · WSO2-1001" {
-		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "CS0001002 · WSO2-1001")
+	top, ref, label := cardParts(t, card)
+	wantTop := `<font color="#5F6368"><b>Team Nova</b></font><br><font color="#EA580C"><b>High (P2)</b></font> → <font color="#6B7280"><b>Low (P4)</b></font><br><b>WSO2 API Manager</b>`
+	wantRef := `<a href="https://csm.example.com/cases/CASE-1">CS0001002 · WSO2-1001</a>`
+	wantLabel := `Gateway returns 502`
+	if top != wantTop {
+		t.Errorf("top text = %q, want %q", top, wantTop)
 	}
-	if card.Header.Subtitle != "Gateway returns 502" {
-		t.Errorf("Header.Subtitle = %q, want the case title (team no longer lives here)", card.Header.Subtitle)
+	if ref != wantRef {
+		t.Errorf("case reference text = %q, want %q", ref, wantRef)
 	}
-	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
-		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
-	}
-	want := `<font color="#5F6368">Team Nova</font><br><font color="#EA580C"><b>High (P2)</b></font> → <font color="#6B7280"><b>Low (P4)</b></font><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
-		t.Errorf("card text = %q, want %q", got, want)
+	if label != wantLabel {
+		t.Errorf("description label = %q, want %q", label, wantLabel)
 	}
 }
 
@@ -335,28 +326,27 @@ func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseIDAndTeam(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{AudienceSpaces: []GoogleChatAudienceSpace{{Audience: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
-		"Medium (P3)", "#7C3AED", "Critical (P1)", "#DC2626", "CS0001003", "", "", "", "https://csm.example.com/cases/CASE-1")
+		"Medium (P3)", "#7C3AED", "Critical (P1)", "#DC2626", "CS0001003", "", "", "", "", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header.Title != "CS0001003" {
-		t.Errorf("Header.Title = %q, want just the case number with no WSO2CaseID separator", card.Header.Title)
+	top, ref, label := cardParts(t, card)
+	if want := `<font color="#7C3AED"><b>Medium (P3)</b></font> → <font color="#DC2626"><b>Critical (P1)</b></font>`; top != want {
+		t.Errorf("top text = %q, want %q", top, want)
 	}
-	if card.Header.Subtitle != "" {
-		t.Errorf("Header.Subtitle = %q, want empty when no title was sent", card.Header.Subtitle)
+	if want := `<a href="https://csm.example.com/cases/CASE-1">CS0001003</a>`; ref != want {
+		t.Errorf("case reference text = %q, want %q", ref, want)
 	}
-	text := card.Sections[0].Widgets[0].TextParagraph.Text
-	want := `<font color="#7C3AED"><b>Medium (P3)</b></font> → <font color="#DC2626"><b>Critical (P1)</b></font><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
-	if text != want {
-		t.Errorf("card text = %q, want %q", text, want)
+	if label != "" {
+		t.Errorf("description label = %q, want none when there is no title", label)
 	}
 }
 
 func TestSendSeverityChangedAlert_RejectsMissingCaseNumber(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{AudienceSpaces: []GoogleChatAudienceSpace{{Audience: "api-manager", WebhookURL: "https://example.com"}}})
-	if err := c.SendSeverityChangedAlert(context.Background(), "api-manager", "High (P2)", "#EA580C", "Low (P4)", "#6B7280", "", "WSO2-1000", "title", "Team Nova", "https://example.com/cases/1"); err == nil {
+	if err := c.SendSeverityChangedAlert(context.Background(), "api-manager", "High (P2)", "#EA580C", "Low (P4)", "#6B7280", "", "WSO2-1000", "WSO2 API Manager", "title", "Team Nova", "https://example.com/cases/1"); err == nil {
 		t.Fatal("expected error for empty caseNumber, got nil")
 	}
 }
@@ -459,5 +449,203 @@ func TestGoogleChatClient_HasAudienceSpace(t *testing.T) {
 	}
 	if c.HasAudienceSpace("Castor") {
 		t.Error("HasAudienceSpace(\"Castor\") = true, want false for an unconfigured audience")
+	}
+}
+
+// TestTeamPart pins the team line: bold, one color for every team (there is
+// no per-ABT palette any more — see teamTextColor), the name HTML-escaped, and
+// nothing at all for a blank team so callers can skip it without a blank line.
+func TestTeamPart(t *testing.T) {
+	for _, team := range []string{"Sirius", "Atlas", "Castor", "Rigel", "Draco", "Phoenix", "Vega", "Apollo", "Team Nova"} {
+		want := `<font color="#5F6368"><b>` + team + `</b></font>`
+		if got := teamPart(team); got != want {
+			t.Errorf("teamPart(%q) = %q, want %q", team, got, want)
+		}
+	}
+	if got, want := teamPart("R&D <Core>"), `<font color="#5F6368"><b>R&amp;D &lt;Core&gt;</b></font>`; got != want {
+		t.Errorf("teamPart did not escape the name: got %q, want %q", got, want)
+	}
+	if got := teamPart(""); got != "" {
+		t.Errorf("teamPart(\"\") = %q, want empty", got)
+	}
+}
+
+// TestSendCaseCreatedAlert_EveryTeamLeadsInTheSameColor is the end-to-end
+// check: whichever ABT the case belongs to, the card's first line is that
+// team's name, bold, in the one team color.
+func TestSendCaseCreatedAlert_EveryTeamLeadsInTheSameColor(t *testing.T) {
+	var capturedBody chatCardMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewGoogleChatClient(GoogleChatConfig{AudienceSpaces: []GoogleChatAudienceSpace{{Audience: "Incident Monitor", WebhookURL: srv.URL}}})
+
+	for _, team := range []string{"Sirius", "Atlas", "Phoenix"} {
+		if err := c.SendCaseCreatedAlert(context.Background(), "Incident Monitor",
+			"High (P2)", "#F97316", "CS0378947", "LAPOSTESUB-640", "WSO2 API Manager",
+			"The distributed modules use different libraries", team, "https://csm.example.com/cases/CASE-1"); err != nil {
+			t.Fatalf("SendCaseCreatedAlert(%s) returned error: %v", team, err)
+		}
+		card := capturedBody.CardsV2[0].Card
+		if card.Header != nil {
+			t.Errorf("%s: Header != nil, want none: a header would be drawn above the team", team)
+		}
+		text := card.Sections[0].Widgets[0].TextParagraph.Text
+		if first, want := strings.SplitN(text, "<br>", 2)[0], `<font color="#5F6368"><b>`+team+`</b></font>`; first != want {
+			t.Errorf("%s: first line = %q, want %q", team, first, want)
+		}
+	}
+}
+
+// cardParts asserts the layout every team-showing case.* card shares — one
+// section of [top text, divider, case reference], where top holds team,
+// severity and product and the case reference is a DecoratedText whose text is
+// the linked reference and whose bottom label is the description — and returns
+// the top text and the reference's text and label. The one allowed variation
+// is a card with nothing to put on top (no team, severity or product), which
+// is just [case reference] with no divider and returns an empty top. A card
+// that lost its divider, or grew a button, fails here rather than at every
+// call site.
+func cardParts(t *testing.T, card chatCard) (top, refText, label string) {
+	t.Helper()
+	if card.Header != nil {
+		t.Errorf("Header = %+v, want nil — a header would sit above the team line", card.Header)
+	}
+	if len(card.Sections) != 1 {
+		t.Fatalf("Sections = %d, want 1", len(card.Sections))
+	}
+	w := card.Sections[0].Widgets
+	for i, wd := range w {
+		if wd.ButtonList != nil {
+			t.Errorf("widget %d has a button, want none", i)
+		}
+	}
+	var ref *chatDecoratedText
+	switch len(w) {
+	case 1:
+		ref = w[0].DecoratedText
+		if ref == nil || w[0].Divider != nil || w[0].TextParagraph != nil {
+			t.Fatalf("a one-widget card must be just the case reference: %+v", w)
+		}
+	case 3:
+		if w[0].TextParagraph == nil {
+			t.Fatalf("widget 0 must be the top text paragraph: %+v", w[0])
+		}
+		if w[1].Divider == nil || w[1].TextParagraph != nil || w[1].DecoratedText != nil || w[1].ButtonList != nil {
+			t.Fatalf("widget 1 must be a bare divider: %+v", w[1])
+		}
+		ref = w[2].DecoratedText
+		if ref == nil || w[2].TextParagraph != nil {
+			t.Fatalf("widget 2 must be the case reference (a decoratedText): %+v", w[2])
+		}
+		top = w[0].TextParagraph.Text
+	default:
+		t.Fatalf("widgets = %d, want 3 (top text, divider, case reference) or 1 (reference only): %+v", len(w), w)
+	}
+	if !ref.WrapText {
+		t.Error("case reference WrapText = false, want true so a long reference wraps instead of truncating")
+	}
+	return top, ref.Text, ref.BottomLabel
+}
+
+// TestCaseCardWidgets_Layout pins the wire shape Chat needs and the edge
+// case: a divider marshals as `{}` (a nil pointer would be dropped by
+// omitempty, so no line would be drawn, and any field would be rejected), the
+// reference's description is a `bottomLabel`, and with nothing on top there is
+// neither a top text widget (an empty one is never sent) nor a divider.
+func TestCaseCardWidgets_Layout(t *testing.T) {
+	ref := chatCardWidget{DecoratedText: &chatDecoratedText{Text: "r", BottomLabel: "d", WrapText: true}}
+	cases := []struct {
+		name string
+		top  []string
+		want string
+	}{
+		{"team, severity and product on top", []string{"a", "b"}, `[{"textParagraph":{"text":"a\u003cbr\u003eb"}},{"divider":{}},{"decoratedText":{"text":"r","bottomLabel":"d","wrapText":true}}]`},
+		{"nothing on top", nil, `[{"decoratedText":{"text":"r","bottomLabel":"d","wrapText":true}}]`},
+	}
+	for _, tc := range cases {
+		b, err := json.Marshal(caseCardWidgets(tc.top, ref))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != tc.want {
+			t.Errorf("%s: widgets JSON = %s, want %s", tc.name, b, tc.want)
+		}
+	}
+}
+
+// TestCaseRefWidget pins the widget that replaced the "View case" link: the
+// reference is itself the link and the main text, the description is the
+// smaller bottom label — verbatim, since a label is a plain string — and with
+// no link (no current caller) it degrades to the bold reference rather than an
+// `<a href="">` that goes nowhere. A URL's "&" is escaped for the attribute, as
+// is every other dynamic value that goes into the HTML text.
+func TestCaseRefWidget(t *testing.T) {
+	cases := []struct {
+		name                          string
+		caseNumber, wso2CaseID, title string
+		link                          string
+		wantText, wantLabel           string
+	}{
+		{"linked reference and description", "CS1", "WSO2-1", "Broken <b> & co", "https://csm.example.com/cases/1?a=1&b=2",
+			`<a href="https://csm.example.com/cases/1?a=1&amp;b=2">CS1 · WSO2-1</a>`, `Broken <b> & co`},
+		{"no wso2 case id, no description", "CS1", "", "", "https://csm.example.com/cases/1",
+			`<a href="https://csm.example.com/cases/1">CS1</a>`, ""},
+		{"no link falls back to bold", "CS1", "WSO2-1", "Subject", "",
+			`<b>CS1 · WSO2-1</b>`, "Subject"},
+	}
+	for _, tc := range cases {
+		w := caseRefWidget(tc.caseNumber, tc.wso2CaseID, tc.title, tc.link)
+		if w.DecoratedText == nil {
+			t.Fatalf("%s: not a decoratedText widget: %+v", tc.name, w)
+		}
+		if w.DecoratedText.Text != tc.wantText || w.DecoratedText.BottomLabel != tc.wantLabel || !w.DecoratedText.WrapText {
+			t.Errorf("%s: got text %q label %q wrap %v, want text %q label %q wrap true",
+				tc.name, w.DecoratedText.Text, w.DecoratedText.BottomLabel, w.DecoratedText.WrapText, tc.wantText, tc.wantLabel)
+		}
+	}
+}
+
+// TestCaseCards_HaveNoViewCaseLine guards the product decision that the
+// case-created, security-report-analysis and severity-changed cards carry
+// their one link on the case reference and no longer end on a "View case" line.
+func TestCaseCards_HaveNoViewCaseLine(t *testing.T) {
+	var capturedBody chatCardMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewGoogleChatClient(GoogleChatConfig{AudienceSpaces: []GoogleChatAudienceSpace{{Audience: "a", WebhookURL: srv.URL}}})
+	link := "https://csm.example.com/cases/CASE-1"
+
+	sends := map[string]func() error{
+		"created": func() error {
+			return c.SendCaseCreatedAlert(context.Background(), "a", "High (P2)", "#F97316", "CS1", "W-1", "Prod", "Title", "Sirius", link)
+		},
+		"security_report_analysis": func() error {
+			return c.SendSecurityReportAnalysisAlert(context.Background(), "a", "CS1", "W-1", "Prod", "Title", "Sirius", link)
+		},
+		"severity_changed": func() error {
+			return c.SendSeverityChangedAlert(context.Background(), "a", "High (P2)", "#F97316", "Critical (P1)", "#DC2626", "CS1", "W-1", "Prod", "Title", "Sirius", link)
+		},
+	}
+	for name, send := range sends {
+		if err := send(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		top, ref, label := cardParts(t, capturedBody.CardsV2[0].Card)
+		if strings.Contains(top+ref+label, "View case") {
+			t.Errorf("%s: card still has a \"View case\" line: %q %q %q", name, top, ref, label)
+		}
+		if want := `<a href="` + link + `">CS1 · W-1</a>`; ref != want {
+			t.Errorf("%s: case reference text = %q, want the linked reference %q", name, ref, want)
+		}
+		if label != "Title" {
+			t.Errorf("%s: description label = %q, want %q", name, label, "Title")
+		}
 	}
 }

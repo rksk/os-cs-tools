@@ -147,7 +147,7 @@ describe("uiCommentFromBe", () => {
     expect(ui.bodyHtml).toBe('<p>a &amp; b</p><img src=x onerror="alert(1)">');
   });
 
-  it("falls back from name to email, then Unknown when createdBy is null", () => {
+  it("falls back from name to email, then System when createdBy is null", () => {
     expect(
       uiCommentFromBe({
         ...base,
@@ -156,7 +156,19 @@ describe("uiCommentFromBe", () => {
     ).toBe("x@wso2.com");
     expect(
       uiCommentFromBe({ ...base, createdBy: null }).authorName,
-    ).toBe("Unknown");
+    ).toBe("System");
+  });
+
+  it("shows System, with no email or user ref, when createdBy has neither name nor email", () => {
+    const ui = uiCommentFromBe({
+      ...base,
+      createdBy: { id: null, email: "  ", name: "" },
+    });
+    expect(ui.authorName).toBe("System");
+    expect(ui.authorEmail).toBeUndefined();
+    const none = uiCommentFromBe({ ...base, createdBy: null });
+    expect(none.authorEmail).toBeUndefined();
+    expect(none.authorUser).toBeUndefined();
   });
 });
 
@@ -247,11 +259,11 @@ describe("uiCommentFromBe — /comments/search shape and chat", () => {
     expect(ui.authorRole).toBe("wso2_engineer");
   });
 
-  it("falls back to Unknown when createdBy is null", () => {
+  it("falls back to System when createdBy is null", () => {
     const ui = uiCommentFromBe(
       { ...msg, createdBy: null },
       { context: "case" },
     );
-    expect(ui.authorName).toBe("Unknown");
+    expect(ui.authorName).toBe("System");
   });
 });

@@ -91,7 +91,10 @@ func parseIncidentFilterDate(f domain.IncidentFieldFilter, value string, now tim
 // branch that knows these values are ServiceNow incident_state keys. Any
 // non-negative integer is accepted without validating it against a known
 // state -- see this field's own doc comment on why it's passed through
-// unmapped, unlike "state" (translated via snIncidentStateKeyMap).
+// unmapped, unlike "state" (translated via snIncidentStateKeyMap). The
+// Postgres branch maps them onto its one state column instead
+// (incidentStatesFromSNKeys, incident_service.go), where an unknown key is
+// refused.
 func parseIncidentFilterNonNegativeIntString(f domain.IncidentFieldFilter, value string) (string, error) {
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 0 {

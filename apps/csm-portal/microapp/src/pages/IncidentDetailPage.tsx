@@ -14,26 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Suspense, useRef, useState, type ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, Chip, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
-import { useQueryClient, useQueryErrorResetBoundary, useSuspenseQuery } from "@tanstack/react-query";
-import type { IncidentDetail, IncidentPatchPayloadDto, IncidentState } from "@src/types";
-import { currentUser } from "@src/services/currentUser";
+import { Chip, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
+import { useQueryErrorResetBoundary, useSuspenseQuery } from "@tanstack/react-query";
 import { incidents } from "@src/services/incidents";
 import { ErrorBoundary } from "@components/common/ErrorBoundary";
 import { ErrorState } from "@components/support/ErrorState";
 import { SectionCard } from "@components/case-detail/SectionCard";
 import { CaseActivityFeed } from "@components/case-detail/CaseActivityFeed";
-import { ACTION_BAR_CONTROL_HEIGHT, StateSelect } from "@components/case-detail/CaseActionBar";
-import { IncidentResolutionDialog } from "@components/operations/IncidentResolutionDialog";
-import { toApiError } from "@utils/ApiError";
 import {
   incidentPriorityColor,
   incidentPriorityLabel,
   incidentStateColor,
   incidentStateLabel,
-  INCIDENT_STATE_TRANSITIONS,
 } from "@components/operations/incidentConfig";
 import { formatDate } from "@utils/dateTime";
 
@@ -83,8 +77,6 @@ function IncidentDetailContent({ id }: { id: string }) {
             />
           )}
         </Stack>
-
-        <IncidentActionBar incidentId={id} incident={incident} />
       </Stack>
 
       <SectionCard title="Overview">
@@ -145,111 +137,6 @@ function IncidentDetailContent({ id }: { id: string }) {
         <IncidentCommentsSection incidentId={id} />
       </SectionCard>
     </>
-  );
-}
-
-// States where the work is over — nothing left to pick up, so no "Assign to me".
-const DONE_INCIDENT_STATES: ReadonlySet<IncidentState> = new Set(["RESOLVED", "CLOSED", "CANCELLED"]);
-
-type ResolutionTarget = "RESOLVED" | "CLOSED";
-
-// Lifecycle actions for the incident, following the case detail page: "Assign to me" while the
-// incident isn't the caller's, then a "Change state" dropdown of the legal next states once it is.
-//
-// "Assign to me" claims the incident and, when it hasn't been started yet, moves it to In Progress
-// in the same PATCH — the same claim the webapp's CsmIncidentDetailPage makes when an unassigned
-// incident is moved to IN_PROGRESS. An already-started incident only changes assignee.
-// Resolved/Closed go through IncidentResolutionDialog first, since ServiceNow rejects them without
-// a resolution code and notes.
-function IncidentActionBar({ incidentId, incident }: { incidentId: string; incident: IncidentDetail }) {
-  const queryClient = useQueryClient();
-  const { data: currentUserId } = useSuspenseQuery(currentUser.id());
-  const [isPending, setIsPending] = useState(false);
-  // Synchronous in-flight guard: `isPending` only disables the controls after a re-render, so two
-  // fast taps in the same tick could otherwise both send a PATCH.
-  const inFlight = useRef(false);
-  const [error, setError] = useState<string | null>(null);
-  const [resolutionTarget, setResolutionTarget] = useState<ResolutionTarget | null>(null);
-
-  if (!currentUserId || !incident.state) return null;
-  const state = incident.state;
-  const isMine = incident.assignedTo?.id === currentUserId;
-  const targets = INCIDENT_STATE_TRANSITIONS[state] ?? [];
-
-  const runPatch = (payload: IncidentPatchPayloadDto, fallbackMessage: string): Promise<void> => {
-    if (inFlight.current) return Promise.resolve();
-    inFlight.current = true;
-    setIsPending(true);
-    setError(null);
-    return incidents
-      .patch(incidentId, payload)
-      .then(() => {
-        setResolutionTarget(null);
-        void queryClient.invalidateQueries({ queryKey: ["incident", incidentId] });
-        void queryClient.invalidateQueries({ queryKey: ["incidents"] });
-      })
-      .catch((err) => setError(toApiError(err, fallbackMessage).message))
-      .finally(() => {
-        inFlight.current = false;
-        setIsPending(false);
-      });
-  };
-
-  const handleAssign = (): void => {
-    void runPatch(
-      { assignedEngineerId: currentUserId, ...(state === "NEW" ? { state: "IN_PROGRESS" as const } : {}) },
-      "Could not assign the incident to you.",
-    );
-  };
-
-  const handleTarget = (target: IncidentState): void => {
-    if (target === "RESOLVED" || target === "CLOSED") {
-      setResolutionTarget(target);
-      return;
-    }
-    void runPatch({ state: target }, "Could not update the incident's state.");
-  };
-
-  let action: ReactNode = null;
-  if (!isMine && !DONE_INCIDENT_STATES.has(state)) {
-    action = (
-      <Button
-        variant="contained"
-        size="small"
-        disabled={isPending}
-        onClick={handleAssign}
-        sx={{ borderRadius: 999, height: ACTION_BAR_CONTROL_HEIGHT }}
-      >
-        Assign to me
-      </Button>
-    );
-  } else if (isMine && targets.length > 0) {
-    action = (
-      <StateSelect targets={targets} labelFor={incidentStateLabel} disabled={isPending} onSelect={handleTarget} />
-    );
-  }
-
-  if (!action) return null;
-
-  return (
-    <Stack gap={0.5} alignItems="flex-start">
-      {action}
-      {error && (
-        <Typography variant="caption" color="error.main">
-          {error}
-        </Typography>
-      )}
-      {resolutionTarget && (
-        <IncidentResolutionDialog
-          target={resolutionTarget}
-          isSubmitting={isPending}
-          onClose={() => setResolutionTarget(null)}
-          onSubmit={(fields) =>
-            void runPatch({ state: resolutionTarget, ...fields }, "Could not update the incident's state.")
-          }
-        />
-      )}
-    </Stack>
   );
 }
 

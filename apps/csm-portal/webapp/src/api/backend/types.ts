@@ -432,6 +432,13 @@ export interface BeCaseView {
   /** Free-text resolution/close notes from a prior close/propose-solution. Populated for resolved/closed cases; null otherwise. */
   resolutionNotes?: string | null;
   /**
+   * Close notes from a prior close. Populated for closed cases; null
+   * otherwise. Some data sources return the close notes here and leave
+   * `resolutionNotes` null, so readers should prefer this and fall back to
+   * `resolutionNotes`.
+   */
+  closeNotes?: string | null;
+  /**
    * Service-request cases whose parent points to this case. Populated on every
    * case detail response, not just high-severity cases.
    */
@@ -539,6 +546,15 @@ export interface BeCaseCreatePayload {
   relatedCaseId?: string;
   /** Optional supporting files (raw base64), like the customer portal. */
   attachments?: BeCaseAttachmentPayload[];
+  /**
+   * People to notify about the case, as emails. Send emails for every entry
+   * (works for contacts with no linked user); every entry must be an email or
+   * every entry a user id, never mixed. Registered project contacts are always
+   * eligible, and an internal-user caller may also add internal users; any
+   * ineligible entry rejects the whole create with a 400. Omit (or send empty)
+   * for no watchers.
+   */
+  watchList?: string[];
 }
 
 /** A single answered catalog-item variable in a service-request create. */
@@ -1040,6 +1056,7 @@ export type BeCaseFieldFilterField =
   | "createdOn"
   | "updatedOn"
   | "closedOn"
+  | "resolvedOn"
   | "product"
   | "projectOnboardingStatus"
   | "projectType"
@@ -1051,7 +1068,13 @@ export type BeCaseFieldFilterField =
   | "escalationLevel"
   | "escalation"
   | "number"
-  | "internalId";
+  | "internalId"
+  /** `eq` `"true"`/`"false"`: at least one SLA of the case has breached. */
+  | "slaBreached"
+  /** `eq` `"true"`/`"false"`: the case's account has an active escalation.
+   * Only the ServiceNow data source can answer it; a Postgres-backed
+   * entity-service rejects the request, so the cases list never offers it. */
+  | "accountEscalationActive";
 
 /**
  * `op` enum accepted by {@link BeCaseFieldFilter}, independent of `field` —
@@ -1951,7 +1974,20 @@ export interface BeProjectContact {
   email?: string;
   registrationState?: string;
   notificationsEnabled?: boolean;
+  /**
+   * Project roles this membership's groups grant: PORTAL_USER,
+   * SECURITY_CONTACT, LEAD_USER, ADMIN, BUSINESS_CONTACT.
+   */
   roles?: string[];
+  /**
+   * Account-level roles of the linked user (external, customer, partner,
+   * customer_admin, partner_admin). Separate from `roles`. The contacts
+   * list does not draw chips from this list; Admin comes from the project
+   * role ADMIN. Empty when no user is linked.
+   */
+  accountRoles?: string[];
+  /** True when the linked user is an integration account that never signs in. */
+  isCsIntegrationUser?: boolean;
   /**
    * Whether a contact record is linked to this row at all. False is the same
    * fault an absent `id` signals, restated as an explicit boolean.
@@ -2455,7 +2491,7 @@ export interface BeCreateCaseGithubIssuePayload {
   hotFixRequired?: boolean;
   /** Issue-type label to apply on GitHub (e.g. "Type/Patch", "Type/Incident"). */
   issueTypeLabel?: string;
-  /** Priority label, applied when the type is Discussion. */
+  /** Priority label for Discussion: Priority/Critical(P1), Priority/High(P2), or Priority/Medium(P3). */
   priorityLevel?: string;
   /** Project onboarding status is In-Progress. Adds Onboarding/affected. */
   onboardingInProgress?: boolean;
@@ -2837,6 +2873,15 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
   onHold?: boolean | null;
   /** `read_only` in the ServiceNow dictionary — inherently read-only. */
   labels?: string[];
+  /**
+   * The tags attached to the change request — the same shape as a case's
+   * {@link BeCaseView.tags}, and managed through the same case tag routes
+   * (`POST /cases/{id}/tags`, `DELETE /cases/{id}/tags/{tagId}`, which take a
+   * work item id; `useAddCaseTag` / `useRemoveCaseTag` with this detail's
+   * query key). An array (empty when none) on the PostgreSQL data source;
+   * null/absent when the backend did not load them (another data source).
+   */
+  tags?: BeTag[] | null;
   deployments?: BeEntityRef[];
 
   /** System-maintained, `read_only` in the ServiceNow dictionary. */
@@ -4157,6 +4202,23 @@ export interface BeSearchProductVulnerabilitiesResponse {
   offset: number;
 }
 
+/**
+ * Generic `{id, label}` pair entity-service uses for reference/choice-list
+ * metadata (e.g. `GetVulnerabilityMeta`'s severities). `id` here is a
+ * string-encoded integer (the upstream's own severity id scheme), not a
+ * `BeVulnerabilityPriority` enum value — see `vulnerabilityMetaToPriority`
+ * in `csm-security-center/utils/vulnerabilities.ts` for the mapping.
+ */
+export interface BeChoiceListItem {
+  id: string;
+  label: string;
+}
+
+/** Response of `GET /products/vulnerabilities/meta`. */
+export interface BeVulnerabilityMetaResponse {
+  severities: BeChoiceListItem[];
+}
+
 export type BeTimeCardState =
   | "pending"
   | "submitted"
@@ -4388,8 +4450,11 @@ export type BeWidgetResourceType =
  * resolve the same way `count` does, just once per slice — see
  * {@link BeDashboardWidget.slices} — differing only in how the frontend
  * renders the resolved data (wedges vs. bars), not in how it's fetched.
+ * `line` is its own fixed resolution path — see {@link BeDashboardWidget.days}
+ * and `useCaseVolumeTrendData` — always two named series (Opened/Closed),
+ * never slice/groupBy configured.
  */
-export type BeWidgetShape = "count" | "list" | "pie" | "bar";
+export type BeWidgetShape = "count" | "list" | "pie" | "bar" | "line";
 
 /** Palette key a dashboard config can use to color a pie slice — the same
  * vocabulary `WidgetResourceConfig.iconColor` already uses elsewhere in this
@@ -4469,6 +4534,17 @@ export interface BeDashboardGroupByConfig {
    * `othersCount`. Defaults to `"Others"` when omitted. Meaningless when
    * `bucket` is set, same as `maxGroups`. */
   othersLabel?: string;
+  /** Opts this widget into sending each bucket's click-through to THIS
+   * other resourceType's own detail page (by the bucket's own `key` — e.g.
+   * an account UUID for `field: "account"`) instead of the widget's own
+   * `resourceType`'s list page filtered to that bucket. The one case this
+   * exists for today: "cases grouped by account" linking each bar to that
+   * account's own page rather than a cases list filtered by it. Backend-
+   * enforced at config-load time to only ever accompany `field`, never
+   * `bucket` (a case-feedback date/rating bucket has no detail page to link
+   * to). Omitted is a no-op — every existing groupBy widget keeps its
+   * original list-page click-through unchanged. */
+  linkResourceType?: BeWidgetResourceType;
   /** Drops the synthetic "everything else" bucket entirely instead of
    * rendering it as an extra, non-navigable bar/wedge — for a widget where
    * the long tail beyond `maxGroups` isn't meaningful on its own (e.g. "Top
@@ -4675,6 +4751,35 @@ export interface BeDashboardWidget {
    * a no-op — every existing pie widget's donut+legend rendering is
    * unchanged. See `DashboardPieChart`'s own `inlineLabels` prop. */
   inlineLabels?: boolean;
+  /** Only meaningful for shape "line": how many trailing days (ending
+   * today, UTC) the two-series Opened/Closed trend covers. Defaults to 30
+   * on the backend when omitted; the backend's own `/cases/volume-trend`
+   * endpoint caps this at 90 — a widget configured above that cap fails
+   * dashboard-config validation at load time, not at render time. */
+  days?: number;
+}
+
+/** One day's point in a `shape: "line"` widget's resolved trend — see
+ * {@link BeCaseVolumeTrendResponse}. */
+export interface BeCaseVolumeTrendPoint {
+  /** `YYYY-MM-DD`, UTC. */
+  date: string;
+  count: number;
+}
+
+/** One of the two fixed series ("Opened"/"Closed") in a `shape: "line"`
+ * widget's resolved trend. */
+export interface BeCaseVolumeTrendSeries {
+  label: string;
+  points: BeCaseVolumeTrendPoint[];
+}
+
+/** Response of `POST /cases/volume-trend` — the sole data source for a
+ * `shape: "line"` widget. Always exactly two series, in a fixed order
+ * (Opened, then Closed); every series carries the same set of dates. */
+export interface BeCaseVolumeTrendResponse {
+  days: number;
+  series: BeCaseVolumeTrendSeries[];
 }
 
 /**

@@ -260,3 +260,39 @@ describe("AdvancedFiltersBuilder — createdOn custom date", () => {
     expect(onUpdateRow).not.toHaveBeenCalled();
   });
 });
+
+describe("AdvancedFiltersBuilder — Yes/No value", () => {
+  /** An `slaBreached` row has no typed `CasesFilters` slot, so it lives in the
+   * generic `advancedFilters` array. */
+  function slaBreachedRow(values: string[]): UnifiedFilterRow {
+    return { field: "slaBreached", op: "eq", values, origin: "array", arrayIndex: 0 };
+  }
+
+  function valueSelect(): HTMLElement {
+    return screen.getByRole("combobox", { name: "Value" });
+  }
+
+  it("shows the stored answer", () => {
+    renderWithRow(slaBreachedRow(["true"]));
+
+    expect(valueSelect()).toHaveTextContent("Yes");
+  });
+
+  it("reports the picked answer as the row's single value", () => {
+    const { onUpdateRow } = renderWithRow(slaBreachedRow(["true"]));
+
+    fireEvent.mouseDown(valueSelect());
+    fireEvent.click(screen.getByRole("option", { name: "No" }));
+
+    expect(onUpdateRow).toHaveBeenCalledWith(
+      expect.objectContaining({ field: "slaBreached" }),
+      { field: "slaBreached", op: "eq", values: ["false"] },
+    );
+  });
+
+  it("starts with nothing chosen when no answer is stored yet", () => {
+    renderWithRow(slaBreachedRow([]));
+
+    expect(valueSelect()).not.toHaveTextContent(/Yes|No/);
+  });
+});

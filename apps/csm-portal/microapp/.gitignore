@@ -37,6 +37,3 @@ public/config.js
 /playwright-report/
 /blob-report/
 /playwright/.cache/
-
-# Super App bundle
-*.zip

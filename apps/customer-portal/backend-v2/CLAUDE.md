@@ -543,6 +543,21 @@ key set is pinned by `TestMapChangeRequestDetails_ExposesOnlyTheCustomerFields`,
 to be added there on purpose. The PATCH response is unchanged (id / updatedOn / updatedBy); the webapp re-reads
 the detail after an answer.
 
+**`customerApprovalRequired` / `customerReviewRequired` on the change-request detail.** The two requirement
+boxes (does the change need the customer's approval before it is scheduled / the customer's review before it is
+closed), decoded from entity-service's detail as `*bool` (`entity.ChangeRequest`) and passed on **only with a
+read entity-service computed for a customer on the PostgreSQL data source**, which is the read that carries
+`customerCanAnswer` (`dto.MapChangeRequestDetails`). They are the REQUIREMENT, never the outcome
+(`hasCustomerApproved` / `hasCustomerReviewed`), and the webapp's workflow reads them for one thing: a customer
+step the change passed with no approval on record says "Not required" when its box is false, "No approval
+recorded" when it is true or unknown. Absent means *unknown*, never "not required": on the previous system's data
+source entity-service does not compute the boxes and sends them as `false`, so a plain pass-through would call a
+change "not required" on no evidence
+(`TestMapChangeRequestDetails_PassesTheRequirementBoxesOnlyWithACustomerRead`,
+`TestGetChangeRequest_CarriesTheRequirementBoxesOnlyWithACustomerRead`). The webapp reads the approvals
+(`GET /change-requests/{id}/approvals`, unchanged: internal stages as label + status only) for the rest of its
+evidence; see the customer webapp's README, "Change request workflow: evidence, not position".
+
 **Which change requests a customer sees is entity-service's decision, never this API's.** A customer sees a
 change request once it was *designated* to them (it reached Customer Approval and/or Customer Review and they
 were one of the contacts asked), in every later state (Scheduled,
@@ -764,8 +779,23 @@ operations, not things a customer should be able to set on their own case. `dto.
 description, watchList, resolutionCode, cause, closeNotes), and
 `dto.BuildEntityUpdateCaseRequest(id, req)` builds the full entity-service request from it, leaving
 every excluded field zero/nil — so even if a client sends `{"workState": "ongoing"}`, it's silently
-dropped (the portal struct has no such field) rather than forwarded. The same pattern applies to
-`POST /cases/{id}/comments`: entity-service accepts `type: work_note|comment|activity`, but
+dropped (the portal struct has no such field) rather than forwarded.
+
+**`PATCH /cases/{id}`'s `stateKey` carries no transition-legality check in this backend, on
+purpose.** An earlier version of this handler carried its own copy of the legacy ServiceNow
+scoped-app's `ALLOWED_STATE_TRANSITIONS` table (which from→to state moves a customer may make), the
+same way `apps/csm-portal/backend`'s own `state.go` ports the agent-facing
+`SUPERUSER_STATE_TRANSITIONS` table. That copy was removed once entity-service grew its own,
+authoritative enforcement of both legacy tables (see entity-service's own CLAUDE.md, "Case
+state-transition legality") — entity-service now rejects an illegal move with 400 regardless of
+which BFF forwarded the request, so duplicating the table here would only risk drifting out of sync
+with the real rule. `PatchCase` just forwards `stateKey` (translated to entity-service's domain enum
+via `dto.BuildEntityUpdateCaseRequest`) and relays whatever response entity-service gives back,
+including its refusal. If a future endpoint here needs to know a case's own legal next states ahead
+of calling entity-service (e.g. to render which actions a customer may take), read entity-service's
+own `case_state_transitions.go` rather than reintroducing a local copy.
+
+The same pattern applies to `POST /cases/{id}/comments`: entity-service accepts `type: work_note|comment|activity`, but
 `dto.BuildEntityCreateCaseCommentRequest` always forces `type: comment`, regardless of what the
 client sends — a customer should never be able to create an internal work-note or system-activity
 entry. When you add a write endpoint, check the entity-service request struct for fields that read

@@ -35,3 +35,14 @@ export function isCloudSupportSubscription(
 ): boolean {
   return !!type && CLOUD_SUPPORT_SUBSCRIPTION_TYPES.includes(type);
 }
+
+/**
+ * Coarse pre-filter for offering "Create service request": managed-cloud and
+ * Cloud Support projects. Per-project eligibility is still decided after
+ * selection by `BeProject.hasSr` and `features.hasServiceRequestReadAccess`,
+ * so a Cloud Support project without a PDP subscription is still blocked
+ * there. `cloud_evaluation_support` is deliberately excluded.
+ */
+export function canRaiseServiceRequests(type: string | null | undefined): boolean {
+  return type === "managed_cloud_subscription" || type === "cloud_support";
+}

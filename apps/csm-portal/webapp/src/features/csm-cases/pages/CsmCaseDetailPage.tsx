@@ -145,6 +145,7 @@ import { CreateGithubIssueDialog } from "@features/csm-cases/components/CreateGi
 import { isCloudSupportSubscription } from "@features/csm-projects/utils/subscriptionType";
 import { usePostCaseGithubIssue } from "@features/csm-cases/api/useCsmCaseGithubIssue";
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
+import { ACTIVITY_PAGE_SIZE } from "@features/csm-cases/utils/caseActivityFeed";
 import { scrollToFragmentWithRetry } from "@features/csm-cases/utils/permalinkScroll";
 import CaseMetaBand from "@features/csm-cases/components/CaseMetaBand";
 import RefreshButton from "@components/RefreshButton";
@@ -175,6 +176,7 @@ import {
 } from "@features/csm-timecards/api/useTimeCards";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
+import { githubIssueCaseTags } from "@features/csm-cases/utils/githubIssueCaseTags";
 import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
@@ -210,6 +212,7 @@ import type {
   CreateRelatedCaseNavState,
   CreateServiceRequestFromCaseNavState,
   CsmCaseComment,
+  CsmCaseDetail,
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -429,6 +432,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     canAddWorkNotes,
     canUseOperations,
     canUseTimeCardsAndUpdates,
+    canViewSlaTab,
   } = usePortalAccess();
   // A worknote_creator without full write may still add an internal work
   // note -- and nothing else on this page. The composer is locked to
@@ -640,9 +644,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // the tab-label counts below; each widget still runs its own scoped query
   // when its tab mounts, deduped against this one by react-query's cache.
   // Skipped for announcements (undefined caseId disables the query) since
-  // neither tab is shown there.
+  // neither tab is shown there, and for a caller without canViewSlaTab, since
+  // the tab itself is hidden for them.
   const { data: slaList } = useGetCsmCaseSlas(
-    isAnnouncement ? undefined : caseId,
+    isAnnouncement || !canViewSlaTab ? undefined : caseId,
   );
   const {
     data: callRequests,
@@ -764,6 +769,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  // Activity timeline window: only this many entries render (the rest load as
+  // the user scrolls, or all at once via "Load all"). `status` mirrors what
+  // the feed reports so the button can hide once nothing is left to load.
+  const [activityLimit, setActivityLimit] = useState(ACTIVITY_PAGE_SIZE);
+  const [activityStatus, setActivityStatus] = useState({ total: 0, shown: 0 });
   // Reports composerOpen up to the in-app case-tabs layer, purely so closing
   // this case's tab from the tab strip can confirm first — see the hook's
   // own doc comment for what this signal does and doesn't guarantee.
@@ -866,6 +876,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setPrevCaseId(caseId);
     setFeedback(null);
     setComposerOpen(false);
+    setActivityLimit(ACTIVITY_PAGE_SIZE);
+    setActivityStatus({ total: 0, shown: 0 });
     // The lifted composer draft (see clearComposerDraft above) is per-case: a
     // draft left over from the previous case must not appear — or be
     // submittable — against the newly opened one.
@@ -928,11 +940,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
           activeTab === "time" ||
           activeTab === "call-requests" ||
           activeTab === "tasks")) ||
-      (activeTab === "time" && !canUseTimeCardsAndUpdates)
+      (activeTab === "time" && !canUseTimeCardsAndUpdates) ||
+      (activeTab === "sla" && !canViewSlaTab)
     ) {
       setActiveTab("activities");
     }
-  }, [isAnnouncement, activeTab, setActiveTab, canUseTimeCardsAndUpdates]);
+  }, [isAnnouncement, activeTab, setActiveTab, canUseTimeCardsAndUpdates, canViewSlaTab]);
 
   // Twitter-style permalinks: when the URL has a fragment matching an entry id,
   // jump to the Activities tab and hand off to `scrollToFragmentWithRetry`,
@@ -1265,19 +1278,51 @@ export default function CsmCaseDetailPage(): JSX.Element {
             showError("Could not assign the case to you: no signed-in email found.");
             return;
           }
-          patchCase.mutate(
-            { assigneeEmail: currentUserEmail },
-            {
-              onSuccess: () =>
-                void startWork(
-                  LIFECYCLE_TOAST.assign_to_me,
-                  LIFECYCLE_SEVERITY.assign_to_me,
-                  showSuccess,
-                ),
-              onError: (err) =>
-                showError("Could not assign the case to you.", err),
-            },
-          );
+          // The button was rendered from a view that may be stale: another
+          // engineer can have started work on this case since it loaded. The
+          // assignment PATCH below would still land (the backend only rejects
+          // the follow-up work_in_progress -> work_in_progress state move),
+          // silently handing the case to a second engineer. So read the case
+          // fresh and bail out BEFORE any write if it's already in progress.
+          void (async () => {
+            let fresh: CsmCaseDetail | null | undefined;
+            try {
+              const result = await refetchCaseDetail();
+              // A failed refetch resolves with the previous (stale) data, so
+              // treat it like a failed read: never write blind.
+              fresh = result?.isError ? undefined : result?.data;
+            } catch {
+              fresh = undefined;
+            }
+            if (!fresh) {
+              showError(
+                "Couldn't check the latest state of this case. Please try again.",
+              );
+              return;
+            }
+            if (fresh.state === "work_in_progress") {
+              const holder = fresh.assigneeIsMe
+                ? "you"
+                : fresh.assigneeName || "another engineer";
+              showError(
+                `This case is already in progress with ${holder}. Refresh to see the latest state.`,
+              );
+              return;
+            }
+            patchCase.mutate(
+              { assigneeEmail: currentUserEmail },
+              {
+                onSuccess: () =>
+                  void startWork(
+                    LIFECYCLE_TOAST.assign_to_me,
+                    LIFECYCLE_SEVERITY.assign_to_me,
+                    showSuccess,
+                  ),
+                onError: (err) =>
+                  showError("Could not assign the case to you.", err),
+              },
+            );
+          })();
           return;
         }
 
@@ -1563,6 +1608,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
       startWork,
       resolveOngoingConflict,
       proceedLifecycleTransition,
+      refetchCaseDetail,
       currentUserEmail,
       navigate,
     ],
@@ -2649,6 +2695,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             (t) =>
               !t.hidden &&
               (t.id !== "time" || canUseTimeCardsAndUpdates) &&
+              (t.id !== "sla" || canViewSlaTab) &&
               (!isAnnouncement ||
                 (t.id !== "related" &&
                   t.id !== "watchers" &&
@@ -2840,11 +2887,24 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   />
                 )}
               </Box>
-              <RefreshButton
-                onRefresh={refreshActivitiesTab}
-                isFetching={isRefreshingActivities}
-                label="Refresh activity timeline"
-              />
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                {!(isCommentsLoading || isChatLoading || isActivityLoading || isFeedbackLoading) &&
+                  activityStatus.shown < activityStatus.total && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => setActivityLimit(Infinity)}
+                      aria-label="Load all activity timeline entries"
+                    >
+                      Load all
+                    </Button>
+                  )}
+                <RefreshButton
+                  onRefresh={refreshActivitiesTab}
+                  isFetching={isRefreshingActivities}
+                  label="Refresh activity timeline"
+                />
+              </Box>
             </Box>
 
             {isCommentsLoading || isChatLoading || isActivityLoading || isFeedbackLoading ? (
@@ -2904,6 +2964,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   }
                   onEditComment={canWrite ? onEditComment : undefined}
                   onDeleteComment={canWrite ? onDeleteComment : undefined}
+                  entryWindow={{
+                    limit: activityLimit,
+                    onLimitChange: setActivityLimit,
+                    onStatusChange: setActivityStatus,
+                    revealEntryId: permalinkFragment || undefined,
+                  }}
                 />
               </>
             )}
@@ -3133,8 +3199,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
         </Box>
       )}
 
-      {activeTab === "sla" &&
-        caseId && <CaseSlaTable caseId={caseId} />}
+      {activeTab === "sla" && canViewSlaTab && caseId && (
+        <CaseSlaTable caseId={caseId} />
+      )}
 
       {activeTab === "attachments" && (
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
@@ -3496,9 +3563,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   // done reading the confirmation.
                   setActiveTab("activities");
                   setGithubIssueResult(res);
-                  const tagLabels = ["s_dp"];
-                  if (payload.regression) tagLabels.push("s_rg");
-                  if (payload.reason === "migration") tagLabels.push("migration");
+                  const tagLabels = githubIssueCaseTags(payload);
                   // Each mutateAsync promise is handled on its own. Per-call
                   // callbacks on mutate are replaced by the next call.
                   void Promise.all(

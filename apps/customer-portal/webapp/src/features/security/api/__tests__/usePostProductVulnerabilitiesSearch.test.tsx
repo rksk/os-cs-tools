@@ -92,4 +92,48 @@ describe("usePostProductVulnerabilitiesSearch", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("Invalid filter payload");
   });
+
+  it("does not refetch a fresh cached result when staleTime is raised", async () => {
+    const payload = { productVulnerabilities: [], totalRecords: 0, offset: 0, limit: 10 };
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(payload),
+    } as Response);
+
+    const first = renderHook(
+      () => usePostProductVulnerabilitiesSearch(request),
+      { wrapper },
+    );
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+
+    // A second consumer of the same request (e.g. the details page) that
+    // tolerates a 5 minute old result must reuse the cache entry.
+    const second = renderHook(
+      () => usePostProductVulnerabilitiesSearch(request, { staleTime: 5 * 60 * 1000 }),
+      { wrapper },
+    );
+    expect(second.result.current.data).toEqual(payload);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches on mount by default because the result is immediately stale", async () => {
+    const payload = { productVulnerabilities: [], totalRecords: 0, offset: 0, limit: 10 };
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(payload),
+    } as Response);
+
+    const first = renderHook(
+      () => usePostProductVulnerabilitiesSearch(request),
+      { wrapper },
+    );
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+
+    renderHook(() => usePostProductVulnerabilitiesSearch(request), { wrapper });
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledTimes(2));
+  });
 });

@@ -104,6 +104,19 @@ export const PRODUCT_VULNERABILITIES_ALL_VERSIONS_LABEL = "All Versions";
 
 export const PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT = 5000;
 
+/**
+ * Shared "fetch everything" search request. The Component Analysis list and the
+ * vulnerability details page both use this exact object so they resolve to the
+ * same React Query cache entry and the ~1500 rows are downloaded once.
+ */
+export const PRODUCT_VULNERABILITIES_FETCH_ALL_REQUEST = {
+  filters: {},
+  pagination: { offset: 0, limit: PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT },
+};
+
+/** How long the details page trusts the cached fetch-all result before refetching. */
+export const PRODUCT_VULNERABILITIES_AFFECTED_STALE_TIME_MS = 5 * 60 * 1000;
+
 export const SECURITY_REPORT_ANALYSIS_PAGE_SIZE = 10;
 
 export const SECURITY_REPORT_ANALYSIS_TITLE = "Security Report Analysis";
@@ -181,6 +194,21 @@ export const VULNERABILITY_DETAILS_JUSTIFICATION_LABEL = "Justification";
 export const VULNERABILITY_DETAILS_RESOLUTION_LABEL = "Resolution";
 
 export const VULNERABILITY_DETAILS_NOT_APPLICABLE_LABEL = "Not Applicable";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_TITLE = "Affected Products";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_SUBTITLE =
+  "Products and versions in which this vulnerability was found";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_EMPTY_MESSAGE =
+  "No affected products found.";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_LOAD_ERROR_MESSAGE =
+  "Could not load the affected products.";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_CURRENT_LABEL = "Viewing";
+
+export const VULNERABILITY_AFFECTED_PRODUCTS_COMPONENTS_LABEL = "Components";
 
 export const VULNERABILITY_DETAILS_NO_RESOLUTION_MESSAGE =
   "No justification or resolution information available.";

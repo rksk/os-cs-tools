@@ -31,6 +31,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,6 +69,12 @@ type UserClaims struct {
 	// this one, not Subject, is the field to correlate a request across
 	// services by.
 	UserID string
+	// Roles is the token's "roles" claim: the portal roles the identity
+	// provider gave this person (csm-portal-backend's AUTH_*_ROLES map them
+	// onto portal permissions). Read for the few decisions here that belong to
+	// a portal role rather than to anything stored -- who may grant rota
+	// access -- and empty when the token carries none.
+	Roles []string
 }
 
 // ClientClaims is what a decoded client-credentials assertion yields. See
@@ -77,10 +84,11 @@ type ClientClaims struct {
 }
 
 type tokenClaims struct {
-	Email    string `json:"email"`
-	UserID   string `json:"userid"`
-	ClientID string `json:"client_id"`
-	AZP      string `json:"azp"`
+	Email    string    `json:"email"`
+	UserID   string    `json:"userid"`
+	Roles    claimList `json:"roles"`
+	ClientID string    `json:"client_id"`
+	AZP      string    `json:"azp"`
 	jwt.RegisteredClaims
 }
 
@@ -149,7 +157,31 @@ func (v *Validator) ValidateUserToken(raw string) (UserClaims, error) {
 	if strings.TrimSpace(c.Email) == "" {
 		return UserClaims{}, errors.New("token missing email claim")
 	}
-	return UserClaims{Email: strings.TrimSpace(c.Email), Subject: c.Subject, UserID: strings.TrimSpace(c.UserID)}, nil
+	return UserClaims{Email: strings.TrimSpace(c.Email), Subject: c.Subject, UserID: strings.TrimSpace(c.UserID), Roles: c.Roles}, nil
+}
+
+// claimList is a claim the identity provider sends as one string or as an
+// array of them ("roles" is a plain string when a person holds one role).
+//
+// Lenient by design: a "roles" claim in some other shape reads as no roles
+// rather than failing the token. Nothing here was ever refused for its roles,
+// and a token that is otherwise valid must not start being rejected because a
+// claim only one decision reads is not the shape that decision expects.
+type claimList []string
+
+func (l *claimList) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		if one = strings.TrimSpace(one); one != "" {
+			*l = []string{one}
+		}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err == nil {
+		*l = many
+	}
+	return nil
 }
 
 // ExtractClientID reads the client id (client_id claim, falling back to azp)

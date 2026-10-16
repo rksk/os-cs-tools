@@ -40,6 +40,14 @@ const mockCaseComments = [
     createdBy: "support@wso2.com",
     isEscalated: false,
   },
+  {
+    id: "c3",
+    content: "Automated note without an author.",
+    type: "comments",
+    createdOn: "2026-02-12T09:00:00",
+    createdBy: null,
+    isEscalated: false,
+  },
 ];
 
 const mockUserDetails = {
@@ -130,6 +138,13 @@ describe("CaseDetailsActivityPanel", () => {
       screen.getByText(/Thanks for the detailed recommendations/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Show more/)).toBeInTheDocument();
+  });
+
+  it("shows System as the author of a comment with a null createdBy", () => {
+    renderPanel();
+    expect(screen.getByText(/Automated note without an author/)).toBeInTheDocument();
+    expect(screen.getAllByText("System").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
   });
 
   it("should show Support Engineer chip for non-current-user comments", () => {

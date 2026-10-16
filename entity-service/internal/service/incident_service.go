@@ -18,7 +18,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -36,6 +38,48 @@ func incidentStateToEnum(s domain.IncidentState) string {
 		return "CANCELED"
 	}
 	return string(s)
+}
+
+// incidentStateBySNKey is snIncidentStateKeyMap read the other way: ServiceNow's
+// raw numeric incident state to the domain state, for the one filter that
+// arrives as raw keys ("incidentStateKeys"). A key outside it (4, 5, ...) has
+// no state on this data source.
+var incidentStateBySNKey = func() map[int]domain.IncidentState {
+	m := make(map[int]domain.IncidentState, len(snIncidentStateKeyMap))
+	for state, key := range snIncidentStateKeyMap {
+		m[key] = state
+	}
+	return m
+}()
+
+// incidentStatesFromSNKeys maps the raw `incident_state` keys of an
+// "incidentStateKeys" filter onto incident_state_enum labels, preserving the
+// order given and dropping repeats. An unknown key is rejected rather than
+// skipped: a skipped key narrows nothing and an "in" list that ends up empty
+// would read as "no state filter" to the repository, silently widening the
+// result.
+func incidentStatesFromSNKeys(f domain.IncidentFieldFilter) ([]string, error) {
+	var states []string
+	seen := make(map[string]bool, len(f.Values))
+	for _, v := range f.Values {
+		raw, err := parseIncidentFilterNonNegativeIntString(f, v)
+		if err != nil {
+			return nil, err
+		}
+		key, _ := strconv.Atoi(raw) // validated as a non-negative integer above
+		state, ok := incidentStateBySNKey[key]
+		if !ok {
+			return nil, &apierror.ValidationError{Msg: fmt.Sprintf(
+				"filters: field %q value %q has no equivalent incident state on this data source (known keys: 1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed, 8 Canceled)",
+				f.Field, v)}
+		}
+		label := incidentStateToEnum(state)
+		if !seen[label] {
+			seen[label] = true
+			states = append(states, label)
+		}
+	}
+	return states, nil
 }
 
 // incidentResolutionCodeToEnum maps domain.IncidentResolutionCode to
@@ -99,26 +143,6 @@ func incidentLifecycleUpdateFromRequest(req domain.UpdateIncidentRequest) (u rep
 	if req.ResolutionNotes != nil {
 		u.ResolutionNotes = req.ResolutionNotes
 		ok = true
-	}
-	if req.Impact != nil {
-		if !validIncidentImpact[*req.Impact] {
-			return u, false, &apierror.ValidationError{Msg: "invalid impact: " + string(*req.Impact)}
-		}
-		v := string(*req.Impact)
-		u.Impact = &v
-		ok = true
-	}
-	if req.Urgency != nil {
-		if !validIncidentUrgency[*req.Urgency] {
-			return u, false, &apierror.ValidationError{Msg: "invalid urgency: " + string(*req.Urgency)}
-		}
-		v := string(*req.Urgency)
-		u.Urgency = &v
-		ok = true
-	}
-	if u.Impact != nil || u.Urgency != nil {
-		// ServiceNow's priority lookup runs on update too, so priority follows impact and urgency here as well.
-		u.PriorityFor = priorityFromImpactUrgency
 	}
 	return u, ok, nil
 }
@@ -248,7 +272,18 @@ func incidentPriorityToEnum(p domain.IncidentPriority) (string, bool) {
 // SN-raw-integer translation (parsedIncidentFilters.StateKeys). Also maps
 // req.Filters.Priorities (a separate, top-level field, not part of the
 // generic Filters array) the same way.
+//
+// "incidentStateKeys" is ServiceNow's legacy `incident_state` field, which
+// this schema has no column for: there is only `state`. The keys are mapped
+// onto it (1 New, 2 In Progress, ...), the closest thing this data source
+// has, and ANDed with any "state" filter, exactly as the two filters combine
+// on ServiceNow. Dropping it instead (as this parser did) answered 200 with
+// every incident of every state for a request that asked only for the open
+// ones.
 func parseIncidentFieldFiltersPostgres(f domain.SearchIncidentsFilters, now time.Time) (priorities, states, serviceIDs, assignedUserIDs []string, madeSla, slaViolated *bool, createdStartDate, createdEndDate *time.Time, err error) {
+	var stateKeyStates []string
+	stateKeysSupplied := false
+
 	for _, p := range f.Priorities {
 		enumValue, ok := incidentPriorityToEnum(p)
 		if !ok {
@@ -353,6 +388,21 @@ func parseIncidentFieldFiltersPostgres(f domain.SearchIncidentsFilters, now time
 				return nil, nil, nil, nil, nil, nil, nil, nil, err
 			}
 			madeSla = &b
+		case "incidentStateKeys":
+			if f.Op != "in" {
+				return nil, nil, nil, nil, nil, nil, nil, nil, badIncidentFilterCombo(f)
+			}
+			if err := requireIncidentFilterValues(f); err != nil {
+				return nil, nil, nil, nil, nil, nil, nil, nil, err
+			}
+			mapped, err := incidentStatesFromSNKeys(f)
+			if err != nil {
+				return nil, nil, nil, nil, nil, nil, nil, nil, err
+			}
+			stateKeysSupplied = true
+			for _, label := range mapped {
+				stateKeyStates = appendUniqueString(stateKeyStates, label)
+			}
 		case "productName":
 			if f.Op != "in" {
 				return nil, nil, nil, nil, nil, nil, nil, nil, badIncidentFilterCombo(f)
@@ -364,7 +414,45 @@ func parseIncidentFieldFiltersPostgres(f domain.SearchIncidentsFilters, now time
 			// product-name-to-service mapping on this data source.
 		}
 	}
+	if stateKeysSupplied {
+		if len(states) == 0 {
+			states = stateKeyStates
+		} else {
+			// Both filters constrain the same column, so the incident must
+			// satisfy both: keep the states they share.
+			states = intersectStrings(states, stateKeyStates)
+			if len(states) == 0 {
+				// An empty list would mean "no state filter", the opposite of
+				// "no incident can match".
+				return nil, nil, nil, nil, nil, nil, nil, nil, &apierror.ValidationError{Msg: "filters: state and incidentStateKeys select no state in common"}
+			}
+		}
+	}
 	return priorities, states, serviceIDs, assignedUserIDs, madeSla, slaViolated, createdStartDate, createdEndDate, nil
+}
+
+// appendUniqueString appends v to list unless it is already there.
+func appendUniqueString(list []string, v string) []string {
+	for _, existing := range list {
+		if existing == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+// intersectStrings returns the elements of a that are also in b, in a's order.
+func intersectStrings(a, b []string) []string {
+	var out []string
+	for _, v := range a {
+		for _, w := range b {
+			if v == w {
+				out = appendUniqueString(out, v)
+				break
+			}
+		}
+	}
+	return out
 }
 
 type incidentService struct {

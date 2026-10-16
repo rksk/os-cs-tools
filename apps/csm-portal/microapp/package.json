@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "package": "sh scripts/package-microapp.sh",
     "lint": "eslint .",
     "test": "vitest run",
     "preview": "vite preview",

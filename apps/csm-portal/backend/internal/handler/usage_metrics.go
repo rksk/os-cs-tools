@@ -19,17 +19,19 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
 )
 
-// usageMetricsServiceNowClient abstracts the ServiceNow operations used by
+// usageMetricsClient abstracts the entity-service operations used by
 // UsageMetricsHandler.
-type usageMetricsServiceNowClient interface {
+type usageMetricsClient interface {
 	GetAllProjects(ctx context.Context, search string) ([]byte, error)
 	SearchInstanceMetrics(ctx context.Context, payload []byte) ([]byte, error)
 	GetInstanceMetricsStats(ctx context.Context, payload []byte) ([]byte, error)
@@ -44,19 +46,19 @@ type usageMetricsServiceNowClient interface {
 }
 
 // UsageMetricsHandler handles HTTP requests for the usage-metrics domain
-// (/usage-metrics/*), delegating to ServiceNow's custom scoped-app API.
+// (/usage-metrics/*), delegating to entity-service.
 // Every endpoint in this domain requires PermUsageMetricsViewer directly —
 // unlike this domain's former siblings (Customer Health, User Scan, the
-// SLA/Time/CS project reports), it is NOT layered on top of the narrower
+// time-log project report), it is NOT layered on top of the narrower
 // PermViewerAccess (Viewer-only) gate; see PermUsageMetricsViewer's own doc
 // comment for why.
 type UsageMetricsHandler struct {
-	client      usageMetricsServiceNowClient
+	client      usageMetricsClient
 	accessGuard *AccessGuard
 }
 
 // NewUsageMetricsHandler creates a UsageMetricsHandler.
-func NewUsageMetricsHandler(client usageMetricsServiceNowClient, accessGuard *AccessGuard) *UsageMetricsHandler {
+func NewUsageMetricsHandler(client usageMetricsClient, accessGuard *AccessGuard) *UsageMetricsHandler {
 	return &UsageMetricsHandler{client: client, accessGuard: accessGuard}
 }
 
@@ -106,11 +108,7 @@ func (h *UsageMetricsHandler) GetProjects(w http.ResponseWriter, r *http.Request
 
 	result, err := h.client.GetAllProjects(r.Context(), search)
 	if err != nil {
-		if isUnsafeQueryValue(err) {
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-			return
-		}
-		slog.ErrorContext(r.Context(), "servicenow GetAllProjects failed", "err", err)
+		slog.ErrorContext(r.Context(), "GetAllProjects failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to list projects.")
 		return
 	}
@@ -128,7 +126,7 @@ func (h *UsageMetricsHandler) SearchInstanceMetrics(w http.ResponseWriter, r *ht
 	}
 	result, err := h.client.SearchInstanceMetrics(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchInstanceMetrics failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchInstanceMetrics failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search instance metrics.")
 		return
 	}
@@ -146,7 +144,7 @@ func (h *UsageMetricsHandler) GetInstanceMetricsStats(w http.ResponseWriter, r *
 	}
 	result, err := h.client.GetInstanceMetricsStats(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetInstanceMetricsStats failed", "err", err)
+		slog.ErrorContext(r.Context(), "GetInstanceMetricsStats failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve instance metrics stats.")
 		return
 	}
@@ -164,7 +162,7 @@ func (h *UsageMetricsHandler) SearchInstanceUsages(w http.ResponseWriter, r *htt
 	}
 	result, err := h.client.SearchInstanceUsages(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchInstanceUsages failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchInstanceUsages failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search instance usages.")
 		return
 	}
@@ -182,7 +180,7 @@ func (h *UsageMetricsHandler) GetInstanceUsagesStats(w http.ResponseWriter, r *h
 	}
 	result, err := h.client.GetInstanceUsagesStats(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetInstanceUsagesStats failed", "err", err)
+		slog.ErrorContext(r.Context(), "GetInstanceUsagesStats failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve instance usages stats.")
 		return
 	}
@@ -200,7 +198,7 @@ func (h *UsageMetricsHandler) SearchDeployments(w http.ResponseWriter, r *http.R
 	}
 	result, err := h.client.SearchUsageMetricsDeployments(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchUsageMetricsDeployments failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchUsageMetricsDeployments failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search deployments.")
 		return
 	}
@@ -218,7 +216,7 @@ func (h *UsageMetricsHandler) SearchProjects(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := h.client.SearchUsageMetricsProjects(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchUsageMetricsProjects failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchUsageMetricsProjects failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search projects.")
 		return
 	}
@@ -236,7 +234,7 @@ func (h *UsageMetricsHandler) SearchDeployedProducts(w http.ResponseWriter, r *h
 	}
 	result, err := h.client.SearchUsageMetricsDeployedProducts(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchUsageMetricsDeployedProducts failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchUsageMetricsDeployedProducts failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search deployed products.")
 		return
 	}
@@ -254,7 +252,7 @@ func (h *UsageMetricsHandler) SearchInstances(w http.ResponseWriter, r *http.Req
 	}
 	result, err := h.client.SearchUsageMetricsInstances(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow SearchUsageMetricsInstances failed", "err", err)
+		slog.ErrorContext(r.Context(), "SearchUsageMetricsInstances failed", "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search instances.")
 		return
 	}
@@ -262,7 +260,7 @@ func (h *UsageMetricsHandler) SearchInstances(w http.ResponseWriter, r *http.Req
 }
 
 // deployedProductMetricsDateRange is the minimal shape read out of the
-// request body to run ValidateMetricsDateRange before forwarding — the
+// request body to run validateMetricsDateRange before forwarding — the
 // original raw body (not a re-marshaled struct) is what's actually
 // forwarded upstream.
 type deployedProductMetricsDateRange struct {
@@ -270,16 +268,43 @@ type deployedProductMetricsDateRange struct {
 	EndDate   string `json:"endDate"`
 }
 
+// maxMetricsDateRangeDays mirrors Ballerina's
+// MAX_METRICS_DATE_RANGE_DAYS constant.
+const maxMetricsDateRangeDays = 366
+
+// validateMetricsDateRange mirrors Ballerina's validateMetricsDateRange:
+// startDate/endDate must be valid YYYY-MM-DD dates, endDate must not be
+// before startDate, and the span between them must not exceed
+// maxMetricsDateRangeDays. Returns a caller-facing error message (safe to
+// return directly in a 400 response, matching how the Ballerina original's
+// message is shown to the caller) or nil if the range is valid.
+func validateMetricsDateRange(startDate, endDate string) error {
+	const layout = "2006-01-02"
+	start, startErr := time.Parse(layout, startDate)
+	end, endErr := time.Parse(layout, endDate)
+	if startErr != nil || endErr != nil {
+		return errors.New("startDate and endDate must be valid dates in YYYY-MM-DD format")
+	}
+	diff := end.Sub(start)
+	if diff < 0 {
+		return errors.New("endDate must not be before startDate")
+	}
+	if diff > maxMetricsDateRangeDays*24*time.Hour {
+		return fmt.Errorf("date range must not exceed %d days", maxMetricsDateRangeDays)
+	}
+	return nil
+}
+
 // validateDeployedProductDateRange decodes startDate/endDate out of body and
-// validates them via servicenow.ValidateMetricsDateRange. Writes a 400 and
-// returns false on an invalid range or unparseable body.
+// validates them via validateMetricsDateRange. Writes a 400 and returns
+// false on an invalid range or unparseable body.
 func validateDeployedProductDateRange(w http.ResponseWriter, body []byte) bool {
 	var dateRange deployedProductMetricsDateRange
 	if err := json.Unmarshal(body, &dateRange); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return false
 	}
-	if err := servicenow.ValidateMetricsDateRange(dateRange.StartDate, dateRange.EndDate); err != nil {
+	if err := validateMetricsDateRange(dateRange.StartDate, dateRange.EndDate); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return false
 	}
@@ -305,7 +330,7 @@ func (h *UsageMetricsHandler) GetDeployedProductMetrics(w http.ResponseWriter, r
 	}
 	result, err := h.client.GetDeployedProductMetrics(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetDeployedProductMetrics failed", "deployedProductID", id, "err", err)
+		slog.ErrorContext(r.Context(), "GetDeployedProductMetrics failed", "deployedProductID", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve deployed product metrics.")
 		return
 	}
@@ -331,7 +356,7 @@ func (h *UsageMetricsHandler) GetDeployedProductUsageCounts(w http.ResponseWrite
 	}
 	result, err := h.client.GetDeployedProductUsageCounts(r.Context(), id, body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "servicenow GetDeployedProductUsageCounts failed", "deployedProductID", id, "err", err)
+		slog.ErrorContext(r.Context(), "GetDeployedProductUsageCounts failed", "deployedProductID", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve deployed product usage counts.")
 		return
 	}

@@ -32,11 +32,14 @@ type GenerateRotaMonthRequest struct {
 	// the first of the month, or today when the month has started. A day in
 	// the past is refused: the rota that was worked is history.
 	From *string `json:"from,omitempty"`
-	// NightCrew is team key -> user ids: the people a lead chose to work that
-	// team's TZ3 for the month. Their TZ3 L1, L2 and L3 go round them night by
-	// night, and they work no other zone. A team left out keeps the usual
-	// nights (TZ3 hours marked, or the rotation). Each id must be a member of
-	// that team.
+	// NightCrew is team key -> user ids: the people a lead chose to work TZ3
+	// for the month. TZ3 is one crew for the whole rota -- the night cover for
+	// every team -- so every team's choices together are that crew: the
+	// rota's TZ3 L1, L2 and L3 go round them night by night, and they work no
+	// other zone. Nobody else is put on TZ3: a tier they cannot cover on a
+	// night is left empty and warned about. With nobody chosen, nights are
+	// drawn as usual (TZ3 hours marked, or the rotation). Each id must be a
+	// member of the team it is listed under.
 	NightCrew map[string][]string `json:"nightCrew,omitempty"`
 }
 
@@ -96,4 +99,26 @@ type GenerateRotaMonthResponse struct {
 	Turns            []GeneratedRotaTurn     `json:"turns"`
 	LieuLeave        []GeneratedLieuLeave    `json:"lieuLeave"`
 	Warnings         []RotaGenerationWarning `json:"warnings"`
+}
+
+// RotaNightCrewResponse is the TZ3 people chosen for each month of a rota, as
+// the last real generation of that month recorded them.
+type RotaNightCrewResponse struct {
+	RotaCode string `json:"rotaCode"`
+	// Months is every month asked for, in order; a month with nobody chosen
+	// (never generated with a crew, or generated again without one) has an
+	// empty crew.
+	Months []RotaNightCrewMonth `json:"months"`
+}
+
+// RotaNightCrewMonth is one month's chosen TZ3 people.
+type RotaNightCrewMonth struct {
+	Month string                `json:"month"` // YYYY-MM
+	Crew  []RotaNightCrewMember `json:"crew"`
+}
+
+// RotaNightCrewMember is one chosen person and the team they were chosen under.
+type RotaNightCrewMember struct {
+	UserID  string `json:"userId"`
+	TeamKey string `json:"teamKey"`
 }

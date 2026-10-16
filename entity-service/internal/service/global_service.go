@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -94,6 +95,13 @@ var globalSearchSortFields = map[string]repository.SearchSortField{
 	"updatedOn": repository.SearchSortUpdatedOn,
 }
 
+// normalizeGlobalSearchQuery trims leading and trailing whitespace so a stray
+// space in the search box does not defeat an otherwise exact match. A
+// whitespace-only query becomes empty, i.e. no query.
+func normalizeGlobalSearchQuery(q string) string {
+	return strings.TrimSpace(q)
+}
+
 // GlobalSearch implements GlobalService. It searches projects and cases the
 // caller is allowed to see (AccessService.ResolveScope): a customer's results
 // are limited to projects they are a registered contact of and the cases in
@@ -116,7 +124,7 @@ func (s *globalService) GlobalSearch(ctx context.Context, req domain.GlobalSearc
 	var query string
 	var tables []string
 	if req.Filters != nil {
-		query, tables = req.Filters.SearchQuery, req.Filters.Tables
+		query, tables = normalizeGlobalSearchQuery(req.Filters.SearchQuery), req.Filters.Tables
 		if err := validateSearchQuery(query); err != nil {
 			return domain.GlobalSearchResponse{}, err
 		}

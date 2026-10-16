@@ -53,10 +53,11 @@ const (
 	ChannelCall Channel = "call"
 	// ChannelChat posts to the incident's Google Chat space instead.
 	ChannelChat Channel = "chat"
-	// ChannelBoth calls and posts. A failure of either is a failure of the
-	// attempt, so the call is retried and the card may be posted twice —
-	// acceptable, since a duplicate card costs a glance and a missed page
-	// costs an incident.
+	// ChannelBoth calls and posts. The call decides the attempt: a call that
+	// fails is retried and the card may be posted twice — acceptable, since a
+	// duplicate card costs a glance and a missed page costs an incident. A
+	// card that fails once the call has gone out is retried on its own, never
+	// with the call.
 	ChannelBoth Channel = "both"
 	// ChannelLog writes what it would have done and does nothing else.
 	//
@@ -203,6 +204,9 @@ type chatSender interface {
 	// SendEscalationHandoff tells an SRE space its incident went to the SMEs
 	// (sre.smeHandoffChat).
 	SendEscalationHandoff(ctx context.Context, h notifications.EscalationHandoff) error
+	// SendEscalationStopped replies in a ladder's thread that it stopped
+	// (ackChat).
+	SendEscalationStopped(ctx context.Context, s notifications.EscalationStopped) error
 	// HasAudienceSpace reports whether GOOGLE_CHAT_SPACES has a room for the
 	// audience. Asked before every rung, because the client itself treats an
 	// unknown audience as a quiet success.
@@ -234,6 +238,8 @@ type chatNotifier struct {
 	// as a struct literal, as tests do -- means "Incident Monitor", so the zero
 	// value routes the same as an unconfigured deployment.
 	audience string
+	// reply posts the rung as a short reply under the incident's card, which only its INCIDENT_CHAT_SPACES space has.
+	reply bool
 }
 
 // roomFor is the audience a card goes to.
@@ -298,7 +304,7 @@ func (n chatNotifier) Deliver(ctx context.Context, plan Plan, call PlannedCall) 
 		NextIn:      nextIn,
 		// An incident's rungs reply under its "Incident Reported" card, so the space shows the escalation in that one thread.
 		ThreadKey: t.chatThreadKey(),
-		Reply:     !t.isCase(),
+		Reply:     n.reply,
 		Team:      t.Team,
 		// Both stamps in IST, because every shift boundary this ladder routes
 		// by is expressed in it. Rendering either in the reader's own zone
@@ -317,10 +323,10 @@ func (n chatNotifier) Deliver(ctx context.Context, plan Plan, call PlannedCall) 
 
 // fanoutChat posts one rung's card to several Chat spaces: an incident with
 // no SRE team of its own goes to every space sre.teamlessChats names. It is
-// one notifier on purpose. A rung whose delivery fails is retried whole --
-// its call included -- so a space that fails while another succeeds counts as
-// delivered (the failure is logged), and only a rung no space took is
-// retried, transient failures first.
+// one notifier on purpose. A failed card is retried to every space at once,
+// reposting it wherever it landed, so a space that fails while another
+// succeeds counts as delivered (the failure is logged), and only a rung no
+// space took is retried, transient failures first.
 type fanoutChat struct {
 	chats []chatNotifier
 }

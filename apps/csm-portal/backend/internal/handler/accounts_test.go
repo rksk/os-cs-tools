@@ -23,8 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/viewer"
 )
 
 func TestGetAccount(t *testing.T) {
@@ -411,69 +410,50 @@ func TestUpdateAccountTeams(t *testing.T) {
 }
 
 type mockViewerAccountClient struct {
-	getEscalationsByAccountFn func(ctx context.Context, accountNumber string, offset, limit int) ([]servicenow.EscalationDetail, error)
-	escalateCaseFn            func(ctx context.Context, accountNumber, caseNumber string, request servicenow.EscalationRequest, submittedByEmail string) (servicenow.EscalationResponse, error)
+	getEscalationsByAccountFn func(ctx context.Context, accountNumber string, offset, limit int) ([]viewer.EscalationDetail, error)
 }
 
-func (m *mockViewerAccountClient) GetEscalationsByAccount(ctx context.Context, accountNumber string, offset, limit int) ([]servicenow.EscalationDetail, error) {
+func (m *mockViewerAccountClient) GetEscalationsByAccount(ctx context.Context, accountNumber string, offset, limit int) ([]viewer.EscalationDetail, error) {
 	return m.getEscalationsByAccountFn(ctx, accountNumber, offset, limit)
 }
-func (m *mockViewerAccountClient) EscalateCase(ctx context.Context, accountNumber, caseNumber string, request servicenow.EscalationRequest, submittedByEmail string) (servicenow.EscalationResponse, error) {
-	return m.escalateCaseFn(ctx, accountNumber, caseNumber, request, submittedByEmail)
-}
 
-func TestSplEscalateCase_RequiresEscalationPermission(t *testing.T) {
-	h := NewViewerAccountHandler(&mockViewerAccountClient{}, viewerAccessGuard)
-
-	body := `{"justification":"urgent","requestSource":"Customer","reason":"Inactivity","severity":"High Severity"}`
-	r := httptest.NewRequest(http.MethodPost, "/spl/accounts/ACC1/cases/CS1/escalate", strings.NewReader(body))
-	// SPL access (sales_solutions) but no escalator/cs_engineer/admin — passes
-	// PermViewerAccess, fails the additional PermEscalate check.
-	r = r.WithContext(middleware.WithUserInfo(r.Context(), &middleware.UserInfo{
-		Email: "sales@example.com", UserID: "u-sales", Roles: []string{"test-sales-solutions"},
-	}))
-	r.SetPathValue("accountId", "ACC1")
-	r.SetPathValue("caseId", "CS1")
-	w := httptest.NewRecorder()
-	h.EscalateCase(w, r)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestSplEscalateCase_RejectsInvalidPayload(t *testing.T) {
-	h := NewViewerAccountHandler(&mockViewerAccountClient{}, viewerAccessGuard)
-
-	tests := []string{
-		`{"justification":"","requestSource":"Customer","reason":"Inactivity","severity":"High Severity"}`,
-		`{"justification":"x","requestSource":"Bogus","reason":"Inactivity","severity":"High Severity"}`,
-		`{"justification":"x","requestSource":"Customer","reason":"Bogus","severity":"High Severity"}`,
-		`{"justification":"x","requestSource":"Customer","reason":"Inactivity","severity":"Bogus"}`,
-		`not-json`,
-	}
-	for _, body := range tests {
-		r := withUser(httptest.NewRequest(http.MethodPost, "/spl/accounts/ACC1/cases/CS1/escalate", strings.NewReader(body)))
-		r.SetPathValue("accountId", "ACC1")
-		r.SetPathValue("caseId", "CS1")
-		w := httptest.NewRecorder()
-		h.EscalateCase(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-	}
-}
-
-func TestSplEscalateCase_Conflict(t *testing.T) {
+func TestGetAccountEscalations_Success(t *testing.T) {
+	var gotAccountID string
+	var gotOffset, gotLimit int
 	client := &mockViewerAccountClient{
-		escalateCaseFn: func(_ context.Context, _, _ string, _ servicenow.EscalationRequest, _ string) (servicenow.EscalationResponse, error) {
-			return servicenow.EscalationResponse{}, servicenow.ErrEscalationConflict
+		getEscalationsByAccountFn: func(_ context.Context, accountID string, offset, limit int) ([]viewer.EscalationDetail, error) {
+			gotAccountID, gotOffset, gotLimit = accountID, offset, limit
+			return []viewer.EscalationDetail{{ID: "esc-1", Severity: "3", State: "Escalated", EscalatedOn: "2026-01-01"}}, nil
 		},
 	}
 	h := NewViewerAccountHandler(client, viewerAccessGuard)
-
-	body := `{"justification":"urgent","requestSource":"Customer","reason":"Inactivity","severity":"High Severity"}`
-	r := withUser(httptest.NewRequest(http.MethodPost, "/spl/accounts/ACC1/cases/CS1/escalate", strings.NewReader(body)))
+	r := withUser(httptest.NewRequest(http.MethodGet, "/accounts/ACC1/escalations?offset=5&limit=20", nil))
 	r.SetPathValue("accountId", "ACC1")
-	r.SetPathValue("caseId", "CS1")
 	w := httptest.NewRecorder()
-	h.EscalateCase(w, r)
-	assertStatus(t, w, http.StatusConflict)
+	h.GetAccountEscalations(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if gotAccountID != "ACC1" || gotOffset != 5 || gotLimit != 20 {
+		t.Errorf("client called with accountID=%q offset=%d limit=%d", gotAccountID, gotOffset, gotLimit)
+	}
+	got := decodeJSON[[]viewer.EscalationDetail](t, w)
+	if len(got) != 1 || got[0].ID != "esc-1" {
+		t.Errorf("response = %+v, want the single esc-1 row", got)
+	}
+}
+
+func TestGetAccountEscalations_UnknownAccountIs404(t *testing.T) {
+	client := &mockViewerAccountClient{
+		getEscalationsByAccountFn: func(_ context.Context, _ string, _, _ int) ([]viewer.EscalationDetail, error) {
+			return nil, viewer.ErrAccountNotFound
+		},
+	}
+	h := NewViewerAccountHandler(client, viewerAccessGuard)
+	r := withUser(httptest.NewRequest(http.MethodGet, "/accounts/ACC1/escalations?offset=0&limit=10", nil))
+	r.SetPathValue("accountId", "ACC1")
+	w := httptest.NewRecorder()
+	h.GetAccountEscalations(w, r)
+	assertStatus(t, w, http.StatusNotFound)
 }
 
 func TestParsePaginationParams(t *testing.T) {

@@ -17,9 +17,12 @@
 import { describe, expect, it } from "vitest";
 import type { CaseAuditEntry, CsmCaseComment } from "@features/csm-cases/types/csmCases";
 import {
+  ACTIVITY_PAGE_SIZE,
+  activityLimitToReveal,
   compareCommentsChronologically,
   compareFeedEntries,
   describeAuditEntry,
+  nextActivityLimit,
   type FeedEntry,
 } from "./caseActivityFeed";
 
@@ -210,5 +213,25 @@ describe("describeAuditEntry", () => {
     const described = describeAuditEntry(entry);
     expect(described).not.toContain("2026-07-01T00:00:00Z");
     expect(described.startsWith("SLA breach:")).toBe(true);
+  });
+});
+
+describe("activity window helpers", () => {
+  it("steps the window by one page and leaves 'all' unbounded", () => {
+    expect(ACTIVITY_PAGE_SIZE).toBe(50);
+    expect(nextActivityLimit(50)).toBe(100);
+    expect(nextActivityLimit(Infinity)).toBe(Infinity);
+  });
+
+  it("keeps the window when the entry is already inside it or missing", () => {
+    expect(activityLimitToReveal(49, 50)).toBe(50);
+    expect(activityLimitToReveal(0, 50)).toBe(50);
+    expect(activityLimitToReveal(-1, 50)).toBe(50);
+  });
+
+  it("grows the window to the page boundary that includes the entry", () => {
+    expect(activityLimitToReveal(50, 50)).toBe(100);
+    expect(activityLimitToReveal(99, 50)).toBe(100);
+    expect(activityLimitToReveal(100, 50)).toBe(150);
   });
 });

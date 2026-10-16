@@ -31,9 +31,11 @@ import "net/http"
 const corsAllowedHeaders = "Content-Type, Authorization, x-jwt-assertion, x-user-id-token, X-CSM-Correlation-ID"
 
 // corsAllowedMethods covers both listeners: the main REST API's full verb set
-// and the stream listener's GET. Advertising a method a given listener has no
-// route for is harmless — the route simply 404s if actually called.
-const corsAllowedMethods = "GET, POST, PATCH, DELETE, OPTIONS"
+// (PUT included: the Team Schedule's paging contacts, rota access and Alert
+// Settings save with it) and the stream listener's GET. Advertising a method a
+// given listener has no route for is harmless — the route simply 404s if
+// actually called.
+const corsAllowedMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 // CORS returns an HTTP middleware handling cross-origin browser requests. It
 // wraps both listeners (see cmd/server/main.go). In a real deployment Choreo's

@@ -22,8 +22,9 @@ paths:
       description: >
         Opens a long-lived Server-Sent Events connection. Emits a
         `case_updated` event (data: a compact JSON object, at minimum
-        `{caseId, type, timestamp}` — never comment text or field values)
-        whenever the case gets a new comment or its status changes; a
+        `{caseId, type, timestamp}` — never comment text, field values, names
+        or emails) whenever the case gets a new comment or its status,
+        assignee, severity or acknowledgement changes; a
         comment-only `: ping` heartbeat every 15s otherwise. Returns 503
         when Event Hub isn't configured on the service, since there would
         be nothing to broadcast.

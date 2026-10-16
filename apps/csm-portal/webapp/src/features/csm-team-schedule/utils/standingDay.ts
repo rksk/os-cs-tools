@@ -22,6 +22,22 @@ import { partsInZone } from "./rota";
 /** The window a team's ordinary weekday is when the team names none. */
 export const REGULAR_HOURS_CODE = "CRE_REGULAR";
 
+/** The India region shift (IND). */
+export const INDIA_HOURS_CODE = "CRE_REGULAR_IND";
+
+/**
+ * Which window somebody's ordinary weekday is on their team: the team's own
+ * (Americas cover, the India region shift), or Regular hours when it names
+ * none. One exception: a team whose ordinary day is the India region shift
+ * is led by an engineer from the Sri Lankan teams on rotation, so its lead
+ * keeps Regular hours. Only that team: the Americas team's leads work Americas cover like
+ * the rest of it.
+ */
+export function ordinaryDayCode(teamDefault: string | undefined, isLead: boolean): string {
+  if (isLead && teamDefault === INDIA_HOURS_CODE) return REGULAR_HOURS_CODE;
+  return teamDefault ?? REGULAR_HOURS_CODE;
+}
+
 /** Roles that sit above the rota and are never on it (the roster leaves them out too). */
 const MANAGEMENT_ROLES = new Set(["americas_team_lead", "cre_head", "cs_head"]);
 
@@ -117,8 +133,8 @@ export function standingDayRows({
   absences: readonly ScheduleAbsence[];
 }): ScheduleAssignment[] {
   const out: ScheduleAssignment[] = [];
-  const windowOf = (team: ScheduleTeam): ScheduleShift | undefined =>
-    shifts.get(team.defaultShiftCode ?? REGULAR_HOURS_CODE);
+  const windowOf = (team: ScheduleTeam, isLead: boolean): ScheduleShift | undefined =>
+    shifts.get(ordinaryDayCode(team.defaultShiftCode, isLead));
   const teamByKey = new Map(teams.map((t) => [t.key.toLowerCase(), t]));
 
   for (const iso of rotaDates) {
@@ -146,11 +162,11 @@ export function standingDayRows({
 
     // A blank weekday: the team's ordinary day.
     for (const team of teams) {
-      const window = windowOf(team);
-      if (!window) continue;
       for (const m of team.members ?? []) {
         if (MANAGEMENT_ROLES.has(m.role) || listed.has(m.userId)) continue;
         if (withRow.has(m.userId) || away.has(m.userId)) continue;
+        const window = windowOf(team, m.isLead);
+        if (!window) continue;
         add(team, window, { userId: m.userId, name: m.name, email: m.email, isLead: m.isLead });
       }
     }
@@ -160,7 +176,7 @@ export function standingDayRows({
       const id = a.engineer.userId;
       if (listed.has(id) || away.has(id)) continue;
       const team = teamByKey.get(a.teamKey.toLowerCase());
-      const window = team ? windowOf(team) : undefined;
+      const window = team ? windowOf(team, a.engineer.isLead) : undefined;
       const turn = shifts.get(a.shiftCode);
       if (!team || !window || !turn || !turn.isRotation || turn.isEscalation) continue;
       if (turn.startMinute !== window.endMinute && turn.endMinute !== window.startMinute) continue;

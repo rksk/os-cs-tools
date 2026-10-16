@@ -99,7 +99,7 @@ existing `canWrite`-gated controls — no parallel read-only clone was needed.
 A handful of features from that old app have no equivalent on the shared side and were relocated
 (not rewritten) into their own properly-named `csm-*` feature folders, restyled to this app's table/
 page conventions, but still calling the exact same backend routes they always did (`/customer-health/*`,
-`/usage-metrics/*`, `/user-scan`, the SLA/CS/Time-log report endpoints — all still gated backend-side by
+`/usage-metrics/*`, `/user-scan`, the Time-log report endpoint — all still gated backend-side by
 `PermViewerAccess`/`PermUsageMetricsViewer`, see `apps/csm-portal/backend`'s own `CLAUDE.md`):
 `csm-customer-health`, `csm-usage-metrics`, `csm-user-scan`, `csm-reports`. Three gating flags on
 `usePortalAccess()` (`portalAccess.ts`) control who sees what in this merged app, and are NOT
@@ -107,8 +107,8 @@ interchangeable:
 
 - **`isSplAudience`** — true for anyone holding the `viewer` role, regardless of what else they hold.
   Gates the four relocated ex-only-for-viewer features above, plus the Escalations/Artifacts-Repository/
-  Projects-under-account tabs added to `CsmAccountDetailPage.tsx` and the SLA/Time/CS report buttons
-  added to `CsmProjectDetailPage.tsx` — all of it invisible to a caller who has never held `viewer`.
+  Projects-under-account tabs added to `CsmAccountDetailPage.tsx` and the Time report button added
+  to `CsmProjectDetailPage.tsx` — all of it invisible to a caller who has never held `viewer`.
 - **`canViewUsageMetrics`** — the one deliberate exception: `cs_engineer`/`admin`/`usage_metrics_viewer`
   as well as `viewer`. A plain `viewer` with none of those does NOT get this (reported live, correcting
   an earlier pass that granted it to every `viewer`) — don't conflate it with `isSplAudience`.
@@ -252,6 +252,26 @@ The change request create page and edit dialog share `useChangeRequestScope` (`f
 - The draft keeps display names next to the ids (`*Labels`), because the pickers only know ids; without them a restored form shows raw UUIDs.
 - The detail response's `category` is the enum value (or an `{id, name|label}` ref on older responses) — always read it through `changeRequestCategoryValue` / `changeRequestCategoryLabel`.
 - e2e: `tests/e2e/utils/fakeChangeRequestApi.ts` fakes the whole slice (projects, link-options with per-project contacts, create, PATCH, detail) with the backend's own validation (including the `customerGroupId` / `environmentIds` refusals), so the cascade, wire payload, 400 path and lifecycle are tested without creating records anywhere.
+
+### Change request tags: the case page's widget, dialog and hooks, not a copy
+
+`CsmChangeRequestDetailPage` shows a change request's `tags` (on
+`BeChangeRequestDetail`, the same shape as a case's) in the case page's own
+`TagsWidget` (`csm-cases/components/CaseDetailWidgets`), mounted under the
+Overview card, and adds one through the case page's `AddTagDialog` (whose
+type-ahead is `useSearchTags`, `POST /tags/search`). The writes are the case
+hooks themselves: `useAddCaseTag` / `useRemoveCaseTag` (`csm-cases/api/useCaseTags`)
+call `POST /cases/{id}/tags` / `DELETE /cases/{id}/tags/{tagId}`, which take a
+work item id, so they are given the change request's id and -- their one
+parameter added for this -- the detail query key to invalidate
+(`[CHANGE_REQUEST_DETAILS, id]`; the case detail key stays the default), so the
+chips follow a write. Do not fork the widget, the dialog or the hooks for
+another work item type: pass the id and the detail key. The widget is read-only
+without `canWrite` (no Tag button, no chip delete), and not rendered at all when
+the backend carried no `tags` array (another data source). Tags are staff
+bookkeeping -- the backend leaves them null on a customer's read -- and a change
+request's tag is never mirrored to the previous system. e2e: the fake API holds
+them (`seedTags`, `tags()`) behind the same case tag routes and `POST /tags/search`.
 
 ### The customer's part is fixed once approval is requested (Edit dialog, action bar)
 
@@ -421,7 +441,7 @@ interface BeDashboardWidget {
   description?: string;        // subtitle shown under displayName; not shape-specific by design
   resourceType: BeWidgetResourceType;  // "case" | "incident" | "change_request" | "account" | "project"
                                         // | "user" | "time_card" | "problem" | "product_vulnerability"
-  shape: BeWidgetShape;         // "count" | "list" | "pie" | "bar"
+  shape: BeWidgetShape;         // "count" | "list" | "pie" | "bar" | "line"
   gridWidth: number;            // 1-12, CSS grid columns this widget occupies
   filters: Record<string, unknown>;  // opaque; passed verbatim as the filters of that
                                       // resourceType's own POST /{resourceType}s/search
@@ -430,6 +450,7 @@ interface BeDashboardWidget {
   listLimit?: number;           // shape "list" only: how many rows to show
   slices?: BeDashboardPieSlice[]; // shapes "pie"/"bar" only: see below
   section?: string;            // groups widgets under a titled sub-heading — see below
+  days?: number;                // shape "line" only: size of the trailing day window; see below
 }
 
 interface BeDashboardPieSlice {
@@ -444,11 +465,12 @@ Every field beyond `widgetId`/`displayName`/`resourceType`/`shape`/`gridWidth`/`
 
 ### How each `shape` resolves its data
 
-All four shapes ultimately do the same thing — issue that `resourceType`'s own `POST /{resourceType}s/search` and read the response — they just differ in *how many* searches and what they do with the result(s):
+Four of the five shapes do the same thing — issue that `resourceType`'s own `POST /{resourceType}s/search` and read the response — they just differ in *how many* searches and what they do with the result(s). The fifth, `"line"`, is its own fixed resolution path against a dedicated endpoint instead:
 
 - **`count`** (`useWidgetData`, shape `"count"`): one search, `pagination.limit: 1`, reads `total`. Renders a big number, the whole tile is a link to that resource's own tab (`WIDGET_RESOURCE_CONFIG[resourceType].buildHref(filters)`).
 - **`list`** (`useWidgetData`, shape `"list"`): one search, `pagination.limit: listLimit ?? 4`, reads the item array. Renders through `WIDGET_LIST_RENDERERS[resourceType]` (`widgetListConfig.tsx`) — reuses each resource's **own real tab component** where one exists (e.g. `case` renders through the identical `CasesList` the Cases tab uses, via the same `mapCaseSearchViewToRow` mapper), falling back to the generic `DashboardMiniTable` otherwise. A "View more" link (shown only once `total > (listLimit ?? 4)`) goes to a dedicated, real, bookmarkable preview route (`DashboardWidgetPreviewPage`, `/dashboard/:previewSlug`) with pagination and search — not directly to the resource's own tab.
-- **`pie`** / **`bar`** (`useWidgetPieData`): one search **per `slices` entry**, each with `pagination.limit: 1`, merging that slice's own `filters` under the widget's base `filters` (slice keys win). `useWidgetPieData` is shape-agnostic — it just resolves N labeled totals; `DashboardPieChart`/`DashboardBarChart` (both under `components/`) render the same resolved data as wedges or bars respectively. Each wedge/bar/legend row navigates to that slice's own filtered destination the same way a `count` tile does. A total of `0` across every slice renders an empty state (inbox icon + "Nothing to show here right now"), not an all-grey chart.
+- **`pie`** / **`bar`** (`useWidgetPieData` for a hand-authored `slices` config, `useWidgetGroupByData` for a server-side `groupBy`): one search **per `slices` entry** (or one `POST /{resourceType}/aggregate` call for `groupBy`), each with `pagination.limit: 1`, merging that slice's own `filters` under the widget's base `filters` (slice keys win). Both hooks are shape-agnostic — they just resolve N labeled totals; `DashboardPieChart`/`DashboardBarChart` (both under `components/`) render the same resolved data as wedges or bars respectively. Each wedge/bar/legend row navigates to that slice's own filtered destination the same way a `count` tile does — **unless** `groupBy.linkResourceType` is set, in which case a named bucket's click-through goes instead to that OTHER `resourceType`'s own `detailHref`, keyed by the bucket's raw `key` (e.g. `groupBy: {field: "account", linkResourceType: "account"}` on a `case`-resourceType widget sends each bar to that account's own detail page — `/customers/accounts/{id}` — rather than the Cases list filtered to it). This only applies to a named `groupBy` bucket (never a hand-authored `slices` entry, and never the synthetic "Others" bucket, which carries no id of its own); backend-enforced at config-load time to only ever accompany `groupBy.field`, never `groupBy.bucket`. A total of `0` across every slice renders an empty state (inbox icon + "Nothing to show here right now"), not an all-grey chart.
+- **`line`** (`useCaseVolumeTrendData`, `resourceType: "case"` only — backend-enforced at config-load time, see `registry.go`'s own validation): one call to `POST /cases/volume-trend`, a dedicated case-volume-trend endpoint, **not** `/cases/search` — the widget's `filters` is forwarded verbatim as that request's own `filters`, alongside `days` (defaults to 30 when the widget omits it; the endpoint itself caps it at 90). The response is always exactly two named series ("Opened"/"Closed"), one point per day; the hook zips them by date into one `{date, opened, closed}` array for `DashboardLineChart` (`components/`, built on `@wso2/oxygen-ui-charts-react`'s own `LineChart`) to render as two lines, colored by this app's own semantic palette (`info` for Opened, `success` for Closed) rather than a chart-library hue rotation. Unlike `pie`/`bar`, a day's point is not a single filterable selector the case list's search can scope to, so there is no per-point click-through and no tile-level background click-through either — the `Card` is plain, non-link chrome, same posture as shape `"list"`. An all-zero trend (every point 0 across both series) renders the same empty state `pie`/`bar` do.
 
 `DashboardWidgetTile.tsx` is the per-widget dispatcher: it reads `shape` and picks which of the above to render, plus the shared per-widget loading/error states.
 
@@ -461,6 +483,14 @@ All four shapes ultimately do the same thing — issue that `resourceType`'s own
 ### Per-resourceType config (`config/widgetResourceConfig.ts`, `config/widgetListConfig.tsx`)
 
 `WIDGET_RESOURCE_CONFIG` is the one place that knows, per `resourceType`: its search endpoint, response items key, list-row label extractors, tile icon/color, `buildHref` (translates a widget's opaque filters into that resource's **own** tab's URL filter scheme — e.g. the dashboard's lowercase `catastrophic`/`critical`/... severity values get translated to the Cases tab's own `S0`/`S1`/... codes), and `previewSlug` (the URL segment for that resourceType's `/dashboard/:previewSlug` preview page). Adding a new `resourceType` the backend can send means adding an entry here and to `WIDGET_LIST_RENDERERS` — everything else (tile rendering, preview page, pagination) is generic over any entry in these two config objects.
+
+**A tile and the list it opens must show the same records.** The tile counts with the widget's own filters; the list is rebuilt from the URL `buildHref` writes, and a filter the URL scheme or the list has no place for used to vanish without a trace, so the list held more than the tile counted (reported live: an "SLA violations" tile reading 739 opened a list of 836). The rule now is lossless-or-preview:
+
+- Case-family widgets: `translateCaseDashboardFiltersChecked(filters)` returns the `CasesFilters` it could build and `lossless`. `lossless` is false when any entry of the widget's `filters.filters` was not taken (a field with no `CasesFilters` home such as `accountEscalationActive`, a second `in` entry on one field, a bound given twice, an unknown severity), when another top-level key (an `anyOf` OR group, a flat legacy key) holds a value, or when the filters do not come back unchanged from `readCasesFiltersFromUrl(writeCasesFiltersToUrl(...))` (a state the list's URL reader does not know, a work state without the single in-progress state it needs). `caseFamilyBuildHref` then opens the generic preview page (`/dashboard/preview/...`), which sends the widget's own filters to the search endpoint verbatim, and `DashboardWidgetPreviewPage` skips the editable `CasesFilterBar` for the same widget. Never add a translation that quietly drops a predicate: add the field to the translator AND to the list (`CasesFilters`, or a row in `advancedFilters.ts`'s catalogue, which is what `slaBreached` and `resolvedOn` do) or leave it untranslated so the click goes to the preview page.
+- Several `notIn` entries on one field are one exclusion (`tag notIn [patch]` plus `tag notIn [s_dip]` means neither); the translator and `buildWidgetPreviewHref` merge them. Repeated `in` entries are an intersection and cannot be merged, hence the fallback.
+- `incident`, `change_request` and `problem` lists read only a few named filters from their URL (`INCIDENT_LIST_FILTER_KEYS`, `CHANGE_REQUEST_LIST_FILTER_KEYS`, none for problems); any other filter value sends the click to the preview page via `hasFiltersBeyond`. `buildHref`'s `ctx` (widget id and name) is what the preview link needs, so every caller passes it; without one the link gets a generic title instead of a dead end.
+- `reopened` is a real case state (cases carried over from the previous system hold it and the tiles count them), so it is in `PRIMARY_STATES` and the URL reader, not only a `nextStates` marker.
+- `widgetResourceConfig.clickThrough.test.ts` holds one fixture per widget shape of a real overview dashboard and asserts, for each, that the list sends the widget's own request or the click opens the preview page with every filter intact. Add a fixture there when a dashboard grows a new filter shape.
 
 ### Current-user placeholder
 
@@ -480,20 +510,32 @@ everything past the cap rolls into a response `othersCount`).
   mixing together every account past the top N adds noise, not information). `useWidgetGroupByData`'s
   own `total` is derived from the slices it actually returns, so hiding Others also drops it from the
   widget's displayed total, not just from the chart. A widget's own JSON config sets this directly —
-  there's no frontend toggle for it.
-- **`DashboardBarChart`'s x-axis category labels (account/bucket names) always render at a fixed
-  angle, not the library's default horizontal tick.** Found live: recharts' own default `<XAxis>` tick
-  silently drops a label it decides doesn't fit at the tile's rendered width — with several real,
+  there's no frontend toggle for it. **`shape: "bar"` ignores this config and always hides Others
+  anyway** — `DashboardWidgetTile` forces `hideOthers: true` onto the `groupBy` it passes to
+  `useWidgetGroupByData` whenever `shape === "bar"`, regardless of what a widget's own JSON config
+  says (reported live on "Top customers by open cases," which had `hideOthers` unset). A bar chart's
+  whole point is comparing named, labeled categories side by side; an unlabeled "everything else"
+  catch-all bar sitting among them reads as confusing rather than informative, unlike a pie chart,
+  where an "Others" wedge is a legitimate completeness signal — so this is a deliberate, bar-specific
+  override, not something a widget's config can opt back into. `shape: "pie"` is unaffected and still
+  honors `groupBy.hideOthers` as configured.
+- **`DashboardBarChart`'s x-axis category labels (account/bucket names) always render horizontally,
+  word-wrapped onto up to two lines — never rotated.** Found live: recharts' own default `<XAxis>`
+  tick silently drops a label it decides doesn't fit at the tile's rendered width — with several real,
   reasonably long account names on one "Top customers" bar chart, this meant *no* label rendered under
   *any* bar, not even on hover (the chart's own `tooltip` still showed the name, but only on hover,
   which was the actual reported complaint). Fixed by suppressing the library wrapper's own `<XAxis>`
   (`xAxis={{ show: false }}` on `<BarChart>`) and rendering a custom one as a plain child instead,
   with `interval={0}` (forces every tick to render, instead of recharts deciding some don't fit) and a
-  custom `tick` render function (`renderAngledAxisTick`) that rotates the label -35° and truncates it
-  past `MAX_X_AXIS_LABEL_CHARS` (14) — the chart's own hover tooltip still shows the untruncated name,
-  so nothing is actually lost, just not all shown under every bar at once. This is shared by every
-  `shape: "bar"` widget (`DashboardBarChart` has no per-widget config), not just "Top customers" —
-  there's no mechanism to special-case one widget's axis rendering today.
+  custom `tick` render function (`renderAxisTick`) that calls `wrapAxisLabel` to word-wrap the label
+  onto at most `MAX_X_AXIS_LABEL_LINES` (2) lines of at most `MAX_X_AXIS_LABEL_LINE_CHARS` (11)
+  characters each, rendered as stacked `<tspan>`s under a centered (`textAnchor="middle"`), unrotated
+  `<text>`. A first version of this rotated the label -35° instead — reported live as hard to read at
+  a glance, replaced with this horizontal two-line wrap. Whatever still doesn't fit after two lines is
+  dropped with an ellipsis on the second line; the chart's own hover tooltip still shows the
+  untruncated name either way, so nothing is actually lost, just not all shown under every bar at
+  once. This is shared by every `shape: "bar"` widget (`DashboardBarChart` has no per-widget config),
+  not just "Top customers" — there's no mechanism to special-case one widget's axis rendering today.
 - **Test-mocking note**: `DashboardWidgetTile.test.tsx`'s `vi.mock("@wso2/oxygen-ui-charts-react", ...)`
   must export a (no-op) `XAxis` alongside its existing `Pie`/`Bar`/`PieChart`/`BarChart`/`Cell` stand-ins
   now that `DashboardBarChart` renders one — omitting it fails every test that renders a `shape: "bar"`

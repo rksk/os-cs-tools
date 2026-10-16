@@ -14,9 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState, type ComponentProps, type JSX, type ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import "@testing-library/jest-dom/vitest";
@@ -685,5 +685,162 @@ describe("CaseActivitiesFeed — attachment preview affordance", () => {
         "You don't have permission to download attachments.",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+// jsdom has no IntersectionObserver; this fake lets a test decide when the
+// sentinel "scrolls into view".
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  disconnected = false;
+  constructor(private callback: IntersectionObserverCallback) {
+    FakeIntersectionObserver.instances.push(this);
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {
+    this.disconnected = true;
+  }
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+  trigger(isIntersecting: boolean): void {
+    this.callback(
+      [{ isIntersecting } as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    );
+  }
+  static live(): FakeIntersectionObserver {
+    const live = FakeIntersectionObserver.instances.filter((i) => !i.disconnected);
+    return live[live.length - 1];
+  }
+}
+
+function auditEntries(n: number): CaseAuditEntry[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `audit-${String(i).padStart(3, "0")}`,
+    kind: "state_change" as const,
+    actor: "Jane Doe",
+    description: `Entry ${i}`,
+    // Ascending timestamps: entry i is the (i+1)-th oldest.
+    createdAt: `2026-08-01T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z`,
+  }));
+}
+
+function WindowedHarness({
+  count,
+  initialLimit = 50,
+  revealEntryId,
+  onStatus,
+}: {
+  count: number;
+  initialLimit?: number;
+  revealEntryId?: string;
+  onStatus?: (s: { total: number; shown: number }) => void;
+}): JSX.Element {
+  const [limit, setLimit] = useState(initialLimit);
+  return (
+    <>
+      <button type="button" onClick={() => setLimit(Infinity)}>
+        harness-load-all
+      </button>
+      <CaseActivitiesFeed
+        comments={[]}
+        audit={auditEntries(count)}
+        attachments={[]}
+        entryWindow={{
+          limit,
+          onLimitChange: setLimit,
+          onStatusChange: onStatus,
+          revealEntryId,
+        }}
+      />
+    </>
+  );
+}
+
+describe("CaseActivitiesFeed — windowing", () => {
+  const originalObserver = globalThis.IntersectionObserver;
+  beforeEach(() => {
+    FakeIntersectionObserver.instances = [];
+    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
+      FakeIntersectionObserver;
+  });
+  afterEach(() => {
+    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = originalObserver;
+  });
+
+  it("renders every entry and no sentinel when no window is supplied", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={auditEntries(120)} attachments={[]} />,
+    );
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(120);
+    expect(screen.queryByTestId("activity-feed-sentinel")).not.toBeInTheDocument();
+  });
+
+  it("renders only the first 50 (newest first) with an aria-hidden sentinel", () => {
+    renderWithRouter(<WindowedHarness count={120} />);
+    const rows = screen.getAllByText(/^Entry \d+$/);
+    expect(rows).toHaveLength(50);
+    expect(rows[0]).toHaveTextContent("Entry 119");
+    expect(rows[49]).toHaveTextContent("Entry 70");
+    expect(screen.getByTestId("activity-feed-sentinel")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Showing 50 of 120 entries");
+  });
+
+  it("keeps the oldest-first order inside the window", () => {
+    renderWithRouter(<WindowedHarness count={120} />);
+    fireEvent.click(screen.getByRole("button", { name: /Sort: newest first/ }));
+    const rows = screen.getAllByText(/^Entry \d+$/);
+    expect(rows).toHaveLength(50);
+    expect(rows[0]).toHaveTextContent("Entry 0");
+    expect(rows[49]).toHaveTextContent("Entry 49");
+  });
+
+  it("reveals the next batch when the sentinel intersects, and drops the sentinel at the end", () => {
+    renderWithRouter(<WindowedHarness count={120} />);
+
+    act(() => FakeIntersectionObserver.live().trigger(false));
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(50);
+
+    act(() => FakeIntersectionObserver.live().trigger(true));
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(100);
+
+    act(() => FakeIntersectionObserver.live().trigger(true));
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(120);
+    expect(screen.queryByTestId("activity-feed-sentinel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("shows everything, without a sentinel, once the window is lifted to Infinity", () => {
+    renderWithRouter(<WindowedHarness count={120} />);
+    fireEvent.click(screen.getByText("harness-load-all"));
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(120);
+    expect(screen.queryByTestId("activity-feed-sentinel")).not.toBeInTheDocument();
+  });
+
+  it("reports the filtered total and rendered count", () => {
+    const onStatus = vi.fn();
+    renderWithRouter(<WindowedHarness count={120} onStatus={onStatus} />);
+    expect(onStatus).toHaveBeenLastCalledWith({ total: 120, shown: 50 });
+    fireEvent.click(screen.getByText("harness-load-all"));
+    expect(onStatus).toHaveBeenLastCalledWith({ total: 120, shown: 120 });
+  });
+
+  it("expands the window to include a permalinked entry beyond it", () => {
+    // audit-000 is the oldest: last in the newest-first list (index 119).
+    renderWithRouter(<WindowedHarness count={120} revealEntryId="audit-000" />);
+    expect(document.getElementById("audit-000")).not.toBeNull();
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(120);
+  });
+
+  it("leaves the window alone when the permalinked entry is already inside it", () => {
+    renderWithRouter(<WindowedHarness count={120} revealEntryId="audit-119" />);
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(50);
+  });
+
+  it("ignores a reveal id that matches no entry", () => {
+    renderWithRouter(<WindowedHarness count={120} revealEntryId="nope" />);
+    expect(screen.getAllByText(/^Entry \d+$/)).toHaveLength(50);
   });
 });

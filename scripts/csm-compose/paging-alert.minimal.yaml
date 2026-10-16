@@ -1,0 +1,73 @@
+# Incident call escalation — the small file, for a deployment that keeps its
+# paging settings on the Team Schedule's Alert Settings tab.
+#
+# Only what decides whether paging runs and what it may cost is here: the
+# switches, the channel, the safety caps, where phone numbers come from, test
+# calls, and the Special Ops page. Changing those stays a reviewed change to
+# this file.
+#
+# Everything else -- the teams, the heads, which incidents start a ladder, how
+# it climbs, the SRE clock, the chat rooms and the ServiceNow group routing --
+# is saved on the Alert Settings tab and read at start-up when
+# csm-notification-service runs with PAGING_CONFIG_SOURCE=db. A setting saved
+# there replaces the same key of paging-alert.yaml; one not saved keeps this
+# file's value, or the code's default where this file leaves it out.
+#
+# On its own this file names no teams, so with PAGING_CONFIG_SOURCE unset, or
+# in db mode with neither entity-service nor a kept copy of the settings,
+# incident call escalation does not start at all -- both ladders -- and says
+# why at start-up ("needs teams.abtType or teams.abts"). Move to it only after
+# running in db mode with the settings saved, and check the Alert Settings tab
+# says they are in use.
+#
+# A db start that cannot reach entity-service tries for PAGING_CONFIG_WAIT,
+# then runs with the last settings it loaded (kept in Redis). Those never hold
+# a webhook URL, so the rung cards then follow this file's chat settings --
+# none here, so GOOGLE_CHAT_SPACES -- while the calls are unaffected. A
+# deployment that wants its own rooms in that case too keeps their chat:
+# entries (webhookUrlEnv) here.
+#
+# The values below match paging-alert.yaml, so the two run the same once the
+# settings are saved (internal/paging/case_alert_values_test.go checks it).
+
+enabled: true
+
+cre:
+  enabled: true
+  # log | chat | call | both
+  channel: log
+  phones:
+    source: profile
+  safety:
+    maxCallsPerLadder: 12
+    callWithoutVerifiedLeads: false
+    callHeadsWithoutLowerTiers: false
+    allowedNumbers: []
+
+sre:
+  enabled: true
+  channel: log
+  safety:
+    maxCallsPerLadder: 4
+    allowedNumbers: []
+
+# The Special Ops page is not on the Alert Settings tab yet; it stays here whole.
+sme:
+  enabled: true
+  channel: log
+  chat:
+    webhookUrlEnv: SME_CHAT_WEBHOOK_URL
+    audience: "Special Ops"
+  teamChats: {}
+  unansweredChat: false
+  teams: {}
+  timing:
+    initialWait: 0s
+    interval: 5m
+  onLeave: skip
+  safety:
+    allowedNumbers: []
+
+testCall:
+  enabled: true
+  allowedNumbers: []

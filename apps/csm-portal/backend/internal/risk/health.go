@@ -129,15 +129,23 @@ func (c *Client) GetBatchHealthSummaries(ctx context.Context, accountSysIDs []st
 }
 
 // GetAccountsByHealthStatus retrieves the account sys_ids matching a given
-// health status ("at_risk" or "healthy"); any other value returns an empty
-// list, without a round trip to entity-service. Needed because entity-service
-// accepts every value this package's domain actually has a status for
-// (including "to_be_reviewed") but 400s on one outside that set entirely --
-// filtering here first is what makes this wrapper's own "any other value
-// returns an empty list" contract hold for an arbitrary/malformed value too,
-// not just the one entity-service happens to already treat as "empty".
+// health status ("at_risk", "healthy", or "to_be_reviewed"); any other value
+// returns an empty list, without a round trip to entity-service. Filtering
+// here first is what makes this wrapper's own "any other value returns an
+// empty list" contract hold for an arbitrary/malformed value, since
+// entity-service 400s on one outside its own three-value enum rather than
+// answering empty.
+//
+// "to_be_reviewed" used to be excluded here too, on the belief that
+// entity-service only supported "at_risk"/"healthy" -- it doesn't: its own
+// service layer (validProjectHealthStatusValue) has always accepted all
+// three, and its repository's GetAccountsByHealthStatus has (after a
+// separate entity-service fix) a real, working case for TO_BE_REVIEWED, not
+// the "always returns no accounts" placeholder it used to. Selecting "To Be
+// Reviewed" on the Customer Health dashboard's health-status filter
+// previously always showed zero accounts for exactly this reason.
 func (c *Client) GetAccountsByHealthStatus(ctx context.Context, healthStatus string) ([]string, error) {
-	if healthStatus != "at_risk" && healthStatus != "healthy" {
+	if healthStatus != "at_risk" && healthStatus != "healthy" && healthStatus != "to_be_reviewed" {
 		return []string{}, nil
 	}
 	resp, err := c.entity.GetAccountsByHealthStatus(ctx, upperEnum(healthStatus))

@@ -79,9 +79,12 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
     // Regression: a case widget filtering by engagementType (e.g. "Engagements
     // In Progress") clicked through to an unfiltered cases list, because this
     // mapping didn't exist at all -- not a translation bug, a missing one.
+    // The list only applies a work state next to the single in-progress state,
+    // so a widget that means one carries both.
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [
         { field: "engagementType", op: "in", values: ["migration", "onboarding"] },
+        { field: "state", op: "in", values: ["work_in_progress"] },
         { field: "workState", op: "in", values: ["paused"] },
       ],
     });
@@ -89,6 +92,15 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
     const params = hrefParams(href);
     expect(params.get("engagementTypes")).toBe("migration,onboarding");
     expect(params.get("workStates")).toBe("paused");
+  });
+
+  it("opens the preview page instead when a work state has no single in-progress state beside it, which the list would drop", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref(
+      { filters: [{ field: "workState", op: "in", values: ["paused"] }] },
+      { widgetId: "w-1", displayName: "Paused work" },
+    );
+
+    expect(href.startsWith("/dashboard/preview/cases?")).toBe(true);
   });
 
   it("omits engagementTypes/workStates when the DSL entry's values are empty", () => {

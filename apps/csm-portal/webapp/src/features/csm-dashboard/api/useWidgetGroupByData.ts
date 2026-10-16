@@ -222,6 +222,9 @@ export function useWidgetGroupByData(
     // since `mergeWidgetFilters({...}, {})` is a no-op.
     query: groupBy?.field ? bucketQuery(resourceType, groupBy.field, bucket.key) : {},
     value: bucket.count,
+    // Only meaningful when `groupBy.linkResourceType` is set — see
+    // `PieSliceResult.linkId`'s own doc comment.
+    linkId: bucket.key,
   }));
   if (othersCount > 0 && !groupBy?.hideOthers) {
     slices.push({

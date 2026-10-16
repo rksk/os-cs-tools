@@ -17,15 +17,18 @@
 // Package entity is a minimal client for this repo's own entity-service.
 // Unlike apps/csm-portal/backend's own entity client (a ~60-method
 // passthrough surface for that backend's own handlers), this one
-// deliberately implements exactly two endpoints: POST /users/search
-// (customer.go — the read internal/recipientlinks needs to decide which
-// portal link a notification recipient gets) and PUT
-// /onboarding-steps/{membershipSfId}/{step} (onboarding.go — the one write,
-// internal/dispatch's project_contact.invited handler recording each
-// onboarding step's outcome). It carries no x-user-id-token or
-// correlation-ID forwarding: those exist on the csm-portal-backend client
-// to propagate an end-user's identity/request tracing through a real HTTP
-// request, neither of which exists in a Kafka consumer.
+// deliberately implements exactly the endpoints a real consumer here needs:
+// POST /users/search (customer.go — the read internal/recipientlinks needs
+// to decide which portal link a notification recipient gets), GET
+// /cases/{id} and GET /comments/{id} (customer.go — internal/dispatch's
+// truncated-event re-fetch, see GetCaseDescription/GetCommentContent's own
+// doc comments), and PUT /onboarding-steps/{membershipSfId}/{step}
+// (onboarding.go — the one write, internal/dispatch's
+// project_contact.invited handler recording each onboarding step's
+// outcome). It carries no x-user-id-token or correlation-ID forwarding:
+// those exist on the csm-portal-backend client to propagate an end-user's
+// identity/request tracing through a real HTTP request, neither of which
+// exists in a Kafka consumer.
 package entity
 
 import (
@@ -35,6 +38,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
@@ -66,7 +70,7 @@ type CustomerEntityConfig struct {
 // so it is safe to construct with a zero-value CustomerEntityConfig (e.g.
 // when this client is not yet configured for a given deployment) — a
 // missing or invalid configuration only surfaces as an error the first time
-// SearchUsersByEmail is called.
+// a request is actually made.
 type CustomerEntityClient struct {
 	http    *http.Client
 	baseURL string
@@ -118,15 +122,16 @@ func (c *CustomerEntityClient) do(ctx context.Context, method, path string, body
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		// Unlike this repo's other do() implementations (email, googlechat,
-		// twilio), the response body is never included here: this client's
-		// only request is /users/search, filtered by the recipient emails
-		// themselves — an upstream error that echoes the offending input
-		// back (e.g. "invalid email: x@y.com") would otherwise leak that
-		// PII the moment this error gets logged upstream (eventbus.Consumer
-		// logs the full error chain, including apierror.Error's Body, via
-		// "err") — see this repo's "No recipient emails in logs" security
-		// convention.
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: "response omitted (may contain recipient email addresses)"}
+		// twilio), the response body is never included here: a /users/search
+		// error can echo the offending recipient email back, which would
+		// otherwise leak that PII the moment this error gets logged upstream
+		// (eventbus.Consumer logs the full error chain, including
+		// apierror.Error's Body, via "err") — see this repo's "No recipient
+		// emails in logs" security convention. GetCaseDescription/
+		// GetCommentContent's own error bodies are just as safe omitted —
+		// case/comment content is exactly what this client exists to fetch
+		// deliberately, not something an error path should also echo.
+		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: "response omitted (may contain recipient email addresses or case/comment content)"}
 	}
 
 	return respBody, nil
@@ -207,4 +212,46 @@ func (c *CustomerEntityClient) searchUsersByEmailBatch(ctx context.Context, emai
 		return nil, fmt.Errorf("entity: decode SearchUsersByEmail response: %w", err)
 	}
 	return parsed.Users, nil
+}
+
+// GetCaseDescription calls GET /cases/{id} and returns the case's full,
+// untouched description — used only when a case.created event arrives with
+// DescriptionTruncated set (see events.CaseCreatedPayload's own doc
+// comment): entity-service strips embedded base64 inline images out of the
+// Kafka event payload to stay under Event Hub's per-message size limit, so
+// this is how dispatch.handleCaseCreated recovers the original content
+// (images included) for the notification EMAIL specifically — an HTTP
+// response has no comparable size ceiling. The Google Chat card never reads
+// this; it uses the (already safe, stripped) event payload as sent.
+func (c *CustomerEntityClient) GetCaseDescription(ctx context.Context, caseID string) (string, error) {
+	respBody, err := c.do(ctx, http.MethodGet, "/cases/"+url.PathEscape(caseID), nil)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("entity: decode GetCaseDescription response: %w", err)
+	}
+	return parsed.Description, nil
+}
+
+// GetCommentContent calls GET /comments/{id} (internal-caller-only on
+// entity-service) and returns the comment's full, untouched body — the
+// case.comment_added counterpart of GetCaseDescription above, used only when
+// CaseCommentTruncated is set on the event (see
+// events.CommentAddedPayload.CaseCommentTruncated's own doc comment).
+func (c *CustomerEntityClient) GetCommentContent(ctx context.Context, commentID string) (string, error) {
+	respBody, err := c.do(ctx, http.MethodGet, "/comments/"+url.PathEscape(commentID), nil)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("entity: decode GetCommentContent response: %w", err)
+	}
+	return parsed.Content, nil
 }

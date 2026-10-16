@@ -41,7 +41,7 @@ func testAccessConfig() AccessConfig {
 		WorknoteCreator:      []string{"test-worknote-creator"},
 		AnnouncementCreator:  []string{"test-announcement-creator"},
 		CommentUpdater:       []string{"test-comment-updater"},
-		PlgAdmin:             []string{"test-plg-admin"},
+		SecurityTeam:         []string{"test-security-team"},
 	}
 }
 
@@ -84,6 +84,7 @@ func TestAccessGuard_PermissionMatrix(t *testing.T) {
 		{"timecard approver can view, use time cards and updates, and approve", []string{"test-timecard-approver"}, []Permission{PermView, PermTimeCardsAndUpdates, PermApproveTimeCard}},
 		{"dashboard designer can view only", []string{"test-dashboard-designer"}, []Permission{PermView}},
 		{"sales solutions role alone grants none of these -- it holds PermViewSharedEntity/PermViewerAccess instead, tested separately", []string{"test-sales-solutions"}, nil},
+		{"security team can view, view operations, and view security center -- but no write/escalate/approve permission of any kind", []string{"test-security-team"}, []Permission{PermView, PermViewOperations, PermViewSecurityCenter}},
 		{"roles combine", []string{"test-viewer", "test-escalator", "test-attachment-downloader"}, []Permission{PermView, PermEscalate, PermDownloadAttachment}},
 		{"unrelated roles grant nothing", []string{"wso2-everyone", "admin", "agent", "customer"}, nil},
 		{"no roles", nil, nil},
@@ -121,6 +122,7 @@ func TestAccessGuard_PermViewSharedEntityScope(t *testing.T) {
 		for _, roles := range [][]string{
 			{"test-viewer"}, {"test-escalator"}, {"test-attachment-downloader"}, {"test-cs-engineer"},
 			{"test-admin"}, {"test-usage-metrics-viewer"}, {"test-timecard-approver"}, {"test-dashboard-designer"},
+			{"test-security-team"},
 		} {
 			if status, _ := serveWithRoles(g, PermViewSharedEntity, roles); status != http.StatusNoContent {
 				t.Errorf("roles %v: status = %d, want 204 (PermView implies PermViewSharedEntity)", roles, status)
@@ -219,11 +221,10 @@ func TestAccessGuard_RolesFor(t *testing.T) {
 			"test-viewer", "test-escalator", "test-attachment-downloader",
 			"test-cs-engineer", "test-usage-metrics-viewer", "test-timecard-approver",
 			"test-dashboard-designer", "test-admin", "test-sales-solutions", "test-worknote-creator", "test-announcement-creator",
-			"test-comment-updater", "test-plg-admin",
-		}, []string{"viewer", "escalator", "attachment_downloader", "cs_engineer", "usage_metrics_viewer", "timecard_approver", "dashboard_designer", "admin", "sales_solutions", "worknote_creator", "announcement_creator", "comment_updater", "plg_admin"}},
+			"test-comment-updater", "test-security-team",
+		}, []string{"viewer", "escalator", "attachment_downloader", "cs_engineer", "usage_metrics_viewer", "timecard_approver", "dashboard_designer", "admin", "sales_solutions", "worknote_creator", "announcement_creator", "comment_updater", "security_team"}},
 		{"announcement creator is reported like any other portal role", []string{"test-cs-engineer", "test-announcement-creator"}, []string{"cs_engineer", "announcement_creator"}},
 		{"comment updater is reported like any other portal role", []string{"test-cs-engineer", "test-comment-updater"}, []string{"cs_engineer", "comment_updater"}},
-		{"plg admin is reported like any other portal role", []string{"test-cs-engineer", "test-plg-admin"}, []string{"cs_engineer", "plg_admin"}},
 		{"unrelated roles are ignored", []string{"wso2-everyone", "agent"}, []string{}},
 		{"a duplicated held role is reported once", []string{"test-viewer", "test-viewer"}, []string{"viewer"}},
 		{"sales solutions is reported like any other portal role, alongside a real capability", []string{"test-viewer", "test-sales-solutions"}, []string{"viewer", "sales_solutions"}},
@@ -250,7 +251,87 @@ func TestAccessGuard_RolesForUsesConfiguredNames(t *testing.T) {
 	}
 }
 
-func TestAccessGuard_OperationsAreForCsEngineersAndAdmins(t *testing.T) {
+// testRoleIDs is a dummy ASGARDEO_ROLE_IDS mapping (real role name -> role
+// ID) covering every name testAccessConfig configures, for WithRoleIDs.
+func testRoleIDs() map[string]string {
+	return map[string]string{
+		"test-viewer":                "viewer-id",
+		"test-escalator":             "escalator-id",
+		"test-attachment-downloader": "attachment-downloader-id",
+		"test-usage-metrics-viewer":  "usage-metrics-viewer-id",
+		"test-cs-engineer":           "cs-engineer-id",
+		"test-admin":                 "admin-id",
+		"test-timecard-approver":     "timecard-approver-id",
+		"test-dashboard-designer":    "dashboard-designer-id",
+		"test-sales-solutions":       "sales-solutions-id",
+		"test-worknote-creator":      "worknote-creator-id",
+		"test-announcement-creator":  "announcement-creator-id",
+		"test-comment-updater":       "comment-updater-id",
+		"test-security-team":         "security-team-id",
+	}
+}
+
+func TestAccessGuard_RolesForIDs(t *testing.T) {
+	g := NewAccessGuard(testAccessConfig()).WithRoleIDs(testRoleIDs())
+	tests := []struct {
+		name string
+		held []string
+		want []string
+	}{
+		{"none", nil, []string{}},
+		{"one role", []string{"viewer-id"}, []string{"viewer"}},
+		{"several roles come back in a fixed order", []string{"admin-id", "escalator-id", "viewer-id"}, []string{"viewer", "escalator", "admin"}},
+		{"unrelated/unconfigured IDs are ignored", []string{"some-other-app-role-id", "another-unrelated-id"}, []string{}},
+		{"a duplicated held ID is reported once", []string{"viewer-id", "viewer-id"}, []string{"viewer"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := g.RolesForIDs(tc.held)
+			if got == nil || !slices.Equal(got, tc.want) {
+				t.Errorf("RolesForIDs = %#v, want %#v (non-nil)", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAccessGuard_RolesForIDsTwoRolesSharingAName is the whole reason
+// RolesForIDs exists instead of just reusing RolesFor against each role's
+// display name: two distinct Asgardeo roles can share the same display name,
+// so only matching by ID -- never by name -- can tell them apart. Both IDs
+// are configured as granting DIFFERENT portal roles here specifically to
+// prove the match follows the ID, not whatever name happens to be attached
+// to it (RolesForIDs is never even given a name to match against at all).
+func TestAccessGuard_RolesForIDsTwoRolesSharingAName(t *testing.T) {
+	cfg := testAccessConfig()
+	cfg.Viewer = []string{"shared-display-name"}
+	cfg.Admin = []string{"shared-display-name"}
+	g := NewAccessGuard(cfg).WithRoleIDs(map[string]string{
+		"shared-display-name": "viewer-role-real-id",
+	})
+	// Only one of the two portal roles configured for this name actually has
+	// an ID recorded against it in this particular WithRoleIDs call (a real
+	// ASGARDEO_ROLE_IDS can only ever map one name to one ID) -- this proves
+	// RolesForIDs resolves strictly through the ID side of that mapping.
+	if got := g.RolesForIDs([]string{"viewer-role-real-id"}); !slices.Equal(got, []string{"viewer", "admin"}) {
+		t.Errorf("RolesForIDs = %v, want [viewer admin]: both portal roles configured for this name share its one real ID", got)
+	}
+	if got := g.RolesForIDs([]string{"some-other-role-id"}); len(got) != 0 {
+		t.Errorf("RolesForIDs = %v, want none for an unconfigured ID", got)
+	}
+}
+
+// TestAccessGuard_RolesForIDsBeforeWithRoleIDs: calling RolesForIDs before
+// WithRoleIDs has ever run (e.g. a test or call site that builds a guard but
+// never wires role IDs) must answer empty for everything, not panic on a nil
+// map.
+func TestAccessGuard_RolesForIDsBeforeWithRoleIDs(t *testing.T) {
+	g := NewAccessGuard(testAccessConfig())
+	if got := g.RolesForIDs([]string{"viewer-id"}); len(got) != 0 {
+		t.Errorf("RolesForIDs = %v, want none before WithRoleIDs has run", got)
+	}
+}
+
+func TestAccessGuard_OperationsAreForCsEngineersAdminsAndSecurityTeam(t *testing.T) {
 	g := NewAccessGuard(testAccessConfig())
 	for _, role := range []string{
 		"test-viewer", "test-escalator",
@@ -264,7 +345,7 @@ func TestAccessGuard_OperationsAreForCsEngineersAndAdmins(t *testing.T) {
 			t.Errorf("%s reading cases and customers: status = %d, want 204", role, status)
 		}
 	}
-	for _, role := range []string{"test-cs-engineer", "test-admin"} {
+	for _, role := range []string{"test-cs-engineer", "test-admin", "test-security-team"} {
 		if status, _ := serveWithRoles(g, PermViewOperations, []string{role}); status != http.StatusNoContent {
 			t.Errorf("%s reading operations: status = %d, want 204", role, status)
 		}
@@ -297,12 +378,12 @@ func TestAccessGuard_ViewAllDashboardsIsForCsEngineersAndAdmins(t *testing.T) {
 	}
 }
 
-// TestAccessGuard_SecurityCenterIsForCsEngineersAdminsAndCommentUpdaters
+// TestAccessGuard_SecurityCenterIsForCsEngineersAdminsCommentUpdatersAndSecurityTeam
 // covers PermViewSecurityCenter, which — unlike PermView — plain viewer/
 // escalator/attachment_downloader/usage_metrics_viewer/timecard_approver/
 // dashboard_designer do NOT hold, even though every one of them holds
 // PermView itself.
-func TestAccessGuard_SecurityCenterIsForCsEngineersAdminsAndCommentUpdaters(t *testing.T) {
+func TestAccessGuard_SecurityCenterIsForCsEngineersAdminsCommentUpdatersAndSecurityTeam(t *testing.T) {
 	g := NewAccessGuard(testAccessConfig())
 	for _, role := range []string{
 		"test-viewer", "test-escalator",
@@ -316,7 +397,7 @@ func TestAccessGuard_SecurityCenterIsForCsEngineersAdminsAndCommentUpdaters(t *t
 			t.Errorf("%s reading cases and customers: status = %d, want 204", role, status)
 		}
 	}
-	for _, role := range []string{"test-cs-engineer", "test-admin", "test-comment-updater"} {
+	for _, role := range []string{"test-cs-engineer", "test-admin", "test-comment-updater", "test-security-team"} {
 		if status, _ := serveWithRoles(g, PermViewSecurityCenter, []string{role}); status != http.StatusNoContent {
 			t.Errorf("%s reading Security Center: status = %d, want 204", role, status)
 		}
@@ -600,88 +681,4 @@ func TestAccessGuard_RequireAll(t *testing.T) {
 			t.Errorf("status = %d, want 401", w.Code)
 		}
 	})
-}
-
-// TestPlgAdmin_IsPlgsOwnAdminAndNothingMore pins the matrix the role exists for:
-//
-//	plg_admin    everyday PLG + playbook authoring   (what admin has, inside PLG)
-//	cs_engineer  everyday PLG only                   (unchanged)
-//	admin        everyday PLG + playbook authoring   (unchanged)
-//
-// The boundary that matters is the last assertion. "PLG's administrator" and
-// "the portal's administrator" are different jobs, and the whole reason for a
-// separate variable is to let someone hold the first without the second. If
-// PermAdmin ever leaked into this role, naming a playbook author would quietly
-// make them a portal administrator — and nothing in the product would say so.
-func TestPlgAdmin_IsPlgsOwnAdminAndNothingMore(t *testing.T) {
-	g := NewAccessGuard(testAccessConfig())
-	plgAdmin := []string{"test-plg-admin"}
-
-	for _, p := range []struct {
-		name string
-		perm Permission
-	}{
-		{"PermUsePlg", PermUsePlg},
-		{"PermManagePlaybooks", PermManagePlaybooks},
-	} {
-		if _, reached := serveWithRoles(g, p.perm, plgAdmin); !reached {
-			t.Errorf("plg_admin must hold %s: it did not reach the handler", p.name)
-		}
-	}
-
-	// ...and stops there. These two are the boundary: PermAdmin is the portal's
-	// own administration, admin's alone; PermView is deliberately absent too,
-	// because this role is supplementary and every real holder already has it
-	// from cs_engineer or another View-granting role (see AccessConfig.PlgAdmin).
-	for _, p := range []struct {
-		name string
-		perm Permission
-	}{
-		{"PermAdmin", PermAdmin},
-		{"PermView", PermView},
-	} {
-		if status, _ := serveWithRoles(g, p.perm, plgAdmin); status != http.StatusForbidden {
-			t.Errorf("plg_admin must not hold %s: status = %d, want 403", p.name, status)
-		}
-	}
-	// cs_engineer is the other half of the matrix and must be unaffected:
-	// everyday PLG yes, authoring no.
-	engineer := []string{"test-cs-engineer"}
-	if _, reached := serveWithRoles(g, PermUsePlg, engineer); !reached {
-		t.Error("cs_engineer must keep PermUsePlg")
-	}
-	if status, _ := serveWithRoles(g, PermManagePlaybooks, engineer); status != http.StatusForbidden {
-		t.Errorf("cs_engineer must still not author playbooks: status = %d, want 403", status)
-	}
-	// admin keeps both regardless, which is what makes the role additive.
-	if _, reached := serveWithRoles(g, PermManagePlaybooks, []string{"test-admin"}); !reached {
-		t.Error("admin must keep PermManagePlaybooks: it did not reach the handler")
-	}
-}
-
-// TestPlgAdmin_UnsetLeavesBehaviourUnchanged is the regression guard for the
-// deployment story.
-//
-// AUTH_PLG_ADMIN_ROLES is unset until someone deliberately configures it, so
-// "unset" has to mean: admin authors playbooks, nobody else does. If the role
-// were a replacement rather than an addition, an unset or misspelt variable
-// would silently make playbook authoring unreachable — a config error no test
-// catches and nothing in the product announces.
-func TestPlgAdmin_UnsetLeavesBehaviourUnchanged(t *testing.T) {
-	cfg := testAccessConfig()
-	cfg.PlgAdmin = nil
-	g := NewAccessGuard(cfg)
-
-	if _, reached := serveWithRoles(g, PermManagePlaybooks, []string{"test-admin"}); !reached {
-		t.Error("with AUTH_PLG_ADMIN_ROLES unset, admin must still author playbooks")
-	}
-	if status, _ := serveWithRoles(g, PermManagePlaybooks, []string{"test-cs-engineer"}); status != http.StatusForbidden {
-		t.Errorf("with AUTH_PLG_ADMIN_ROLES unset, cs_engineer must still not author playbooks: "+
-			"status = %d, want 403", status)
-	}
-	// And the role reports nothing, so GET /users/me does not advertise a role
-	// the deployment has not configured.
-	if got := g.RolesFor([]string{"test-plg-admin"}); len(got) != 0 {
-		t.Errorf("an unconfigured plg_admin must grant no portal role, got %v", got)
-	}
 }

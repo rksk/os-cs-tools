@@ -40,13 +40,12 @@ import { ALL_CASE_TYPES, CASE_TYPE_LABEL } from "@features/csm-cases/utils/caseT
  * comment on that enum, which mirrors the entity-service's
  * `caseFilterFieldSet` exactly.
  *
- * Deliberately excludes `resolvedOn`, one of two fields a hand-off brief
- * once listed as candidates (the other, `accountId`, is now included below
- * — it's a real, backend-accepted field with both `in` and `notIn` support,
- * mirroring `projectId`). `resolvedOn` still doesn't appear in
- * `BeCaseFieldFilterField`, so the backend would reject it — widening that
- * enum is a backend contract change, out of scope for this FE-only builder.
- * Flagged in `PROGRESS.md`, not silently worked around.
+ * `slaBreached` and `resolvedOn` are here so that a dashboard tile counting
+ * "SLA violations" or "resolved today" lands on a list holding exactly the
+ * cases it counted (see `translateCaseDashboardFilters`). Neither has a typed
+ * `CasesFilters` slot: they live in `advancedFilters` like `closedOn` does.
+ * `accountEscalationActive` is deliberately NOT offered: the Postgres data
+ * source cannot answer it.
  *
  * `tag`, `projectOnboardingStatus`, and `creTeam` were briefly excluded here
  * (2026-08-31) on the theory that a field with its own dedicated Simple-grid
@@ -85,7 +84,9 @@ export type AdvancedFilterField =
   | "createdBy"
   | "createdOn"
   | "updatedOn"
-  | "closedOn";
+  | "closedOn"
+  | "resolvedOn"
+  | "slaBreached";
 
 /** How a row's value input should render for a given field+op combination. */
 export type AdvancedFilterValueKind =
@@ -105,6 +106,8 @@ export type AdvancedFilterValueKind =
    * picked from a preset dropdown or an actual calendar date picker rather
    * than hand-typed. See {@link RELATIVE_DATE_PRESETS}. */
   | "dateOrPreset"
+  /** A Yes/No choice sent as the single value `"true"`/`"false"`. */
+  | "boolean"
   /** No input at all — the op alone is the predicate (`isEmpty`/`isNotEmpty`). */
   | "none"
   /** No input — the row always means "the authenticated caller"; mirrors the
@@ -386,6 +389,19 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
       { op: "lte", label: "is on/before", valueKind: "dateOrPreset" },
     ],
   },
+  {
+    field: "resolvedOn",
+    label: "Resolved on",
+    ops: [
+      { op: "gte", label: "is on/after", valueKind: "dateOrPreset" },
+      { op: "lte", label: "is on/before", valueKind: "dateOrPreset" },
+    ],
+  },
+  {
+    field: "slaBreached",
+    label: "SLA breached",
+    ops: [{ op: "eq", label: "is", valueKind: "boolean" }],
+  },
 ];
 
 /**
@@ -485,11 +501,11 @@ export function advancedFilterRowToFieldFilter(
 
 /**
  * Resolves relative-date placeholders (`__today__`, `__daysAgo:N__`, ...) in
- * any `createdOn`/`updatedOn`/`closedOn` row's values against `now`, the same
- * grammar/resolver the dedicated `createdOnGte`/`createdOnLte` bar filter
- * already uses (see `useGetCsmCases.ts`). A literal date (or anything
- * unrecognized) passes through unchanged. Returns a new array; input rows are
- * never mutated.
+ * any `createdOn`/`updatedOn`/`closedOn`/`resolvedOn` row's values against
+ * `now`, the same grammar/resolver the dedicated `createdOnGte`/`createdOnLte`
+ * bar filter already uses (see `useGetCsmCases.ts`). A literal date (or
+ * anything unrecognized) passes through unchanged. Returns a new array; input
+ * rows are never mutated.
  */
 export function resolveAdvancedFilterDateValues(
   rows: AdvancedFilterRow[],
@@ -499,6 +515,7 @@ export function resolveAdvancedFilterDateValues(
     "createdOn",
     "updatedOn",
     "closedOn",
+    "resolvedOn",
   ]);
   return rows.map((row) => {
     if (!DATE_FIELDS.has(row.field)) return row;

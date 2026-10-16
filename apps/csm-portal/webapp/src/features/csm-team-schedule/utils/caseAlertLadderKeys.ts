@@ -1,0 +1,648 @@
+/**
+ * Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import type {
+  CaseAlertChannel,
+  CaseAlertFileOnly,
+  CaseAlertLadder,
+  CaseAlertRoomLadder,
+  CaseAlertSettings,
+  PagingChainCode,
+} from "../types";
+
+/** The ladder whose settings each chain shows. SME has none here. */
+export const CHAIN_LADDER: Partial<Record<PagingChainCode, CaseAlertLadder>> = {
+  CRE: "CRE",
+  SRE_SAAS: "SRE",
+  SRE_IAAS: "SRE",
+};
+
+/**
+ * The ladder values that can be saved on the Alert Settings tab: the rest of the
+ * paging file's cre: and sre: keys, by the file's own name. entity-service
+ * holds the same list and checks every value; the limits here are only hints
+ * for the inputs.
+ */
+
+export type LadderKeyGroup = "Who gets alerts" | "When a ladder starts" | "How it climbs" | "Heads" | "Chat messages";
+
+export const LADDER_KEY_GROUPS: LadderKeyGroup[] = [
+  "Who gets alerts",
+  "When a ladder starts",
+  "How it climbs",
+  "Heads",
+  "Chat messages",
+];
+
+/** How a value is edited: a checkbox, a number, a pick from a few, a line of
+ *  text, a comma-separated list, SHIFT=n pairs, key=team pairs, a time like
+ *  5m, or a head's name and email. */
+export type LadderKeyEditor =
+  | "bool"
+  | "int"
+  | "enum"
+  | "text"
+  | "list"
+  | "shiftCounts"
+  | "teamMap"
+  | "duration"
+  | "head";
+
+export interface LadderKeySpec {
+  key: string;
+  ladders: CaseAlertRoomLadder[];
+  group: LadderKeyGroup;
+  label: string;
+  help: string;
+  editor: LadderKeyEditor;
+  /** For a number, its range; for a list, how many items; for SHIFT=n
+   *  pairs, the most for one shift. */
+  min?: number;
+  max?: number;
+  options?: { value: string; label: string }[];
+  /** What an empty list, text or map means, for people. */
+  empty?: string;
+  /** What 0 means, for a number where it is not "nobody". */
+  zero?: string;
+  placeholder?: string;
+}
+
+const BOTH: CaseAlertRoomLadder[] = ["CRE", "SRE"];
+const CRE: CaseAlertRoomLadder[] = ["CRE"];
+const SRE: CaseAlertRoomLadder[] = ["SRE"];
+const ALL: CaseAlertRoomLadder[] = ["CRE", "SRE", "SME"];
+const SRE_SME: CaseAlertRoomLadder[] = ["SRE", "SME"];
+const SME: CaseAlertRoomLadder[] = ["SME"];
+
+export const LADDER_KEYS: LadderKeySpec[] = [
+  // Who is paged
+  {
+    key: "teams.abtType",
+    ladders: BOTH,
+    group: "Who gets alerts",
+    label: "ABT team type",
+    help: "The team type the ABT teams have, e.g. cre-abt or sre-abt.",
+    editor: "text",
+    placeholder: "e.g. cre-abt",
+  },
+  {
+    key: "teams.abts",
+    ladders: BOTH,
+    group: "Who gets alerts",
+    label: "ABT teams",
+    help: "The teams this ladder pages, by Team Schedule key. Set, it wins over the team type.",
+    editor: "list",
+    max: 30,
+    empty: "none (uses the team type)",
+    placeholder: "e.g. atlas, castor",
+  },
+  {
+    key: "teams.americas",
+    ladders: CRE,
+    group: "Who gets alerts",
+    label: "Americas team",
+    help: "The CRE team that covers the Americas night, by Team Schedule key.",
+    editor: "text",
+    placeholder: "e.g. americas",
+  },
+  {
+    key: "teams.teamLeads",
+    ladders: CRE,
+    group: "Who gets alerts",
+    label: "Team lead pool",
+    help: "The teams whose leads can be called at the team lead step.",
+    editor: "list",
+    max: 30,
+    empty: "every ABT team",
+    placeholder: "e.g. atlas, castor",
+  },
+  {
+    key: "teams.rotaTeams",
+    ladders: CRE,
+    group: "Who gets alerts",
+    label: "Rota teams",
+    help: "The teams whose people on the rota can be called.",
+    editor: "list",
+    max: 30,
+    empty: "the ABT teams and Americas",
+    placeholder: "e.g. atlas, americas",
+  },
+  {
+    key: "teams.americasWeekendRotaShifts",
+    ladders: CRE,
+    group: "Who gets alerts",
+    label: "Americas weekend shifts",
+    help: "The Team Schedule shift codes the Americas weekend rota member comes from.",
+    editor: "list",
+    max: 10,
+    empty: "CRE_WEEKEND_NIGHT",
+    placeholder: "e.g. CRE_WEEKEND_NIGHT",
+  },
+  {
+    key: "teams.leadership",
+    ladders: CRE,
+    group: "Who gets alerts",
+    label: "Leadership team",
+    help: "Where a head is looked up when the head is not named below.",
+    editor: "text",
+    placeholder: "e.g. cre-leadership",
+  },
+  {
+    key: "teams",
+    ladders: SME,
+    group: "Who gets alerts",
+    label: "Special Ops teams",
+    help: "Which SME team a Special Ops alert pages, when the alert does not name the SME team itself.",
+    editor: "teamMap",
+    max: 50,
+    empty: "none (the alert names the SME team)",
+    placeholder: "e.g. asgardeo-ops=asgardeo",
+  },
+  {
+    key: "teams.defaultRota",
+    ladders: SRE,
+    group: "Who gets alerts",
+    label: "Default rota",
+    help: "The SRE rota that pages an incident with no SRE team of its own.",
+    editor: "text",
+    placeholder: "e.g. SRE_SAAS",
+  },
+
+  // When a ladder starts
+  {
+    key: "trigger.priorities",
+    ladders: BOTH,
+    group: "When a ladder starts",
+    label: "Priorities",
+    help: "Only these priorities start the ladder, S0 to S4.",
+    editor: "list",
+    max: 5,
+    empty: "any",
+    placeholder: "e.g. S0, S1, S2",
+  },
+  {
+    key: "trigger.teams",
+    ladders: BOTH,
+    group: "When a ladder starts",
+    label: "Only these teams",
+    help: "Only cases or incidents assigned to these CSM Portal teams start the ladder, by team name.",
+    editor: "list",
+    max: 100,
+    empty: "any",
+  },
+  {
+    key: "trigger.excludeTeams",
+    ladders: BOTH,
+    group: "When a ladder starts",
+    label: "Never these teams",
+    help: "Cases or incidents assigned to these CSM Portal teams never start the ladder, by team name. This wins over the list above.",
+    editor: "list",
+    max: 100,
+    empty: "none",
+  },
+  {
+    key: "trigger.shifts",
+    ladders: BOTH,
+    group: "When a ladder starts",
+    label: "Shifts",
+    help: "Only start in these shifts: LK, LK_MORNING, LK_EVENING, LK_WEEKEND, USA, USA_WEEKEND.",
+    editor: "list",
+    max: 6,
+    empty: "any",
+    placeholder: "e.g. LK, LK_MORNING",
+  },
+  {
+    key: "trigger.requireKnownTeam",
+    ladders: BOTH,
+    group: "When a ladder starts",
+    label: "Needs a known team",
+    help: "Don't start when the team can't be worked out, rather than guess.",
+    editor: "bool",
+  },
+
+  // How it climbs
+  {
+    key: "alertDuty.tiers",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Alert duty tiers",
+    help: "The alert duty nominations in use, T1 to T9.",
+    editor: "list",
+    max: 9,
+    empty: "none",
+    placeholder: "e.g. T1, T2, T3",
+  },
+  {
+    key: "alertDuty.perTeam",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Alert duty per team",
+    help: "How many nominees a step takes from each team.",
+    editor: "int",
+    min: 0,
+    max: 10,
+    zero: "all of them",
+  },
+  {
+    key: "teams.teamLeadsToCall",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Team leads to call",
+    help: "How many leads the team leads step calls from the pool.",
+    editor: "int",
+    min: 0,
+    max: 20,
+    zero: "all of them",
+  },
+  {
+    key: "teams.rotaMembersToCall",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Rota members to call",
+    help: "A cap on how many people on the rota are called, per shift. Name only the shifts to cap.",
+    editor: "shiftCounts",
+    max: 50,
+    empty: "no cap",
+    placeholder: "e.g. LK_EVENING=7",
+  },
+  {
+    key: "teams.unassignedTeamLead",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Team lead for a case with no team",
+    help: "Call a lead from the pool, or call nobody and climb.",
+    editor: "enum",
+    options: [
+      { value: "pool", label: "A lead from the pool" },
+      { value: "none", label: "Nobody" },
+    ],
+  },
+  {
+    key: "teams.unassignedTeamLeadCount",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Leads for a case with no team",
+    help: "How many leads from the pool that step calls.",
+    editor: "int",
+    min: 0,
+    max: 10,
+  },
+  {
+    key: "onLeave",
+    ladders: ALL,
+    group: "How it climbs",
+    label: "People on leave",
+    help: "Skip people on leave that day, or still call them after everyone else on the step.",
+    editor: "enum",
+    options: [
+      { value: "skip", label: "Skip them" },
+      { value: "call", label: "Call them" },
+    ],
+  },
+  {
+    key: "acknowledgement.requireBoth",
+    ladders: CRE,
+    group: "How it climbs",
+    label: "Needs both to stop",
+    help: "Stop only when the case has left New and has a public comment. Off, either one stops it.",
+    editor: "bool",
+  },
+  {
+    key: "timing.initialWait",
+    ladders: SRE_SME,
+    group: "How it climbs",
+    label: "Wait before the first call",
+    help: "From 0s to 30m, written like 0s or 2m.",
+    editor: "duration",
+    placeholder: "e.g. 0s",
+  },
+  {
+    key: "timing.interval",
+    ladders: SRE_SME,
+    group: "How it climbs",
+    label: "Time between steps",
+    help: "From 1m to 30m, written like 5m.",
+    editor: "duration",
+    placeholder: "e.g. 5m",
+  },
+  {
+    key: "timing.includeL4",
+    ladders: SRE,
+    group: "How it climbs",
+    label: "Call L4",
+    help: "After L3, also call the lead of the SRE team on the incident.",
+    editor: "bool",
+  },
+
+  // Heads
+  {
+    key: "heads.cre",
+    ladders: CRE,
+    group: "Heads",
+    label: "Head of CRE",
+    help: "Called on the last steps. Their phone number comes from their profile.",
+    editor: "head",
+    empty: "not named (looked up in the leadership team)",
+  },
+  {
+    key: "heads.cs",
+    ladders: CRE,
+    group: "Heads",
+    label: "Head of CS",
+    help: "Called on the last step. Their phone number comes from their profile.",
+    editor: "head",
+    empty: "not named (looked up in the leadership team)",
+  },
+
+  // Chat messages
+  {
+    key: "unansweredChat",
+    ladders: SRE_SME,
+    group: "Chat messages",
+    label: "Say when nobody answered",
+    help: "After L1 to L3 were all called and nobody acknowledged, post that the calls have ended.",
+    editor: "bool",
+  },
+  {
+    key: "smeHandoffChat",
+    ladders: SRE,
+    group: "Chat messages",
+    label: "Say when handed to SMEs",
+    help: "When an incident goes to an SME team, post that SRE alerts stopped and the SMEs are being alerted.",
+    editor: "bool",
+  },
+];
+
+export function ladderKeysFor(ladder: CaseAlertRoomLadder): LadderKeySpec[] {
+  return LADDER_KEYS.filter((k) => k.ladders.includes(ladder));
+}
+
+/** Something that reads like a link is never shown: no value is one, and a
+ *  webhook URL must never reach the page. */
+function safe(text: string): string {
+  return /:\/\//.test(text) ? "a link (not shown)" : text;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** A head as the file and the saved value have it. A phone number in the
+ *  file is not shown or copied: here it comes from the person's profile. */
+function headOf(v: unknown): { name: string; email: string } | null {
+  if (!isRecord(v)) return null;
+  return {
+    name: typeof v.name === "string" ? v.name.trim() : "",
+    email: typeof v.email === "string" ? v.email.trim() : "",
+  };
+}
+
+/** A value as people read it: lists comma-separated, Yes or No, a head as
+ *  "Name <email>", and an empty one said in words. */
+export function formatLadderValue(spec: LadderKeySpec | undefined, value: unknown): string {
+  if (value === undefined || value === null) return "—";
+  const empty = spec?.empty ?? "none";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return value === 0 && spec?.zero ? `0 (${spec.zero})` : String(value);
+  if (typeof value === "string") {
+    if (value.trim() === "") return empty;
+    return safe(spec?.options?.find((o) => o.value === value)?.label ?? value);
+  }
+  if (Array.isArray(value)) return value.length === 0 ? empty : value.map((v) => safe(String(v))).join(", ");
+  if (spec?.editor === "head") {
+    const h = headOf(value);
+    if (!h || (!h.name && !h.email)) return empty;
+    return safe(h.name && h.email ? `${h.name} <${h.email}>` : h.email || h.name);
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    return entries.length === 0 ? empty : entries.map(([k, v]) => safe(`${k}=${String(v)}`)).join(", ");
+  }
+  return safe(JSON.stringify(value));
+}
+
+/** What an inline editor holds while it is open. */
+export interface LadderDraft {
+  text: string;
+  checked: boolean;
+  name: string;
+  email: string;
+}
+
+/** The editor's starting point: the saved value, else the one in use. */
+export function draftFor(spec: LadderKeySpec, value: unknown): LadderDraft {
+  const draft: LadderDraft = { text: "", checked: value === true, name: "", email: "" };
+  if (spec.editor === "head") {
+    const h = headOf(value);
+    return { ...draft, name: h?.name ?? "", email: h?.email ?? "" };
+  }
+  if (Array.isArray(value)) return { ...draft, text: value.map(String).join(", ") };
+  if ((spec.editor === "shiftCounts" || spec.editor === "teamMap") && isRecord(value)) {
+    return { ...draft, text: Object.entries(value).map(([k, v]) => `${k}=${String(v)}`).join(", ") };
+  }
+  if (typeof value === "string" || typeof value === "number") return { ...draft, text: String(value) };
+  if (spec.editor === "enum") return { ...draft, text: spec.options?.[0]?.value ?? "" };
+  return draft;
+}
+
+export type ParsedDraft = { ok: true; value: unknown } | { ok: false; error: string };
+
+/** The draft as the value to save, or why it can't be. Only the shape is
+ *  checked here; the server checks the limits and says which key it refused. */
+export function parseDraft(spec: LadderKeySpec, draft: LadderDraft): ParsedDraft {
+  const text = draft.text.trim();
+  switch (spec.editor) {
+    case "bool":
+      return { ok: true, value: draft.checked };
+    case "int":
+      return /^-?\d+$/.test(text)
+        ? { ok: true, value: Number(text) }
+        : { ok: false, error: `${spec.label}: enter a whole number.` };
+    case "list":
+      // An empty list is a value too: it replaces the file's list with none.
+      return {
+        ok: true,
+        value: text
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean),
+      };
+    case "shiftCounts": {
+      const out: Record<string, number> = {};
+      for (const part of text.split(",").map((v) => v.trim()).filter(Boolean)) {
+        const m = /^([A-Za-z_]+)\s*=\s*(\d+)$/.exec(part);
+        if (!m) return { ok: false, error: `${spec.label}: write each as SHIFT=number, e.g. LK_EVENING=7.` };
+        out[m[1].toUpperCase()] = Number(m[2]);
+      }
+      return { ok: true, value: out };
+    }
+    case "teamMap": {
+      const out: Record<string, string> = {};
+      for (const part of text.split(",").map((v) => v.trim()).filter(Boolean)) {
+        const m = /^([A-Za-z0-9_.-]+)\s*=\s*([A-Za-z0-9_.-]+)$/.exec(part);
+        if (!m) return { ok: false, error: `${spec.label}: write each as key=team, e.g. asgardeo-ops=asgardeo.` };
+        out[m[1].toLowerCase()] = m[2].toLowerCase();
+      }
+      return { ok: true, value: out };
+    }
+    case "head": {
+      const name = draft.name.trim();
+      const email = draft.email.trim();
+      return name && email
+        ? { ok: true, value: { name, email } }
+        : { ok: false, error: `${spec.label}: enter a name and an email.` };
+    }
+    default:
+      return text ? { ok: true, value: text } : { ok: false, error: `${spec.label}: enter a value.` };
+  }
+}
+
+/** The values the alert service runs with from its file and that are not
+ *  saved here yet, ready to save in one go. A head the file leaves unnamed is
+ *  left out: there is nothing to save for it. */
+export function valuesToCopy(s: CaseAlertSettings, ladder: CaseAlertRoomLadder): Record<string, unknown> {
+  const running = s.running?.ladders[ladder];
+  if (!running) return {};
+  const saved = new Set(s.values.filter((v) => v.ladder === ladder).map((v) => v.key));
+  const out: Record<string, unknown> = {};
+  for (const spec of ladderKeysFor(ladder)) {
+    const r = running[spec.key];
+    if (!r || r.source !== "file" || saved.has(spec.key) || r.value === undefined || r.value === null) continue;
+    if (spec.editor === "head") {
+      const h = headOf(r.value);
+      if (h?.name && h.email) out[spec.key] = h;
+      continue;
+    }
+    out[spec.key] = r.value;
+  }
+  return out;
+}
+
+/** A channel in words. */
+export const CHANNEL_WORDS: Record<CaseAlertChannel, string> = {
+  both: "Calls and chat",
+  chat: "Chat only",
+  call: "Calls only",
+  log: "Log only (no calls or chat)",
+};
+
+export function channelWords(channel: string | undefined): string | undefined {
+  if (!channel) return undefined;
+  return CHANNEL_WORDS[channel as CaseAlertChannel] ?? channel;
+}
+
+const ALL_CHANNELS: CaseAlertChannel[] = ["both", "chat", "call", "log"];
+
+/** The channels a team can have under its ladder's: the same or less, never
+ *  more. Every one when the ladder's isn't known. */
+export function teamChannelsUnder(ladderChannel: string | undefined): CaseAlertChannel[] {
+  switch (ladderChannel) {
+    case "chat":
+      return ["chat", "log"];
+    case "call":
+      return ["call", "log"];
+    case "log":
+      return ["log"];
+    default:
+      return ALL_CHANNELS;
+  }
+}
+
+const PHONE_WORDS: Record<string, string> = {
+  profile: "their profile",
+  none: "only numbers in the file",
+};
+
+function yesNo(v: boolean | undefined): string {
+  return v === undefined ? "—" : v ? "Yes" : "No";
+}
+
+/** The settings only the file can set, as rows for people. The heads row is
+ *  CRE's only: SRE has no heads. Allowed numbers are a count; the numbers
+ *  never reach the page. */
+export function fileOnlyRows(ladder: CaseAlertRoomLadder, f: CaseAlertFileOnly): { label: string; value: string }[] {
+  const maxCalls = f["safety.maxCallsPerLadder"];
+  const maxLevel = f["safety.maxLevel"];
+  const allowed = f["safety.allowedNumbers"];
+  const rows = [
+    { label: "Alerts on", value: yesNo(f.enabled) },
+    { label: "Channel", value: channelWords(f.channel) ?? "—" },
+    {
+      label: "Max calls per ladder",
+      value: maxCalls === undefined ? "—" : maxCalls === 0 ? "no cap" : String(maxCalls),
+    },
+    { label: "Highest step", value: maxLevel === undefined ? "no cap" : `L${maxLevel}` },
+    {
+      label: "Allowed numbers",
+      value:
+        allowed === undefined
+          ? "—"
+          : allowed === 0
+            ? "any number"
+            : `only ${allowed} listed ${allowed === 1 ? "number" : "numbers"}`,
+    },
+    { label: "Call before every lead has a number", value: yesNo(f["safety.callWithoutVerifiedLeads"]) },
+  ];
+  if (ladder === "CRE") {
+    rows.push({
+      label: "Call the heads when nobody below can be called",
+      value: yesNo(f["safety.callHeadsWithoutLowerTiers"]),
+    });
+  }
+  const phones = f["phones.source"];
+  rows.push({ label: "Phone numbers from", value: phones ? (PHONE_WORDS[phones] ?? phones) : "—" });
+  return rows.map((r) => ({ ...r, value: safe(r.value) }));
+}
+
+/** The limits of a key, in one line, for the editor. Hints only: the server
+ *  checks them. */
+export function limitHint(spec: LadderKeySpec): string | null {
+  const empty = `Empty means ${spec.empty ?? "none"}.`;
+  switch (spec.editor) {
+    case "int":
+      return spec.min !== undefined && spec.max !== undefined ? `${spec.min} to ${spec.max}.` : null;
+    case "list":
+      return `Separate with commas${spec.max ? `, up to ${spec.max}` : ""}. ${empty}`;
+    case "shiftCounts":
+      return `SHIFT=number, separated with commas${spec.max ? `, each 0 to ${spec.max}` : ""}. ${empty}`;
+    case "teamMap":
+      return `key=team, separated with commas. ${empty}`;
+    default:
+      return null;
+  }
+}
+
+/** A value as JSON with its keys in order, so two values that hold the same
+ *  thing compare equal. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (isRecord(v)) {
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/** Whether a saved value is the one in use. A head is compared by its name
+ *  and email only: the file's may also carry a phone number. */
+export function sameLadderValue(spec: LadderKeySpec | undefined, a: unknown, b: unknown): boolean {
+  if (spec?.editor === "head") return canonical(headOf(a)) === canonical(headOf(b));
+  return canonical(a) === canonical(b);
+}

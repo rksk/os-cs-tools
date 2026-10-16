@@ -36,10 +36,10 @@ import { useLocation } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useSearchProductVulnerabilities } from "@features/csm-security-center/api/useSearchProductVulnerabilities";
+import { useGetVulnerabilityMeta } from "@features/csm-security-center/api/useGetVulnerabilityMeta";
 import {
-  VULNERABILITY_PRIORITIES,
+  vulnerabilityMetaToPriorityOptions,
   vulnerabilityPriorityColor,
-  vulnerabilityPriorityLabel,
 } from "@features/csm-security-center/utils/vulnerabilities";
 import type { BeVulnerabilityPriority } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -75,6 +75,12 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
 
   const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
     useSearchProductVulnerabilities(payload);
+  // Falls back to the static VULNERABILITY_PRIORITIES list (via
+  // vulnerabilityMetaToPriorityOptions's own undefined-input branch) while
+  // loading or on error, so the filter is never empty/broken -- same
+  // fail-open posture as useSearchProducts elsewhere in this app.
+  const { data: vulnerabilityMeta } = useGetVulnerabilityMeta();
+  const priorityOptions = vulnerabilityMetaToPriorityOptions(vulnerabilityMeta?.severities);
 
   const vulnerabilities = data?.productVulnerabilities ?? [];
   const total = data?.total ?? 0;
@@ -139,9 +145,9 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
           }}
         >
           <MenuItem value="">All priorities</MenuItem>
-          {VULNERABILITY_PRIORITIES.map((p) => (
-            <MenuItem key={p} value={p}>
-              {vulnerabilityPriorityLabel(p)}
+          {priorityOptions.map(({ priority, label }) => (
+            <MenuItem key={priority} value={priority}>
+              {label}
             </MenuItem>
           ))}
         </TextField>

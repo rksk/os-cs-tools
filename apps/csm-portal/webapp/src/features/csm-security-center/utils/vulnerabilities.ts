@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { BeVulnerabilityPriority } from "@api/backend/types";
+import type { BeChoiceListItem, BeVulnerabilityPriority } from "@api/backend/types";
 
 type ChipColor = "default" | "info" | "warning" | "success" | "error";
 
@@ -55,6 +55,55 @@ export const VULNERABILITY_PRIORITIES = [
   "info",
   "unknown",
 ] as BeVulnerabilityPriority[];
+
+/**
+ * `GetVulnerabilityMeta`'s `severities` entries key `id` by the upstream's own
+ * severity id scheme (a string-encoded integer), not the lowercase
+ * `BeVulnerabilityPriority` enum this app's own search filter already uses —
+ * confirmed against entity-service's `vulnerabilityPriorityToSeverityID`
+ * (`sn_product_vulnerability_service.go`), which both the ServiceNow and
+ * Postgres implementations of `GetVulnerabilityMeta` funnel through, so this
+ * correspondence is stable across data sources.
+ */
+const SEVERITY_ID_TO_PRIORITY: Record<string, BeVulnerabilityPriority> = {
+  "0": "info",
+  "1": "low",
+  "2": "medium",
+  "3": "high",
+  "4": "critical",
+  "5": "unknown",
+};
+
+/**
+ * Maps `GetVulnerabilityMeta`'s `severities` choice list onto the ordered
+ * `BeVulnerabilityPriority` list this app's filter already renders, with each
+ * entry's own real display `label` instead of the static `PRIORITY_LABEL` map
+ * — so the filter reflects whatever this environment's
+ * `product_vulnerability_severity_enum` (or ServiceNow choice list) actually
+ * defines, rather than the maintained-by-hand fallback. An id this app
+ * doesn't recognize is skipped (never shown with no label); the result keeps
+ * `VULNERABILITY_PRIORITIES`'s own highest-to-lowest order rather than
+ * whatever order the backend returned.
+ */
+export function vulnerabilityMetaToPriorityOptions(
+  severities: BeChoiceListItem[] | undefined,
+): { priority: BeVulnerabilityPriority; label: string }[] {
+  if (!severities?.length) {
+    return VULNERABILITY_PRIORITIES.map((priority) => ({
+      priority,
+      label: vulnerabilityPriorityLabel(priority),
+    }));
+  }
+  const labelByPriority = new Map<BeVulnerabilityPriority, string>();
+  for (const { id, label } of severities) {
+    const priority = SEVERITY_ID_TO_PRIORITY[id];
+    if (priority) labelByPriority.set(priority, label);
+  }
+  return VULNERABILITY_PRIORITIES.filter((p) => labelByPriority.has(p)).map((priority) => ({
+    priority,
+    label: labelByPriority.get(priority) as string,
+  }));
+}
 
 export function vulnerabilityPriorityLabel(priority: BeVulnerabilityPriority): string {
   return PRIORITY_LABEL[priority] ?? priority;

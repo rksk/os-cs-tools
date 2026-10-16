@@ -274,12 +274,36 @@ export function useScheduleAbsences(
  */
 export function useMyLeadTeams(): UseQueryResult<string[], Error> {
   const api = useBackendApi();
-  return useQuery<string[], Error>({
+  return useQuery<EditTeams, Error, string[]>({
     queryKey: QK.leadTeams,
-    queryFn: async () => {
-      const r = await api.get<{ teamKeys?: string[] }>("/team-schedule/my-lead-teams");
-      return r?.teamKeys ?? [];
-    },
+    queryFn: () => fetchEditTeams(api),
+    select: (r) => r.teamKeys,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** The teams the reader may edit, and those held only as a rota marker. */
+interface EditTeams {
+  teamKeys: string[];
+  markerOnlyTeamKeys: string[];
+}
+
+async function fetchEditTeams(api: ReturnType<typeof useBackendApi>): Promise<EditTeams> {
+  const r = await api.get<Partial<EditTeams>>("/team-schedule/my-lead-teams");
+  return { teamKeys: r?.teamKeys ?? [], markerOnlyTeamKeys: r?.markerOnlyTeamKeys ?? [] };
+}
+
+/**
+ * The teams the reader may edit only as the team's rota marker: they mark its
+ * days, but Generate month and the shared tags stay with its lead and the
+ * family's rota admin. The same read as useMyLeadTeams, so no second request.
+ */
+export function useMarkerOnlyTeams(): UseQueryResult<string[], Error> {
+  const api = useBackendApi();
+  return useQuery<EditTeams, Error, string[]>({
+    queryKey: QK.leadTeams,
+    queryFn: () => fetchEditTeams(api),
+    select: (r) => r.markerOnlyTeamKeys,
     staleTime: 5 * 60 * 1000,
   });
 }

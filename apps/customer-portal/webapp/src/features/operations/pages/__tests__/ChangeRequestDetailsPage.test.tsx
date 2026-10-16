@@ -14,7 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentType, ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ChangeRequestDetailsPage from "@features/operations/pages/ChangeRequestDetailsPage";
@@ -25,12 +27,26 @@ import {
   CHANGE_REQUEST_NOT_FOUND_MESSAGE,
   CHANGE_REQUEST_SCHEDULE_CHANGED_MESSAGE,
   ChangeRequestErrorCode,
+  WORKFLOW_APPROVAL_UNAVAILABLE,
+  WORKFLOW_NO_APPROVAL_RECORDED,
 } from "@features/operations/utils/changeRequests";
 import { ApiError } from "@utils/ApiError";
 
 const mocks = vi.hoisted(() => ({
   changeRequest: { value: null as Record<string, unknown> | null },
   error: { value: null as unknown },
+  approvals: { value: [] as Record<string, unknown>[] },
+  /**
+   * Where the approvals read stands: read (`approvals` above), still loading,
+   * failed with nothing read, or read again after that failure (`retrying`).
+   */
+  approvalsRead: { value: "read" as "read" | "loading" | "failed" | "retrying" },
+  refetchApprovals: vi.fn(),
+  /** When set, the approvals hook is this one (a real query) instead of the fixed results above. */
+  approvalsHook: { value: null as (() => unknown) | null },
+  fetchApprovals: vi.fn(),
+  /** The rows of the change request PDF, as handed to jspdf-autotable. */
+  pdfRows: vi.fn(),
   mutateAsync: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
@@ -45,6 +61,39 @@ vi.mock("@features/operations/api/useGetChangeRequestDetails", () => ({
     isFetching: false,
     isError: mocks.error.value != null,
   }),
+}));
+
+// Each fixed result is one TanStack Query v5 reports. A refetch of a query with
+// no data (`retrying`) puts it back to pending and clears the error; only the
+// error count says it failed before.
+vi.mock("@features/operations/api/useGetChangeRequestApprovals", () => ({
+  default: () => {
+    if (mocks.approvalsHook.value) return mocks.approvalsHook.value();
+    const read = mocks.approvalsRead.value;
+    return {
+      data: read === "read" ? { approvals: mocks.approvals.value } : undefined,
+      isPending: read === "loading" || read === "retrying",
+      isError: read === "failed",
+      errorUpdateCount: read === "failed" || read === "retrying" ? 1 : 0,
+      isFetching: read === "loading" || read === "retrying",
+      refetch: mocks.refetchApprovals,
+    };
+  },
+}));
+
+vi.mock("jspdf", () => ({
+  jsPDF: vi.fn().mockImplementation(function MockJsPDF(this: Record<string, unknown>) {
+    for (const method of ["setFontSize", "setFont", "text", "setDrawColor", "setLineWidth", "line", "setPage", "save"]) {
+      this[method] = vi.fn();
+    }
+    this.getNumberOfPages = vi.fn(() => 1);
+    this.getTextWidth = vi.fn(() => 40);
+    this.internal = { pageSize: { getWidth: vi.fn(() => 210), getHeight: vi.fn(() => 297) } };
+  }),
+}));
+
+vi.mock("jspdf-autotable", () => ({
+  default: (_doc: unknown, options: { body: string[][] }) => mocks.pdfRows(options.body),
 }));
 
 vi.mock("@context/error-banner/ErrorBannerContext", () => ({
@@ -93,7 +142,12 @@ function makeChangeRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderPage() {
+/** A real approvals query over `mocks.fetchApprovals` (render it inside a QueryClientProvider). */
+function useApprovalsQuery() {
+  return useQuery({ queryKey: ["change-request-approvals", "cr-1"], queryFn: () => mocks.fetchApprovals() });
+}
+
+function renderPage(options: { wrapper?: ComponentType<{ children: ReactNode }> } = {}) {
   return render(
     <MemoryRouter initialEntries={["/projects/p1/operations/change-requests/cr-1"]}>
       <Routes>
@@ -103,6 +157,7 @@ function renderPage() {
         />
       </Routes>
     </MemoryRouter>,
+    options,
   );
 }
 
@@ -120,6 +175,12 @@ describe("ChangeRequestDetailsPage", () => {
     mocks.showError.mockReset();
     mocks.showSuccess.mockReset();
     mocks.isPending.value = false;
+    mocks.approvals.value = [];
+    mocks.approvalsRead.value = "read";
+    mocks.refetchApprovals.mockReset();
+    mocks.approvalsHook.value = null;
+    mocks.fetchApprovals.mockReset();
+    mocks.pdfRows.mockReset();
   });
 
   it("renders change request number when loaded", () => {
@@ -677,6 +738,155 @@ describe("ChangeRequestDetailsPage", () => {
       mocks.changeRequest.value = makeChangeRequest({ state: STATES.scheduled });
       renderPage();
       expect(screen.getByText("Scheduled Maintenance Window")).toBeInTheDocument();
+    });
+  });
+
+  // A failed approvals read is not a negative result: the page never prints or draws it as "no approval".
+  describe("the approvals read", () => {
+    const exportButton = () => screen.getByRole("button", { name: "Download Change Request PDF" });
+    /** The printed value of each row of the PDF the export made last. */
+    const printedRows = (): Record<string, string> =>
+      Object.fromEntries(mocks.pdfRows.mock.lastCall?.[0] as string[][]);
+
+    it("keeps Download Change Request PDF off while the approvals load, and turns it on once they are read", () => {
+      mocks.approvalsRead.value = "loading";
+      const view = renderPage();
+      expect(exportButton()).toBeDisabled();
+      fireEvent.click(exportButton());
+      expect(mocks.pdfRows).not.toHaveBeenCalled();
+
+      mocks.approvalsRead.value = "read";
+      view.rerender(
+        <MemoryRouter initialEntries={["/projects/p1/operations/change-requests/cr-1"]}>
+          <Routes>
+            <Route
+              path="/projects/:projectId/operations/change-requests/:changeRequestId"
+              element={<ChangeRequestDetailsPage />}
+            />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(exportButton()).toBeEnabled();
+    });
+
+    it("prints Approved By / Approved On from the approvals once they are read", () => {
+      mocks.approvals.value = [
+        {
+          stage: "CAB Approval",
+          approverType: "STATIC_GROUP",
+          approverName: "",
+          status: "APPROVED",
+          approvers: [{ id: "c1", name: "Cab Member", status: "APPROVED", respondedOn: "2026-05-02T09:00:00Z" }],
+        },
+      ];
+      renderPage();
+      fireEvent.click(exportButton());
+      expect(printedRows()["Approved By"]).toBe("Cab Member");
+      expect(printedRows()["Approved On"]).toMatch(/2026/);
+    });
+
+    it("leaves the two rows out after a read that found no approval", () => {
+      renderPage();
+      fireEvent.click(exportButton());
+      expect(printedRows()).not.toHaveProperty("Approved By");
+      expect(printedRows()).not.toHaveProperty("Approved On");
+    });
+
+    describe("when the approvals could not be read", () => {
+      beforeEach(() => {
+        mocks.approvalsRead.value = "failed";
+      });
+
+      it("shows the workflow's notice with a Retry that reads them again, and never 'No approval recorded'", () => {
+        mocks.changeRequest.value = makeChangeRequest({ state: { id: "3", label: "Closed" } });
+        renderPage();
+        expect(screen.getByTestId("change-request-workflow-approvals-unavailable")).toBeInTheDocument();
+        expect(screen.queryByText(WORKFLOW_NO_APPROVAL_RECORDED)).not.toBeInTheDocument();
+        expect(screen.getAllByText(WORKFLOW_APPROVAL_UNAVAILABLE).length).toBeGreaterThan(0);
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(mocks.refetchApprovals).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps saying so while they are read again (the query is pending again), with the export off", () => {
+        mocks.approvalsRead.value = "retrying";
+        mocks.changeRequest.value = makeChangeRequest({ state: { id: "3", label: "Closed" } });
+        renderPage();
+        expect(screen.getByTestId("change-request-workflow-approvals-unavailable")).toBeInTheDocument();
+        expect(screen.queryByTestId("change-request-workflow-loading")).not.toBeInTheDocument();
+        expect(screen.getAllByText(WORKFLOW_APPROVAL_UNAVAILABLE).length).toBeGreaterThan(0);
+        expect(screen.queryByText(WORKFLOW_NO_APPROVAL_RECORDED)).not.toBeInTheDocument();
+        const retrying = screen.getByRole("button", { name: "Retrying…" });
+        expect(retrying).toHaveAttribute("aria-disabled", "true");
+        fireEvent.click(retrying);
+        expect(mocks.refetchApprovals).not.toHaveBeenCalled();
+        expect(exportButton()).toBeDisabled();
+      });
+
+      // The real query, not a fixed result: what a Retry does to it is what the page must hold through.
+      it("holds the notice, its button and the focus through a real Retry, and hands focus to the workflow heading when one succeeds", async () => {
+        mocks.changeRequest.value = makeChangeRequest({ state: { id: "3", label: "Closed" } });
+        mocks.approvalsHook.value = useApprovalsQuery;
+        mocks.fetchApprovals.mockRejectedValueOnce(new Error("Service Unavailable"));
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        renderPage({
+          wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+        });
+
+        const retry = await screen.findByRole("button", { name: "Retry" });
+        let failAgain: (error: Error) => void = () => undefined;
+        mocks.fetchApprovals.mockReturnValueOnce(
+          new Promise((_resolve, reject) => {
+            failAgain = reject;
+          }),
+        );
+        retry.focus();
+        fireEvent.click(retry);
+
+        const retrying = await screen.findByRole("button", { name: "Retrying…" });
+        expect(retrying).toHaveFocus();
+        expect(screen.getByTestId("change-request-workflow-approvals-unavailable")).toBeInTheDocument();
+        expect(screen.queryByTestId("change-request-workflow-loading")).not.toBeInTheDocument();
+        expect(screen.queryByText(WORKFLOW_NO_APPROVAL_RECORDED)).not.toBeInTheDocument();
+        expect(exportButton()).toBeDisabled();
+
+        // It fails again: the same notice, the button usable again where focus is.
+        await act(async () => failAgain(new Error("Service Unavailable")));
+        expect(await screen.findByRole("button", { name: "Retry" })).toHaveFocus();
+        expect(screen.queryByText(WORKFLOW_NO_APPROVAL_RECORDED)).not.toBeInTheDocument();
+        expect(exportButton()).toBeEnabled();
+
+        // It succeeds, finding no approval: that is "No approval recorded", and focus goes to the panel heading.
+        mocks.fetchApprovals.mockResolvedValueOnce({ approvals: [] });
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        await waitFor(() =>
+          expect(screen.queryByTestId("change-request-workflow-approvals-unavailable")).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole("heading", { name: "Change Request Workflow" })).toHaveFocus();
+        expect(screen.getAllByText(WORKFLOW_NO_APPROVAL_RECORDED).length).toBeGreaterThan(0);
+        expect(screen.queryByText(WORKFLOW_APPROVAL_UNAVAILABLE)).not.toBeInTheDocument();
+        expect(exportButton()).toBeEnabled();
+        expect(mocks.fetchApprovals).toHaveBeenCalledTimes(3);
+      });
+
+      it("still exports, printing Approved By / Approved On as 'Not available' rather than leaving them out", () => {
+        renderPage();
+        expect(exportButton()).toBeEnabled();
+        fireEvent.click(exportButton());
+        expect(printedRows()["Approved By"]).toBe("Not available");
+        expect(printedRows()["Approved On"]).toBe("Not available");
+        expect(mocks.showError).not.toHaveBeenCalled();
+      });
+
+      it("prints the record's own values, which do not depend on the approvals", () => {
+        mocks.changeRequest.value = makeChangeRequest({
+          approvedBy: { id: "u", label: "Recorded Approver" },
+          approvedOn: "2026-05-01T09:00:00Z",
+        });
+        renderPage();
+        fireEvent.click(exportButton());
+        expect(printedRows()["Approved By"]).toBe("Recorded Approver");
+        expect(screen.getByTestId("cr-approved-by")).toHaveTextContent("Recorded Approver");
+      });
     });
   });
 

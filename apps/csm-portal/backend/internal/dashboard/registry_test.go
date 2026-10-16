@@ -851,6 +851,36 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 			 "query": {}}`,
 			want: `widget "w": shape "bar" needs either "slices" or "groupBy"`,
 		},
+		{
+			name: "line widget on a resourceType other than case",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "incident", "shape": "line", "gridWidth": 6,
+			 "query": {}}`,
+			want: `widget "w": shape "line" only supports resourceType "case"`,
+		},
+		{
+			name: "line widget with days above the endpoint's own cap",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "line", "gridWidth": 6,
+			 "query": {}, "days": 91}`,
+			want: `widget "w": "days" is 91; it must be between 1 and 90`,
+		},
+		{
+			name: "groupBy with an unknown linkResourceType",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "bar", "gridWidth": 6,
+			 "query": {}, "groupBy": {"field": "account", "linkResourceType": "bogus"}}`,
+			want: `widget "w": unknown "groupBy.linkResourceType" "bogus"`,
+		},
+		{
+			name: "groupBy.bucket widget with a linkResourceType",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 6,
+			 "query": {}, "groupBy": {"bucket": "day", "linkResourceType": "account"}}`,
+			want: `widget "w": "groupBy.linkResourceType" is only meaningful with "groupBy.field", not "groupBy.bucket"`,
+		},
+		{
+			name: "groupBy.linkResourceType paired with a mismatched field",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "bar", "gridWidth": 6,
+			 "query": {}, "groupBy": {"field": "state", "linkResourceType": "account"}}`,
+			want: `widget "w": "groupBy.linkResourceType" "account" only supports "groupBy.field" "account", got "state"`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -908,6 +938,57 @@ func TestLoadDir_AcceptsBarWidgetWithBucketGroupBy(t *testing.T) {
 	}
 	if w.GroupBy.Field != "" {
 		t.Errorf("groupBy.field = %q, want empty for a bucket-mode groupBy", w.GroupBy.Field)
+	}
+}
+
+// A "line" widget (the Case Summary dashboard's case-volume trend) loads
+// clean with an explicit days window, and defaults to zero (the frontend/
+// endpoint default of 30) when omitted.
+func TestLoadDir_AcceptsLineWidget(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "d.json", `{
+	  "id": "d", "displayName": "D", "type": "cs",
+	  "widgets": [
+	    {"id": "volume-trend", "displayName": "Case volume, last 30 days", "resourceType": "case", "shape": "line", "gridWidth": 6,
+	     "query": {}, "days": 30}
+	  ]
+	}`)
+
+	dashboards, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(dashboards) != 1 || len(dashboards[0].Widgets) != 1 {
+		t.Fatalf("unexpected loaded dashboards: %+v", dashboards)
+	}
+	w := dashboards[0].Widgets[0]
+	if w.Shape != ShapeLine {
+		t.Errorf("shape = %q, want %q", w.Shape, ShapeLine)
+	}
+	if w.Days != 30 {
+		t.Errorf("days = %d, want 30", w.Days)
+	}
+}
+
+// A bar widget's "cases grouped by account" config may opt into linking each
+// bucket to the account's own detail page instead of a filtered cases list.
+func TestLoadDir_AcceptsGroupByLinkResourceType(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "d.json", `{
+	  "id": "d", "displayName": "D", "type": "cs",
+	  "widgets": [
+	    {"id": "top-customers", "displayName": "Top customers", "resourceType": "case", "shape": "bar", "gridWidth": 6,
+	     "query": {}, "groupBy": {"field": "account", "maxGroups": 5, "linkResourceType": "account"}}
+	  ]
+	}`)
+
+	dashboards, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	w := dashboards[0].Widgets[0]
+	if w.GroupBy == nil || w.GroupBy.LinkResourceType != ResourceAccount {
+		t.Fatalf("groupBy = %+v, want linkResourceType %q", w.GroupBy, ResourceAccount)
 	}
 }
 

@@ -59,6 +59,13 @@ export interface ChangeRequestDto {
   duration: string | null;
   hasCustomerApproved: boolean;
   hasCustomerReviewed: boolean;
+  /**
+   * The two requirement boxes (does the change need the customer's approval / review): the REQUIREMENT, never
+   * the outcome. Omitted when the backend cannot say (the previous system's data source), which is not "not
+   * required".
+   */
+  customerApprovalRequired?: boolean | null;
+  customerReviewRequired?: boolean | null;
   /** Omitted when nothing was ever proposed (or the data source cannot say). */
   customerProposal?: ChangeRequestCustomerProposalDto | null;
   impact: EntityReference | null;
@@ -71,6 +78,31 @@ export interface ChangeRequestDto {
   testPlan: null | string;
   createdOn: string;
   updatedOn: string;
+}
+
+/** One approver's row on an approval stage; the status is an open upper-case set (APPROVED, REQUESTED, ...). */
+export interface ChangeRequestApproverDto {
+  id: string;
+  name: string;
+  status: string;
+  respondedOn?: string | null;
+}
+
+/**
+ * One approval stage of a change request as the customer reads it (`GET /change-requests/{id}/approvals`): the
+ * customer's own stages come whole, WSO2's internal ones as a label and a status only.
+ */
+export interface ChangeRequestApprovalDto {
+  stage: string;
+  approverType: string;
+  approverName: string;
+  /** "APPROVED", "REJECTED" or "PENDING". */
+  status: string;
+  approvers: ChangeRequestApproverDto[];
+}
+
+export interface ChangeRequestApprovalsDto {
+  approvals: ChangeRequestApprovalDto[];
 }
 
 export interface GetChangeRequestsRquestDto {

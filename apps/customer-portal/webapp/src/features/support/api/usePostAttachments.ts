@@ -30,7 +30,10 @@ export type { PostAttachmentsVariables };
 
 /**
  * Posts an attachment to a case (POST /cases/:caseId/attachments).
- * On success, invalidates case-attachments queries so the list refetches.
+ * On success, invalidates the case's attachments (list and tab count), plus the
+ * case comments (activity feed, which renders attachment entries) and case
+ * details (last-updated attributes) by key prefix, since those keys also carry
+ * a project id this hook is not given. Replaces a full page reload.
  *
  * @returns {UseMutationResult<void, Error, PostAttachmentsVariables>} Mutation result.
  */
@@ -89,6 +92,8 @@ export function usePostAttachments(): UseMutationResult<
       queryClient.invalidateQueries({
         queryKey: [ApiQueryKeys.CASE_ATTACHMENTS, caseId],
       });
+      queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CASE_COMMENTS] });
+      queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CASE_DETAILS] });
     },
   });
 }

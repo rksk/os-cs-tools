@@ -74,7 +74,7 @@ func TestMirrorInitialSNComments_WritesThroughTheSystemOperation(t *testing.T) {
 		}},
 	}
 
-	svc.mirrorInitialSNComments(externalCustomerContext(), caseID)
+	svc.mirrorInitialSNComments(externalCustomerContext(), caseID, "case", "")
 
 	if len(calls) != 2 {
 		t.Fatalf("expected the work note and the comment to be mirrored (the audit entry is skipped), got %d writes", len(calls))

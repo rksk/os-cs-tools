@@ -30,9 +30,19 @@ import {
 } from "@wso2/oxygen-ui";
 import type { RiskFilterKey } from "../api/customerHealthTypes";
 
+// "Has Gone Live"/"Support Activity (Last 6 Mo)" used to send the risk keys
+// "hasNoGoLive"/"noSupportCases6mo" -- the NEGATION of what the label says.
+// Checking "Has Gone Live" silently selected accounts that HAVEN'T gone live
+// in 6+ months, and "Support Activity (Last 6 Mo)" selected accounts with NO
+// support cases in that window -- found by comparing the checked label
+// against the network payload's key. Fixed by sending the positive keys the
+// backend already supports/now supports ("hasGoneLive"/"hasRecentCases",
+// see customerHealthAccountMatchesAnyRisk in apps/csm-portal/backend's
+// customer_health_postgres.go) instead of relabeling the UI to match the
+// negated keys.
 const riskOptions: { key: RiskFilterKey; label: string }[] = [
-  { key: "hasNoGoLive", label: "Has Gone Live" },
-  { key: "noSupportCases6mo", label: "Support Activity (Last 6 Mo)" },
+  { key: "hasGoneLive", label: "Has Gone Live" },
+  { key: "hasRecentCases", label: "Support Activity (Last 6 Mo)" },
   { key: "hasEolProduct", label: "Using EOL Products" },
   { key: "hasAbandonedMigrations", label: "Abandoned Migrations" },
   { key: "hasMigrationDelays", label: "Migration Delays" },

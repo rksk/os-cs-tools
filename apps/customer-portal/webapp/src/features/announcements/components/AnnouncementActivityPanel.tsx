@@ -26,7 +26,6 @@ import {
   alpha,
   useTheme,
 } from "@wso2/oxygen-ui";
-import DOMPurify from "dompurify";
 import { useMemo, type JSX } from "react";
 import useGetCaseCommentsInfinite from "@features/support/api/useGetCaseCommentsInfinite";
 import type { CaseComment } from "@features/support/types/cases";
@@ -36,9 +35,10 @@ import {
   convertCodeTagsToHtml,
   formatCommentDate,
   getInitials,
+  SYSTEM_AUTHOR_LABEL,
   hasDisplayableContent,
   hasSingleCodeWrapper,
-  INLINE_COMMENT_HTML_PURIFY,
+  parseApiLocalDateTimeMs,
   plainTextCommentToHtml,
   stripAllCodeBlocks,
   stripCodeWrapper,
@@ -53,17 +53,28 @@ import {
   ANNOUNCEMENT_COMMENTS_LOADING_LABEL,
   ANNOUNCEMENT_COMMENTS_LOAD_MORE_LABEL,
 } from "@features/announcements/constants/announcementsConstants";
+import {
+  isDescriptionEchoedInComment,
+  sanitizeAnnouncementHtml,
+} from "@features/announcements/utils/announcements";
 
 type AnnouncementActivityPanelProps = {
   projectId: string;
   caseId: string;
+  /**
+   * The announcement's description HTML. When the oldest comment is just an
+   * echo of it (ServiceNow writes one when the announcement case is created),
+   * that comment is left out here because the Description card already
+   * shows the same body.
+   */
+  description?: string | null;
 };
 
 function commentAuthorDisplayName(comment: CaseComment): string {
   if (comment.createdByFullName?.trim()) {
     return comment.createdByFullName.trim();
   }
-  return comment.createdBy?.trim() || "Unknown";
+  return comment.createdBy?.trim() || SYSTEM_AUTHOR_LABEL;
 }
 
 function sanitizeCommentContent(content: string, isDarkMode: boolean): string {
@@ -82,19 +93,20 @@ function sanitizeCommentContent(content: string, isDarkMode: boolean): string {
   const darkModeHtml = isDarkMode
     ? stripLightModeInlineStyles(withoutLabel)
     : withoutLabel;
-  return DOMPurify.sanitize(darkModeHtml, INLINE_COMMENT_HTML_PURIFY);
+  return sanitizeAnnouncementHtml(darkModeHtml);
 }
 
 /**
  * AnnouncementActivityPanel shows the latest comments for an announcement (case),
  * newest first, with each comment rendered as its own card matching the description card style.
  *
- * @param props - projectId and caseId of the announcement to fetch comments for.
+ * @param props - projectId and caseId of the announcement to fetch comments for, plus its description (used to drop the origin comment that merely repeats it).
  * @returns {JSX.Element | null} The rendered comments section, or null when there is nothing to show.
  */
 export default function AnnouncementActivityPanel({
   projectId,
   caseId,
+  description,
 }: AnnouncementActivityPanelProps): JSX.Element | null {
   const isDarkMode = useDarkMode();
   const theme = useTheme();
@@ -111,11 +123,48 @@ export default function AnnouncementActivityPanel({
 
   const commentsToShow = useMemo(() => {
     const comments = commentsData?.pages?.flatMap((page) => page.comments) ?? [];
-    return comments
+    const newestFirst = comments
       .filter((comment) => comment.type?.toLowerCase() !== "attachment")
       .filter(hasDisplayableContent)
       .sort((a, b) => -compareByCreatedOnThenId(a, b));
-  }, [commentsData?.pages]);
+
+    // Creating the announcement case makes ServiceNow write an "origin"
+    // comment that mirrors the description, which the Description card below
+    // already renders -- so the same body showed up twice. The origin comment
+    // is the oldest one, i.e. the last of the newest-first list, and is only
+    // known to be the oldest once every page has loaded. Comparing the
+    // rendered text (what the reader would see) keeps this tied to an actual
+    // visible duplicate; a comment that differs from the description is
+    // always kept.
+    if (hasNextPage || newestFirst.length === 0) {
+      return newestFirst;
+    }
+    const oldest = newestFirst[newestFirst.length - 1];
+    // Only when it is unmistakably the oldest: a lone comment, or one with a
+    // valid timestamp strictly earlier than the next-oldest. On a tie the sort
+    // falls back to the id, so the last item could be a later post that merely
+    // repeats the description, and an unparsable timestamp says nothing about
+    // order; in both cases the comment stays.
+    const oldestTime = parseApiLocalDateTimeMs(oldest.createdOn);
+    const nextOldestTime = parseApiLocalDateTimeMs(
+      newestFirst[newestFirst.length - 2]?.createdOn,
+    );
+    const isClearlyOldest =
+      newestFirst.length === 1 ||
+      (Number.isFinite(oldestTime) &&
+        Number.isFinite(nextOldestTime) &&
+        oldestTime < nextOldestTime);
+    if (
+      isClearlyOldest &&
+      isDescriptionEchoedInComment(
+        description,
+        sanitizeCommentContent(oldest.content, isDarkMode),
+      )
+    ) {
+      return newestFirst.slice(0, -1);
+    }
+    return newestFirst;
+  }, [commentsData?.pages, hasNextPage, description, isDarkMode]);
 
   if (
     !isLoading &&

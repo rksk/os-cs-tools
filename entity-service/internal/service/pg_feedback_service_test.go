@@ -40,6 +40,7 @@ type fakeFeedbackRepo struct {
 	searchTotal  int
 	periodRows   []domain.FeedbackBucketResult
 	ratingRows   []repository.FeedbackRatingBucket
+	reasonRows   []domain.FeedbackBucketResult
 	err          error
 	calls        int
 	gotFilter    repository.FeedbackFilter
@@ -47,6 +48,7 @@ type fakeFeedbackRepo struct {
 	gotOffset    int
 	gotPeriod    string
 	gotRatingAgg bool
+	gotReasonRat int
 }
 
 func (f *fakeFeedbackRepo) SearchFeedback(_ context.Context, flt repository.FeedbackFilter, limit, offset int) ([]domain.CaseFeedback, int, error) {
@@ -65,6 +67,12 @@ func (f *fakeFeedbackRepo) AggregateFeedbackByRating(_ context.Context, flt repo
 	f.calls++
 	f.gotFilter, f.gotRatingAgg = flt, true
 	return f.ratingRows, f.err
+}
+
+func (f *fakeFeedbackRepo) AggregateFeedbackReasons(_ context.Context, flt repository.FeedbackFilter, rating int) ([]domain.FeedbackBucketResult, error) {
+	f.calls++
+	f.gotFilter, f.gotReasonRat = flt, rating
+	return f.reasonRows, f.err
 }
 
 func requireValidation(t *testing.T, err error, wantSubstr string) {
@@ -259,24 +267,53 @@ func TestPgFeedbackAggregate_RatingBuckets(t *testing.T) {
 	}
 }
 
-func TestPgFeedbackAggregate_ReasonsBucketsAreEmpty(t *testing.T) {
-	for _, bucket := range []domain.FeedbackBucket{
-		domain.FeedbackBucketReasonsVeryDissatisfied, domain.FeedbackBucketReasonsDissatisfied,
-		domain.FeedbackBucketReasonsNeutral, domain.FeedbackBucketReasonsSatisfied, domain.FeedbackBucketReasonsVerySatisfied,
-	} {
-		t.Run(string(bucket), func(t *testing.T) {
-			repo := &fakeFeedbackRepo{}
-			resp, err := NewPostgresFeedbackService(repo).AggregateFeedback(context.Background(), domain.AggregateFeedbackRequest{Bucket: bucket})
+func TestPgFeedbackAggregate_ReasonsBuckets(t *testing.T) {
+	cases := []struct {
+		bucket domain.FeedbackBucket
+		rating int
+	}{
+		{domain.FeedbackBucketReasonsVeryDissatisfied, 1},
+		{domain.FeedbackBucketReasonsDissatisfied, 2},
+		{domain.FeedbackBucketReasonsNeutral, 3},
+		{domain.FeedbackBucketReasonsSatisfied, 4},
+		{domain.FeedbackBucketReasonsVerySatisfied, 5},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.bucket), func(t *testing.T) {
+			rows := []domain.FeedbackBucketResult{
+				{BucketStart: "Slow response", AvgRating: float64(tc.rating), Count: 3},
+				{BucketStart: "Unclear answer", AvgRating: float64(tc.rating), Count: 1},
+			}
+			repo := &fakeFeedbackRepo{reasonRows: rows}
+			resp, err := NewPostgresFeedbackService(repo).AggregateFeedback(context.Background(), domain.AggregateFeedbackRequest{
+				Bucket:  tc.bucket,
+				Filters: domain.AggregateFeedbackFilters{AccountIDs: []string{fbAccountID}, DateFrom: "2026-07-01", DateTo: "2026-07-31"},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if resp.Buckets == nil || len(resp.Buckets) != 0 || resp.TotalRecords != 0 {
-				t.Errorf("resp = %+v, want empty non-nil buckets", resp)
+			if repo.gotReasonRat != tc.rating {
+				t.Errorf("rating = %d, want %d", repo.gotReasonRat, tc.rating)
 			}
-			if repo.calls != 0 {
-				t.Errorf("repository called %d times for a bucket it cannot serve", repo.calls)
+			f := repo.gotFilter
+			if len(f.AccountIDs) != 1 || f.From == nil || f.Before == nil {
+				t.Errorf("filter = %+v, want account and date range passed through", f)
+			}
+			if !reflect.DeepEqual(resp.Buckets, rows) || resp.TotalRecords != 4 {
+				t.Errorf("resp = %+v, want buckets %+v total 4", resp, rows)
 			}
 		})
+	}
+}
+
+func TestPgFeedbackAggregate_ReasonsEmptyIsNonNilSlice(t *testing.T) {
+	resp, err := NewPostgresFeedbackService(&fakeFeedbackRepo{}).AggregateFeedback(context.Background(),
+		domain.AggregateFeedbackRequest{Bucket: domain.FeedbackBucketReasonsNeutral})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Buckets == nil || len(resp.Buckets) != 0 || resp.TotalRecords != 0 {
+		t.Errorf("resp = %+v, want empty non-nil buckets", resp)
 	}
 }
 
@@ -289,7 +326,7 @@ func TestPgFeedbackAggregate_EmptyAndRepoError(t *testing.T) {
 		t.Errorf("resp = %+v", resp)
 	}
 	boom := errors.New("db down")
-	for _, b := range []domain.FeedbackBucket{domain.FeedbackBucketMonth, domain.FeedbackBucketRating} {
+	for _, b := range []domain.FeedbackBucket{domain.FeedbackBucketMonth, domain.FeedbackBucketRating, domain.FeedbackBucketReasonsSatisfied} {
 		_, err = NewPostgresFeedbackService(&fakeFeedbackRepo{err: boom}).AggregateFeedback(context.Background(), domain.AggregateFeedbackRequest{Bucket: b})
 		if !errors.Is(err, boom) {
 			t.Errorf("bucket %s: err = %v, want %v", b, err, boom)

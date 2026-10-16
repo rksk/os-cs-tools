@@ -45,12 +45,12 @@ export const PORTAL_ROLE = {
   // -- reaching PATCH/DELETE /comments/{id} for a comment the holder did NOT
   // author. See canUpdateDeleteAnyComment below.
   commentUpdater: "comment_updater",
-  // PLG's own administrator: canUsePlg AND canManagePlaybooks, the same reach
-  // inside PLG that admin has, without being the portal's administrator.
-  // Mirrors the backend's PermUsePlg + PermManagePlaybooks
-  // (internal/handler/access.go). Additive to admin, which keeps both whether
-  // or not AUTH_PLG_ADMIN_ROLES is set.
-  plgAdmin: "plg_admin",
+  // Grants PermViewOperations and PermViewSecurityCenter on the backend
+  // (internal/handler/access.go) -- read-only access to the Operations area
+  // and Security Center (security reports + vulnerabilities), and nothing
+  // else: never PermWrite, so both sections render read-only for a holder
+  // with no other role. See canUseOperations/canUseSecurityCenter below.
+  securityTeam: "security_team",
 } as const;
 
 // Roles that, held alone, let someone use the portal at all. announcement_creator
@@ -80,7 +80,10 @@ export interface PortalAccess {
   /**
    * The Operations section (incidents, change requests, problems, outages,
    * service requests). Support-portal-lite had no such area, so its
-   * view-oriented roles never saw one: only full-access roles do here.
+   * view-oriented roles never saw one: only full-access roles do here, plus
+   * the dedicated `security_team` role (read-only -- that role never holds
+   * {@link canWrite}, so this section renders read-only for a holder with no
+   * other role). Mirrors the backend's `PermViewOperations`.
    */
   canUseOperations: boolean;
   /**
@@ -115,8 +118,9 @@ export interface PortalAccess {
   canCreateUser: boolean;
   /**
    * The Security Center section (Security reports + Vulnerabilities tabs)
-   * and the API calls behind it. `admin` and `cs_engineer` only — mirrors
-   * the backend's `PermViewSecurityCenter`, which (unlike `PermView`) plain
+   * and the API calls behind it. `admin`, `cs_engineer`, and the dedicated
+   * `security_team` role (read-only) — mirrors the backend's
+   * `PermViewSecurityCenter`, which (unlike `PermView`) plain
    * viewer/escalator/attachment_downloader/usage_metrics_viewer/
    * timecard_approver/dashboard_designer do not hold.
    */
@@ -166,9 +170,9 @@ export interface PortalAccess {
   canUpdateDeleteAnyComment: boolean;
   /**
    * The small set of sections that used to live in the separate, now-removed
-   * "Support Portal Lite" app (Customer Health, User scan, SLA/Time/CS
-   * project reports, and the extra Account detail tabs they added): `viewer`
-   * only, regardless of what other roles the caller also holds — mirrors the
+   * "Support Portal Lite" app (Customer Health, User scan, the Time project
+   * report, and the extra Account detail tabs they added): `viewer` only,
+   * regardless of what other roles the caller also holds — mirrors the
    * backend's `PermViewerAccess` (`access.go`), which is built only from the
    * viewer role, not folded into the usual "full access" `cs_engineer`/`admin`
    * bundle the way every other flag above is. A `cs_engineer` who does not
@@ -237,6 +241,12 @@ export interface PortalAccess {
    * might hold.
    */
   isAdmin: boolean;
+  /**
+   * The SLAs tab on a case's detail page. `admin`, `cs_engineer`, or the
+   * dedicated `security_team` role — every other role, `viewer` included,
+   * does not see this tab at all.
+   */
+  canViewSlaTab: boolean;
 }
 
 /**
@@ -284,6 +294,7 @@ export function getPortalAccess(roles: string[] | undefined): PortalAccess {
       canViewSettings: true,
       canViewWorkItemsStaffView: true,
       isAdmin: true,
+      canViewSlaTab: true,
     };
   }
   const held = new Set((roles ?? []).map((r) => r.toLowerCase()));
@@ -296,20 +307,14 @@ export function getPortalAccess(roles: string[] | undefined): PortalAccess {
     // further limited to the case's ABT team leads (CsmCaseDetailPage).
     canEscalate: full || has(PORTAL_ROLE.escalator),
     canDownloadAttachment: full || has(PORTAL_ROLE.attachmentDownloader),
-    canUseOperations: full,
+    canUseOperations: full || has(PORTAL_ROLE.securityTeam),
     canUseTimeCardsAndUpdates: full || has(PORTAL_ROLE.timecardApprover),
     canWrite: full,
     canAddWorkNotes: full || has(PORTAL_ROLE.worknoteCreator),
     canCreateUser: isAdmin,
-    canUseSecurityCenter: full,
-    // cs_engineer, admin, and PLG's own administrator. Mirrors the backend's
-    // PermUsePlg.
-    canUsePlg: full || has(PORTAL_ROLE.plgAdmin),
-    // admin OR the dedicated role. The hiding this drives is an affordance,
-    // not the gate -- the backend 403s either way (see PlaybooksPage's own
-    // comment) -- but it must agree with PermManagePlaybooks, or a plg_admin
-    // would be allowed to author a template and shown no form to do it in.
-    canManagePlaybooks: isAdmin || has(PORTAL_ROLE.plgAdmin),
+    canUseSecurityCenter: full || has(PORTAL_ROLE.securityTeam),
+    canUsePlg: full,
+    canManagePlaybooks: isAdmin,
     canCreateAnnouncement: full && (isAdmin || has(PORTAL_ROLE.announcementCreator)),
     canUpdateDeleteAnyComment: isAdmin || has(PORTAL_ROLE.commentUpdater),
     isSplAudience: has(PORTAL_ROLE.viewer),
@@ -319,5 +324,6 @@ export function getPortalAccess(roles: string[] | undefined): PortalAccess {
     canViewSettings: full,
     canViewWorkItemsStaffView: full || has(PORTAL_ROLE.timecardApprover),
     isAdmin,
+    canViewSlaTab: full || has(PORTAL_ROLE.securityTeam),
   };
 }

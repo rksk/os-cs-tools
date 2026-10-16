@@ -30,6 +30,20 @@ func IncidentAudience(assignmentGroup string) string {
 	return IncidentAudiencePrefix + strings.ToLower(strings.TrimSpace(assignmentGroup))
 }
 
+// IncidentGroups is the assignment groups whose INCIDENT_CHAT_SPACES spaces get a group's incident messages: its INCIDENT_CHAT_FANOUT list, else the group itself.
+func IncidentGroups(fanout map[string][]string, group string) []string {
+	key := strings.ToLower(strings.TrimSpace(group))
+	if key == "" {
+		return nil
+	}
+	for g, targets := range fanout {
+		if strings.ToLower(strings.TrimSpace(g)) == key && len(targets) > 0 {
+			return targets
+		}
+	}
+	return []string{group}
+}
+
 // IncidentCreatedAlert is SendIncidentCreatedAlert's card content.
 type IncidentCreatedAlert struct {
 	// IncidentID keys the card's thread (IncidentThreadKey).
@@ -118,7 +132,7 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 		}}},
 		Thread: &chatThread{ThreadKey: IncidentThreadKey(a.IncidentID)},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, a.Number, a.IncidentID, msg)
 }
 
 // SendIncidentAssignedAlert posts ServiceNow's "Incident Acknowledged." reply under the incident's card.
@@ -141,7 +155,7 @@ func (c *GoogleChatClient) SendIncidentAssignedAlert(ctx context.Context, audien
 		}}},
 		Thread: &chatThread{ThreadKey: IncidentThreadKey(a.IncidentID)},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, a.Number, a.IncidentID, msg)
 }
 
 // incidentRef is the incident's number, or its id when an older publisher sent no number.

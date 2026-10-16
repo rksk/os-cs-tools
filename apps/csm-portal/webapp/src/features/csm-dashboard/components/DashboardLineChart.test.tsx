@@ -1,0 +1,94 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
+
+// Recharts' ResponsiveContainer (underneath the library's own LineChart)
+// measures a real layout size, always 0 under jsdom — stubbed to a plain
+// stand-in that renders enough of its own props to assert on, same approach
+// DashboardPieChart.test.tsx uses for this same package.
+vi.mock("@wso2/oxygen-ui-charts-react", () => ({
+  LineChart: ({
+    data,
+    lines,
+  }: {
+    data: Record<string, unknown>[];
+    lines: { dataKey: string; name?: string; stroke?: string }[];
+  }) => (
+    <div>
+      {lines.map((line) => (
+        <div key={line.dataKey} data-testid={`line-${line.dataKey}`} data-stroke={line.stroke}>
+          {line.name}: {data.map((row) => `${row.label}=${row[line.dataKey]}`).join(", ")}
+        </div>
+      ))}
+    </div>
+  ),
+}));
+
+import DashboardLineChart from "@features/csm-dashboard/components/DashboardLineChart";
+import type { CaseVolumeTrendChartPoint } from "@features/csm-dashboard/api/useCaseVolumeTrendData";
+
+const POINTS: CaseVolumeTrendChartPoint[] = [
+  { date: "2026-09-01", opened: 3, closed: 1 },
+  { date: "2026-09-02", opened: 2, closed: 4 },
+];
+
+describe("DashboardLineChart", () => {
+  it("renders a skeleton while loading", () => {
+    const { container } = render(
+      <DashboardLineChart points={[]} isLoading={true} isError={false} />,
+    );
+    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(1);
+  });
+
+  it("renders its error state instead of the chart", () => {
+    render(<DashboardLineChart points={[]} isLoading={false} isError={true} />);
+    expect(screen.getByText("Could not load this widget.")).toBeInTheDocument();
+  });
+
+  it("renders an empty state when there are no points at all", () => {
+    render(<DashboardLineChart points={[]} isLoading={false} isError={false} />);
+    expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
+  });
+
+  it("renders an empty state when every point is zero across both series", () => {
+    render(
+      <DashboardLineChart
+        points={[
+          { date: "2026-09-01", opened: 0, closed: 0 },
+          { date: "2026-09-02", opened: 0, closed: 0 },
+        ]}
+        isLoading={false}
+        isError={false}
+      />,
+    );
+    expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
+  });
+
+  it("renders two lines, Opened and Closed, with their own day-formatted data", () => {
+    render(<DashboardLineChart points={POINTS} isLoading={false} isError={false} />);
+
+    expect(screen.getByTestId("line-opened")).toHaveTextContent(
+      "Opened: Sep 1=3, Sep 2=2",
+    );
+    expect(screen.getByTestId("line-closed")).toHaveTextContent(
+      "Closed: Sep 1=1, Sep 2=4",
+    );
+  });
+});

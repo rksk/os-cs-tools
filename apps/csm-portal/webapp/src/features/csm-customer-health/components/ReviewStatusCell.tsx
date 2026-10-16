@@ -165,10 +165,10 @@ export default function ReviewStatusCell({
             <Typography variant="caption" color="text.secondary">To Be Reviewed</Typography>
             <Box sx={{ mt: 2, maxWidth: 200, mx: "auto" }}>
               <Stack spacing={1}>
-                <Button size="small" fullWidth variant="contained" color="error" sx={{ fontWeight: 600, textTransform: "none", py: 0.75 }} onClick={() => setMarkAtRiskOpen(true)}>
+                <Button size="small" fullWidth variant="text" color="error" sx={{ fontWeight: 600, textTransform: "none", "&:hover": { backgroundColor: "transparent", textDecoration: "underline" } }} onClick={() => setMarkAtRiskOpen(true)}>
                   Mark At Risk
                 </Button>
-                <Button size="small" fullWidth variant="contained" color="success" sx={{ fontWeight: 600, textTransform: "none", py: 0.75 }} onClick={() => setMarkHealthyOpen(true)}>
+                <Button size="small" fullWidth variant="text" color="success" sx={{ fontWeight: 600, textTransform: "none", "&:hover": { backgroundColor: "transparent", textDecoration: "underline" } }} onClick={() => setMarkHealthyOpen(true)}>
                   Mark Healthy
                 </Button>
                 <Button size="small" fullWidth variant="outlined" onClick={handleOpenHistory} sx={{ textTransform: "none" }}>

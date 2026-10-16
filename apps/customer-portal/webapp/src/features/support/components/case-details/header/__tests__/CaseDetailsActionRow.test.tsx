@@ -27,10 +27,6 @@ vi.mock("@api/useGetProjectFilters", () => ({
         { id: "3", label: "Closed" },
         { id: "1003", label: "Waiting On WSO2" },
       ],
-      resolutionCodes: [
-        { id: "SOLVED_WORKAROUND_PROVIDED", label: "Solved Workaround Provided" },
-      ],
-      causes: [{ id: "PRODUCT_BUG", label: "Product Bug" }],
     },
   }),
 }));
@@ -57,10 +53,9 @@ vi.mock("@context/error-banner/ErrorBannerContext", () => ({
   useErrorBanner: () => ({ showError: showErrorMock }),
 }));
 
-// Defaults to an internal caller (isExternalUser: false) so existing tests
-// that don't care about the resolution-fields dialog keep working —
-// individual tests override this via mockReturnValueOnce where it matters.
-const useCustomerPermissionsMock = vi.fn(() => ({ isExternalUser: false }));
+// Defaults to an external (customer) caller, the normal customer portal user;
+// individual tests override this where internal behaviour matters.
+const useCustomerPermissionsMock = vi.fn(() => ({ isExternalUser: true }));
 
 vi.mock("@hooks/useCustomerPermissions", () => ({
   useCustomerPermissions: () => useCustomerPermissionsMock(),
@@ -90,7 +85,7 @@ describe("CaseDetailsActionRow", () => {
     showSuccessMock.mockReset();
     showErrorMock.mockReset();
     useCustomerPermissionsMock.mockReset();
-    useCustomerPermissionsMock.mockReturnValue({ isExternalUser: false });
+    useCustomerPermissionsMock.mockReturnValue({ isExternalUser: true });
   });
 
   it("should render Close action for open status when case can be patched", () => {
@@ -98,22 +93,7 @@ describe("CaseDetailsActionRow", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  // Regression tests for a real, reported correction: resolutionCode/cause/
-  // closeNotes are WSO2's own internal case-resolution taxonomy, so only an
-  // internal (WSO2 staff) caller closing a case should be asked for them —
-  // an external (customer/partner) caller must never see these fields.
-  it("shows resolution fields in the close confirmation for an internal caller", () => {
-    useCustomerPermissionsMock.mockReturnValue({ isExternalUser: false });
-    renderActionRow({ statusLabel: "Open" });
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-
-    expect(screen.getByLabelText(/Resolution Code/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Cause/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Close notes")).toBeInTheDocument();
-  });
-
-  it("does not show resolution fields in the close confirmation for an external caller", () => {
+  it("closes with a plain confirm and sends no resolution fields for an external user", () => {
     useCustomerPermissionsMock.mockReturnValue({ isExternalUser: true });
     renderActionRow({ statusLabel: "Open" });
 
@@ -122,6 +102,64 @@ describe("CaseDetailsActionRow", () => {
     expect(screen.queryByLabelText(/Resolution Code/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^Cause/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Close notes")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(mutateMock.mock.calls[0]![0]).toEqual({ stateKey: 3 });
+  });
+
+  it("accepts a solution with a plain confirm for an external user", () => {
+    renderActionRow({ statusLabel: "Solution Proposed" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept Solution" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(mutateMock.mock.calls[0]![0]).toEqual({ stateKey: 3 });
+  });
+
+  describe("internal users", () => {
+    beforeEach(() => {
+      useCustomerPermissionsMock.mockReturnValue({ isExternalUser: false });
+    });
+
+    it("disables Close and cannot open the confirm dialog", () => {
+      renderActionRow({ statusLabel: "Open" });
+
+      const close = screen.getByRole("button", { name: "Close" });
+      expect(close).toBeDisabled();
+      fireEvent.click(close);
+
+      expect(screen.queryByText("Confirm State Change")).not.toBeInTheDocument();
+      expect(mutateMock).not.toHaveBeenCalled();
+    });
+
+    it("disables Accept Solution but leaves Reject Solution usable", () => {
+      renderActionRow({ statusLabel: "Solution Proposed" });
+
+      const accept = screen.getByRole("button", { name: "Accept Solution" });
+      expect(accept).toBeDisabled();
+      fireEvent.click(accept);
+
+      expect(screen.queryByText("Confirm State Change")).not.toBeInTheDocument();
+      expect(mutateMock).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Reject Solution" }),
+      ).toBeEnabled();
+    });
+
+    it("explains why Close is unavailable via a tooltip", async () => {
+      renderActionRow({ statusLabel: "Open" });
+
+      fireEvent.mouseOver(screen.getByRole("button", { name: "Close" }).parentElement!);
+
+      expect(
+        await screen.findByText(
+          "Cases can't be closed from the customer portal for internal users. Use the CSM portal.",
+        ),
+      ).toBeInTheDocument();
+    });
   });
 
   it("should render solution actions for solution proposed status", () => {

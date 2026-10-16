@@ -76,6 +76,35 @@ export function rotaRevertRuns(
   return runs.length > 0 ? runs : undefined;
 }
 
+/** An undo that put some runs back and then failed: the days before
+ *  `remainingFrom` are as they were, the rest still hold the change. */
+export class UndoIncomplete extends Error {
+  constructor(
+    readonly remainingFrom: string,
+    readonly failure: unknown,
+  ) {
+    super("The undo did not finish.");
+    this.name = "UndoIncomplete";
+  }
+}
+
+/** Write the runs back in order. A failure after the first run has gone in
+ *  says how far it got (`UndoIncomplete`); one on the first run is passed on
+ *  as it is, since nothing was put back. */
+export async function applyRevertRuns(
+  runs: readonly RevertRun[],
+  apply: (run: RevertRun) => Promise<unknown>,
+): Promise<void> {
+  for (const [i, run] of runs.entries()) {
+    try {
+      await apply(run);
+    } catch (err) {
+      if (i === 0) throw err;
+      throw new UndoIncomplete(run.from, err);
+    }
+  }
+}
+
 /** Whether leave or an allocation marked over `from`..`to` can be taken off
  *  again exactly: only where the engineer had nothing marked on any of those
  *  days before. */

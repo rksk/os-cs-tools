@@ -35,6 +35,7 @@ const (
 	orgExternal = "external"
 
 	domainDefault    = "DEFAULT"
+	attrID           = "id"
 	attrPhoneNumbers = "phoneNumbers"
 	attrUserName     = "userName"
 	attrSchema       = "urn:scim:wso2:schema"
@@ -46,10 +47,15 @@ const (
 )
 
 // SearchUser fetches SCIM data for the given email and returns the extracted
-// phone number, last password update time, and role assignment, mirroring
-// searchUsers + processPhoneNumber + processLastPasswordUpdateTime in the
-// Ballerina SCIM module (roles has no Ballerina-side precedent -- it backs the
-// profile page's own role display, added later than that mirrored logic).
+// phone number, last password update time, role assignment, and the user's
+// own Asgardeo ID (for a subsequent GetUserByID call), mirroring searchUsers
+// + processPhoneNumber + processLastPasswordUpdateTime in the Ballerina SCIM
+// module (roles and id have no Ballerina-side precedent -- id backs
+// GetUserByID, added later than that mirrored logic). A search response only
+// returns whichever attributes are explicitly requested -- id is not
+// returned for free, the same convention the SCIM operations service's own
+// getUserByUserName follows -- so it must be requested here even though
+// nothing SearchUser itself computes needs it.
 // Returns nil if no matching user is found in the SCIM service.
 func (c *Client) SearchUser(ctx context.Context, email string) (*UserInfo, error) {
 	startIndex := 1
@@ -58,7 +64,7 @@ func (c *Client) SearchUser(ctx context.Context, email string) (*UserInfo, error
 	for {
 		reqBody, err := json.Marshal(scimSearchRequest{
 			Domain:     domainDefault,
-			Attributes: []string{attrPhoneNumbers, attrUserName, attrSchema, attrRoles},
+			Attributes: []string{attrID, attrPhoneNumbers, attrUserName, attrSchema, attrRoles},
 			Filter:     fmt.Sprintf("userName eq %s", email),
 			StartIndex: startIndex,
 		})
@@ -94,6 +100,7 @@ func (c *Client) SearchUser(ctx context.Context, email string) (*UserInfo, error
 	}
 
 	return &UserInfo{
+		ID:                     found.ID,
 		PhoneNumber:            extractMobilePhone(*found),
 		LastPasswordUpdateTime: extractLastPasswordUpdateTime(*found),
 		Roles:                  []string(found.Roles),
@@ -178,6 +185,36 @@ func (c *Client) UpdateUserPhone(ctx context.Context, userID, mobile string) (*s
 	}
 
 	return extractMobilePhone(updatedUser), nil
+}
+
+// GetUserByID fetches the full SCIM user record for the given Asgardeo user
+// ID (see UserInfo.ID, from a prior SearchUser call -- there is no lookup by
+// email alone) and returns the role assignments from it, each carrying both
+// the role's own Asgardeo ID and its display name.
+//
+// This is the canonical resource read, used instead of trusting the "roles"
+// field already present on a /Users/.search result (scimUser.Roles /
+// SearchUser's own UserInfo.Roles): a search response only carries whichever
+// attributes the caller requested, while a direct GET of /Users/{id} always
+// returns the complete representation. The practical reason to prefer it
+// here specifically: matching a held role against ASGARDEO_ROLE_IDS needs
+// each role's ID, not just its display name (two distinct roles can share a
+// name), and getting a reliable ID for every entry is worth the extra round
+// trip.
+func (c *Client) GetUserByID(ctx context.Context, userID string) ([]RoleAssignment, error) {
+	path := "/organizations/" + org + "/users/" + url.PathEscape(userID)
+	raw, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var user scimUserByID
+	if err := json.Unmarshal(raw, &user); err != nil {
+		return nil, fmt.Errorf("scim: decode user response: %w", err)
+	}
+	assignments := make([]RoleAssignment, 0, len(user.Roles))
+	assignments = append(assignments, user.Roles...)
+	return assignments, nil
 }
 
 // GetRole fetches the role with the given Asgardeo role ID and returns its

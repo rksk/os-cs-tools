@@ -312,6 +312,30 @@ describe("UserProfilePage", () => {
     expect(screen.queryByText("Has access", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
   });
 
+  it("shows a linked row whose addresses agree but is not yet registered as Invited, not as a mismatch", () => {
+    mockQueryResult({
+      data: {
+        ...BLOCKED_EXTERNAL_USER,
+        projectAccess: [
+          {
+            projectId: "proj-5",
+            projectName: "Pending Platform",
+            projectKey: "PENDING",
+            contactEmail: "John.Smith@example.com",
+            contactRecordPresent: true,
+            contactRecordEmail: "john.smith@example.com",
+            registrationState: "invited",
+            grantsCaseAccess: false,
+          },
+        ],
+      },
+    });
+    renderPage();
+    expect(screen.getByText("Invited", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.queryByText(/but linked to a contact whose own address/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Blocked on/i)).not.toBeInTheDocument();
+  });
+
   // Same two-causes distinction the project contacts tab makes: "No access"
   // on its own does not say what to fix.
   it("names both addresses when a row is linked but invited under a different address", () => {

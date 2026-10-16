@@ -19,6 +19,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -47,9 +48,18 @@ func TestCORSPreflightBypassesAuth(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://frontend.example.com" {
 		t.Fatalf("expected Allow-Origin echoed, got %q", got)
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+	got := rec.Header().Get("Access-Control-Allow-Methods")
+	if got == "" {
 		t.Fatal("expected Allow-Methods to be set")
 	}
+	// The browser saves Team Schedule settings with PUT; without it in the
+	// preflight answer, every such save fails before it is sent.
+	for _, m := range strings.Split(got, ",") {
+		if strings.TrimSpace(m) == http.MethodPut {
+			return
+		}
+	}
+	t.Fatalf("Allow-Methods %q does not include PUT", got)
 }
 
 func TestCORSRejectsDisallowedOrigin(t *testing.T) {

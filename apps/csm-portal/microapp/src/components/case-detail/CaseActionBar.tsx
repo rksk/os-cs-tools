@@ -91,28 +91,12 @@ export function CaseActionBar({
     );
   }
 
-  return <StateSelect targets={targets} labelFor={labelFor} disabled={isPending} onSelect={runTarget} />;
-}
-
-interface StateSelectProps<T extends string> {
-  targets: T[];
-  labelFor: (target: T) => string;
-  disabled: boolean;
-  onSelect: (target: T) => void;
-}
-
-/**
- * The "Change state" pill dropdown shared by the case and incident detail action bars, so both
- * render the same control. Always shows the "Change state" placeholder; picking an option fires
- * `onSelect` without keeping a selected value.
- */
-export function StateSelect<T extends string>({ targets, labelFor, disabled, onSelect }: StateSelectProps<T>) {
   return (
     <FormControl size="small" sx={{ minWidth: 150, flexShrink: 0 }}>
       <Select
         value=""
         displayEmpty
-        disabled={disabled}
+        disabled={isPending}
         renderValue={() => "Change state"}
         sx={{
           color: "#fff",
@@ -156,7 +140,7 @@ export function StateSelect<T extends string>({ targets, labelFor, disabled, onS
             opacity: 1,
           },
         }}
-        onChange={(e) => onSelect(e.target.value as T)}
+        onChange={(e) => runTarget(e.target.value as CaseState)}
       >
         {targets.map((target) => (
           <MenuItem key={target} value={target}>

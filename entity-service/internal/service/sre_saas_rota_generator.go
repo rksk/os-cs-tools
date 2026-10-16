@@ -33,12 +33,18 @@ import (
 //
 //	weekday L1, per team and zone      SRE_TZ1_L1 / SRE_TZ2_L1 (tier L1)
 //	weekday L2, per team and zone      SRE_TZ1 / SRE_TZ2, tier L2
-//	weekday TZ3 L1 / L2, both teams    SRE_TZ3, tier L1 / L2
 //	weekend on-call / escalation       SRE_WE_TZ1, tier L1 / L2, per team
-//	weekend TZ3 on-call, both teams    SRE_TZ3, tier L1 (escalation left empty, as the script did)
-//	L3, per team and zone              the lead on TZ1 (the weekend window at a
-//	                                   weekend); TZ2 and TZ3 a teammate free that
-//	                                   day, since one person works one zone a day
+//	L3, per team, TZ1 and TZ2          the lead on TZ1 (the weekend window at a
+//	                                   weekend); TZ2 a teammate free that day,
+//	                                   since one person works one zone a day
+//	TZ3 L1 / L2 / L3, every night      SRE_TZ3, tier L1 / L2 / L3: ONE crew for
+//	                                   the whole rota, not one per team
+//
+// TZ3 is the night cover. Its three people answer an Apollo and an Artemis
+// incident alike -- the pager calls whoever holds the tier when the
+// incident's own team holds none -- so a night has one L1, one L2 and one
+// L3, drawn from every team's night people, weekends included. Each turn is
+// still written on the person's own team, so it shows on their row.
 //
 // The script's CR pair is not written: the portal has no CR turn. It still
 // decides who is L2 each day (one of the week's pair) and keeps the pair out
@@ -72,6 +78,10 @@ var saasRotaShiftCodes = []string{
 // starting each month from the top of the list.
 var saasRotaEpoch = time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
 
+// saasNightTiers is how many people a night needs: TZ3 L1, L2 and L3. It is
+// also the size of a week's night rotation when nobody has TZ3 hours marked.
+const saasNightTiers = 3
+
 // saasRotaHorizonWeeks is how far before the month the week-by-week chain is
 // started. The chain only remembers last week's CR pair, so a few weeks is
 // enough for the first week of the month to land where a longer run would.
@@ -100,18 +110,23 @@ type saasRotaInput struct {
 	// leave, an allocation (RnD, ENG, a customer) or any other time away.
 	Unavailable map[string]map[string]bool
 	// NightOn is user id -> ISO date -> true, for every weekday the person's
-	// regular hours are on TZ3. When anybody is marked in the month, the night
-	// rota is drawn from them alone. When nobody is, every engineer takes a
-	// turn on nights (see nightWeek).
+	// regular hours are on TZ3. When anybody is marked in a week, that week's
+	// nights are drawn from them alone, whichever team they are on. When
+	// nobody is, the engineers take turns on nights (see nightWeek).
 	NightOn map[string]map[string]bool
-	// NightCrew is team key -> the people a lead chose for that team's TZ3
-	// for the month. When set, they are the team's only night people: its TZ3
-	// L1, L2 and L3 go round them night by night, every week, marks or not,
-	// and they work no other zone.
+	// NightCrew is team key -> the people a lead chose for TZ3 for the month.
+	// Every team's choices together are the night crew: the rota's TZ3 L1, L2
+	// and L3 go round them night by night, every week, marks or not, and they
+	// work no other zone. Nobody else is put on TZ3: a tier the crew cannot
+	// cover on a night is left empty and warned about, for a lead to fill.
 	NightCrew map[string][]string
 	// Pinned is user id -> ISO date -> zone ("TZ1" or "TZ2"), for a day someone
 	// else set the person's regular hours on: they work that zone or nothing.
 	Pinned map[string]map[string]string
+	// NightTeam is user id -> ISO date -> the team of this rota a span has
+	// moved them to that day (the SaaS Night cover). Their TZ3 turns that day
+	// are filed under it, as the roster shows them there.
+	NightTeam map[string]map[string]string
 	// Windows is shift code -> [start, end) minute of the day, from the catalogue.
 	Windows map[string][2]int
 }
@@ -160,6 +175,7 @@ type saasGenerator struct {
 	byID       map[string]saasRotaMember
 	teams      []string            // sorted team keys
 	teamPeople map[string][]string // team -> user ids, sorted by email then id
+	everyone   []string            // every team's people, interleaved team by team
 	leads      map[string][]string // team -> lead ids, same order
 	weekPlans  map[string]map[int]saasWeekPlan
 	unavail    map[string]map[string]bool // a copy: lieu is added to it as weekends are passed
@@ -171,12 +187,12 @@ type saasGenerator struct {
 	lieuDays   map[string][]string // user|saturday -> the lieu days it gave, worked out once
 	// defaultNight is set when nobody has TZ3 regular hours marked in the
 	// month: each week then takes its night people from every team's
-	// engineers, one per team (nightWeek). A week with nobody marked takes
-	// them the same way even when other weeks are marked (nightByRotation).
+	// engineers (nightWeek). A week with nobody marked takes them the same way
+	// even when other weeks are marked (nightByRotation).
 	defaultNight bool
-	nightWeeks   map[string]map[int][]string // team -> week -> its night pair, when rotating
-	crew         map[string][]string         // team -> its chosen TZ3 people, members only
-	inCrew       map[string]bool             // user id -> on their team's chosen TZ3 crew
+	nightWeeks   map[int][]string // week -> its night people, when rotating
+	crew         []string         // the chosen TZ3 people, every team's, members only
+	inCrew       map[string]bool  // user id -> on the chosen TZ3 crew
 }
 
 // generateSRESaaSRota works out one month of the SaaS rota.
@@ -208,7 +224,7 @@ func newSaasGenerator(in saasRotaInput) *saasGenerator {
 		from:       from,
 		lieuSeen:   map[string]bool{},
 		lieuDays:   map[string][]string{},
-		nightWeeks: map[string]map[int][]string{},
+		nightWeeks: map[int][]string{},
 	}
 	members := append([]saasRotaMember(nil), in.Members...)
 	sort.SliceStable(members, func(i, j int) bool {
@@ -231,6 +247,7 @@ func newSaasGenerator(in saasRotaInput) *saasGenerator {
 		g.teams = append(g.teams, team)
 	}
 	sort.Strings(g.teams)
+	g.everyone = g.interleave(func(team string) []string { return g.teamPeople[team] })
 	for user, days := range in.Unavailable {
 		cp := make(map[string]bool, len(days))
 		for d, v := range days {
@@ -239,16 +256,41 @@ func newSaasGenerator(in saasRotaInput) *saasGenerator {
 		g.unavail[user] = cp
 	}
 	g.defaultNight = !g.anyNightIn(monthStart, monthEnd)
-	g.crew, g.inCrew = map[string][]string{}, map[string]bool{}
-	for team, ids := range in.NightCrew {
-		for _, p := range ids {
+	g.inCrew = map[string]bool{}
+	g.crew = g.interleave(func(team string) []string {
+		var ids []string
+		for _, p := range in.NightCrew[team] {
 			if m, ok := g.byID[p]; ok && m.TeamKey == team && !g.inCrew[p] {
-				g.crew[team] = append(g.crew[team], p)
+				ids = append(ids, p)
 				g.inCrew[p] = true
 			}
 		}
-	}
+		return ids
+	})
 	return g
+}
+
+// interleave lists each team's people from of, one from every team in turn
+// (apollo's first, artemis's first, apollo's second, ...), so a rotation over
+// the list takes from every team alike.
+func (g *saasGenerator) interleave(of func(team string) []string) []string {
+	lists := make([][]string, len(g.teams))
+	most := 0
+	for i, team := range g.teams {
+		lists[i] = of(team)
+		if len(lists[i]) > most {
+			most = len(lists[i])
+		}
+	}
+	var out []string
+	for i := 0; i < most; i++ {
+		for _, l := range lists {
+			if i < len(l) {
+				out = append(out, l[i])
+			}
+		}
+	}
+	return out
 }
 
 func (g *saasGenerator) run() {
@@ -348,50 +390,35 @@ func (g *saasGenerator) weekday(d time.Time, wi, dow int, emit bool) {
 		}
 	}
 
-	// TZ3 per team, like TZ1 and TZ2: each team's own night people take its
-	// L1 and L2, alternating night by night.
-	crewL3 := map[string]bool{} // teams whose TZ3 L3 their chosen crew already holds tonight
-	for _, team := range g.teams {
-		crew := len(g.crew[team]) > 0
-		rot := crew || g.teamNightByRotation(team, wi)
-		var present []string
-		for _, p := range g.teamNightPool(team, wi) {
-			if (rot || g.in.NightOn[p][iso]) && !g.offFor(p, iso, "TZ3") {
-				present = append(present, p)
-			}
+	// TZ3, one crew for every team: the night people go round L1, L2 and L3
+	// one step a night, so each of them takes every tier in turn.
+	crew := len(g.crew) > 0
+	rot := crew || g.nightByRotation(wi)
+	var present []string
+	for _, p := range g.nightPool(wi) {
+		if (rot || g.in.NightOn[p][iso]) && !g.offFor(p, iso, "TZ3") {
+			present = append(present, p)
 		}
-		seq := saasRotate(present, wi+dow)
-		if crew {
-			// A chosen crew goes round L1, L2 and L3 one step a night, so each
-			// of them takes every tier in turn.
-			seq = saasRotate(present, saasDayNumber(d))
-			if len(seq) < 3 && emit {
-				g.warn(iso, fmt.Sprintf("%s TZ3: only %d of its chosen TZ3 people are free, so the rest of TZ3 comes from the team", team, len(seq)))
-			}
-			if l3 := saasAt(seq, 2); l3 != "" {
-				dayTaken[l3] = true
-				zoneOf[l3] = "TZ3"
-				crewL3[team] = true
-				if emit {
-					g.turn(l3, team, saasShiftTZ3, saasTierL3, iso, "")
-				}
-			}
-		}
-		if len(seq) < 2 {
-			// Fewer than two of the team's night people are free tonight (leave,
-			// or marks that stop part-way through a week): the rest come from
-			// anyone on the team free and not on a day turn today, leads last.
-			seq = append(seq, g.nightSpares(team, wi, dow, iso, dayTaken, seq)...)
-		}
-		for _, p := range []string{saasAt(seq, 0), saasAt(seq, 1)} {
-			if p != "" {
-				dayTaken[p] = true
-				zoneOf[p] = "TZ3"
-			}
+	}
+	seq := saasRotate(present, saasDayNumber(d))
+	if crew && len(seq) < saasNightTiers && emit {
+		g.warnCrewShort(iso, "TZ3", len(seq))
+	}
+	if !crew && len(seq) < saasNightTiers {
+		// Fewer night people are free tonight than there are tiers (leave, or
+		// marks that stop part-way through a week): the rest come from anyone
+		// free and not on a day turn today, leads last. A chosen crew is never
+		// topped up this way: TZ3 is theirs alone.
+		seq = append(seq, g.nightSpares(wi, dow, iso, dayTaken, seq)...)
+	}
+	for i, tier := range []string{saasTierL1, saasTierL2, saasTierL3} {
+		p := saasAt(seq, i)
+		if p != "" {
+			dayTaken[p] = true
+			zoneOf[p] = "TZ3"
 		}
 		if emit {
-			g.turn(saasAt(seq, 0), team, saasShiftTZ3, saasTierL1, iso, fmt.Sprintf("%s TZ3 L1", team))
-			g.turn(saasAt(seq, 1), team, saasShiftTZ3, saasTierL2, iso, fmt.Sprintf("%s TZ3 L2", team))
+			g.turn(p, "", saasShiftTZ3, tier, iso, g.nightSlot("TZ3 "+tier))
 		}
 	}
 	if !emit {
@@ -399,14 +426,10 @@ func (g *saasGenerator) weekday(d time.Time, wi, dow int, emit bool) {
 	}
 	for _, team := range g.teams {
 		wp := g.planForWeek(team, wi)
-		zones := []saasL3Zone{
+		g.l3(team, []saasL3Zone{
 			{saasShiftTZ1, "TZ1", wp.pools["TZ1"]},
 			{saasShiftTZ2, "TZ2", wp.pools["TZ2"]},
-		}
-		if !crewL3[team] {
-			zones = append(zones, saasL3Zone{saasShiftTZ3, "TZ3", g.teamNightPool(team, wi)})
-		}
-		g.l3(team, zones, g.teamNightPool(team, wi), wi+dow, iso, dayTaken, zoneOf)
+		}, g.nightPool(wi), wi+dow, iso, dayTaken, zoneOf)
 	}
 	g.regularHours(wi, iso, zoneOf)
 }
@@ -417,18 +440,21 @@ func (g *saasGenerator) weekday(d time.Time, wi, dow int, emit bool) {
 // TZ3, a lead's TZ1, everyone else's the half of the team they are in that
 // week. Never all three zones: nobody works TZ1, TZ2 and TZ3 in a day.
 func (g *saasGenerator) regularHours(wi int, iso string, zoneOf map[string]string) {
+	night := map[string]bool{}
+	for _, p := range g.nightPool(wi) {
+		night[p] = true
+	}
 	for _, team := range g.teams {
 		wp := g.planForWeek(team, wi)
-		night, tz2 := map[string]bool{}, map[string]bool{}
-		for _, p := range g.teamNightPool(team, wi) {
-			night[p] = true
-		}
+		tz2 := map[string]bool{}
 		for _, p := range wp.pools["TZ2"] {
 			tz2[p] = true
 		}
 		for _, p := range g.teamPeople[team] {
-			if g.isOff(p, iso) || g.in.Pinned[p][iso] != "" {
-				continue // away, or their regular hours were set by someone else
+			if g.isOff(p, iso) || g.in.Pinned[p][iso] != "" || g.in.NightTeam[p][iso] != "" {
+				// Away, their regular hours set by someone else, or on the
+				// Night cover, where they work TZ3 turns only.
+				continue
 			}
 			code := saasShiftTZ1Regular
 			switch {
@@ -451,7 +477,7 @@ func (g *saasGenerator) regularHours(wi int, iso string, zoneOf map[string]strin
 }
 
 // weekend is a Saturday or Sunday. Both days of a weekend get the same people,
-// picked from those free on both, and the on-call earns the Monday and
+// picked from those free on both, and each on-call earns the Monday and
 // Tuesday after it off.
 func (g *saasGenerator) weekend(d time.Time, emit bool) {
 	sat := d
@@ -468,30 +494,93 @@ func (g *saasGenerator) weekend(d time.Time, emit bool) {
 			g.turn(esc, team, saasShiftWeekend, saasTierL2, iso, fmt.Sprintf("%s weekend escalation", team))
 		}
 		g.lieuFor(oncall, sat, emit)
-		// The team's weekend nights: an on-call and an escalation, from its
-		// night people first (the sheet left the escalation to a lead).
-		nOn, nEsc := g.weekendCrew(team, "TZ3", g.teamNightPool(team, satWeek), sat, satWeek,
-			map[string]bool{oncall: true, esc: true})
-		if emit {
-			g.turn(nOn, team, saasShiftTZ3, saasTierL1, iso, fmt.Sprintf("%s TZ3 weekend on-call", team))
-			g.turn(nEsc, team, saasShiftTZ3, saasTierL2, iso, fmt.Sprintf("%s TZ3 weekend escalation", team))
-		}
-		g.lieuFor(nOn, sat, emit)
-		for _, p := range []string{oncall, esc, nOn, nEsc} {
+		for _, p := range []string{oncall, esc} {
 			if p != "" {
 				taken[p] = true
 			}
 		}
 	}
+	// The weekend nights, one crew for every team as on a weekday: the night
+	// people first, then anyone free both days, leads last. Its L1 is the
+	// night's on-call and earns the lieu.
+	nights := g.weekendNights(sat, satWeek, taken)
+	if len(g.crew) > 0 && len(nights) < saasNightTiers && emit {
+		g.warnCrewShort(iso, "TZ3 weekend", len(nights))
+	}
+	for i, tier := range []string{saasTierL1, saasTierL2, saasTierL3} {
+		p := saasAt(nights, i)
+		if p != "" {
+			taken[p] = true
+		}
+		if emit {
+			g.turn(p, "", saasShiftTZ3, tier, iso, g.nightSlot("TZ3 weekend "+tier))
+		}
+	}
+	g.lieuFor(saasAt(nights, 0), sat, emit)
 	if !emit {
 		return
 	}
 	for _, team := range g.teams {
 		g.l3(team, []saasL3Zone{
 			{saasShiftWeekend, "TZ1+2", g.dayPool(team, satWeek)},
-			{saasShiftTZ3, "TZ3", g.teamNightPool(team, satWeek)},
-		}, g.teamNightPool(team, satWeek), satWeek, iso, taken, map[string]string{})
+		}, g.nightPool(satWeek), satWeek, iso, taken, map[string]string{})
 	}
+}
+
+// weekendNights is a weekend's TZ3 L1, L2 and L3: the week's night people
+// free both days first, then anyone else free both days (every team, taken
+// in turn), leads last in each. With a chosen crew only the crew is picked,
+// so it can come back with fewer than three. Nobody in skip is picked.
+func (g *saasGenerator) weekendNights(sat time.Time, satWeek int, skip map[string]bool) []string {
+	satISO, sunISO := saasISO(sat), saasISO(sat.AddDate(0, 0, 1))
+	picked := map[string]bool{}
+	var out []string
+	from := func(pool []string) {
+		var avail, leads []string
+		for _, p := range pool {
+			if skip[p] || picked[p] || g.offFor(p, satISO, "TZ3") || g.offFor(p, sunISO, "TZ3") {
+				continue
+			}
+			if g.byID[p].IsLead {
+				leads = append(leads, p)
+			} else {
+				avail = append(avail, p)
+			}
+		}
+		for _, p := range append(saasRotate(avail, satWeek), saasRotate(leads, satWeek)...) {
+			if len(out) < saasNightTiers {
+				out = append(out, p)
+				picked[p] = true
+			}
+		}
+	}
+	from(g.nightPool(satWeek))
+	if len(out) < saasNightTiers && len(g.crew) == 0 {
+		from(g.everyone)
+	}
+	return out
+}
+
+// warnCrewShort says, once for the night, which tiers the chosen crew leaves
+// empty. The empty slots themselves are not warned again (nightSlot).
+func (g *saasGenerator) warnCrewShort(iso, zone string, free int) {
+	tiers := map[int]string{1: "L3 is", 2: "L2 and L3 are", 3: "L1, L2 and L3 are"}[saasNightTiers-free]
+	who := fmt.Sprintf("only %d of the chosen TZ3 people is free", free)
+	if free == 0 {
+		who = "none of the chosen TZ3 people is free"
+	} else if free > 1 {
+		who = fmt.Sprintf("only %d of the chosen TZ3 people are free", free)
+	}
+	g.warn(iso, fmt.Sprintf("%s: %s, so %s left empty; nobody else is put on TZ3", zone, who, tiers))
+}
+
+// nightSlot is the slot name a TZ3 turn warns under when it is empty: none
+// with a chosen crew, whose short night warnCrewShort already reported.
+func (g *saasGenerator) nightSlot(slot string) string {
+	if len(g.crew) > 0 {
+		return ""
+	}
+	return slot
 }
 
 // weekendCrew is a weekend's on-call and escalation for one team: from pool
@@ -550,16 +639,16 @@ func (g *saasGenerator) weekendPick(pool []string, zone string, sat time.Time, s
 	return saasAt(seq, 0), saasAt(seq, 1)
 }
 
-// nightSpares is, in order, everyone on the team who could take a night its
+// nightSpares is, in order, everyone on any team who could take a night the
 // night people cannot: not away, not on a day turn today, not already picked.
 // Leads come last; their L3 is on TZ1.
-func (g *saasGenerator) nightSpares(team string, wi, dow int, iso string, dayTaken map[string]bool, picked []string) []string {
+func (g *saasGenerator) nightSpares(wi, dow int, iso string, dayTaken map[string]bool, picked []string) []string {
 	skip := map[string]bool{}
 	for _, p := range picked {
 		skip[p] = true
 	}
 	var engineers, leads []string
-	for _, p := range g.teamPeople[team] {
+	for _, p := range g.everyone {
 		if skip[p] || dayTaken[p] || g.offFor(p, iso, "TZ3") {
 			continue
 		}
@@ -632,21 +721,20 @@ func (g *saasGenerator) lieuFor(user string, sat time.Time, emit bool) {
 }
 
 // saasL3Zone is one zone a team needs an L3 for: the shift it is written on,
-// the zone's name, and who belongs on it first (the zone's half, or the
-// team's night people for TZ3).
+// the zone's name, and who belongs on it first (the zone's half).
 type saasL3Zone struct {
 	shift string
 	zone  string
 	pool  []string
 }
 
-// l3 is a team's L3 for each zone of the day, in order. One person works one
-// zone a day, so nobody already on a turn today is picked, and nobody is L3 on
-// two zones: the lead takes the first zone (TZ1, or the weekend window, beside
-// their regular hours), and every other zone goes to whoever is free -- another
-// lead first, then the zone's own people, then the rest of the team, with the
-// week's night people kept for TZ3 while anyone else is free. A zone nobody
-// can take is warned about.
+// l3 is a team's L3 for each of its day zones, in order (TZ3's L3 is the
+// night crew's, not a team's). One person works one zone a day, so nobody
+// already on a turn today is picked, and nobody is L3 on two zones: the lead
+// takes the first zone (TZ1, or the weekend window, beside their regular
+// hours), and every other zone goes to whoever is free -- another lead first,
+// then the zone's own people, then the rest of the team, the week's night
+// people last. A zone nobody can take is warned about.
 func (g *saasGenerator) l3(team string, zones []saasL3Zone, night []string, rot int, iso string, taken map[string]bool, zoneOf map[string]string) {
 	isNight := map[string]bool{}
 	for _, p := range night {
@@ -678,16 +766,8 @@ func (g *saasGenerator) l3(team string, zones []saasL3Zone, night []string, rot 
 			}
 		}
 		seq := append(leads, saasRotate(own, rot)...)
-		if z.zone == "TZ3" && len(g.crew[team]) > 0 {
-			seq = append(saasRotate(own, rot), leads...) // the chosen crew first
-		}
-		if z.zone == "TZ3" {
-			seq = append(seq, saasRotate(nightRest, rot)...)
-			seq = append(seq, saasRotate(day, rot)...)
-		} else {
-			seq = append(seq, saasRotate(day, rot)...)
-			seq = append(seq, saasRotate(nightRest, rot)...)
-		}
+		seq = append(seq, saasRotate(day, rot)...)
+		seq = append(seq, saasRotate(nightRest, rot)...)
 		p := saasAt(seq, 0)
 		if p == "" {
 			g.warn(iso, fmt.Sprintf("%s %s L3 is empty: nobody is free", team, z.zone))
@@ -816,10 +896,10 @@ func (g *saasGenerator) planForWeek(team string, wi int) saasWeekPlan {
 	return wp
 }
 
-// dayPool is a team's people for a week, less its night people that week.
+// dayPool is a team's people for a week, less the week's night people.
 func (g *saasGenerator) dayPool(team string, wi int) []string {
 	night := map[string]bool{}
-	for _, p := range g.teamNightPool(team, wi) {
+	for _, p := range g.nightPool(wi) {
 		night[p] = true
 	}
 	var out []string
@@ -831,25 +911,25 @@ func (g *saasGenerator) dayPool(team string, wi int) []string {
 	return out
 }
 
-// teamNightPool is a team's night people for the week: who its TZ3 turns are
-// drawn from. With TZ3 regular hours marked on the team that week it is
-// everyone marked; otherwise the week's rotation (nightWeek).
-func (g *saasGenerator) teamNightPool(team string, wi int) []string {
-	if c := g.crew[team]; len(c) > 0 {
-		return c
+// nightPool is the week's night people, every team's: who the TZ3 turns are
+// drawn from. A chosen crew when there is one; else everyone with TZ3
+// regular hours marked that week; else the week's rotation (nightWeek).
+func (g *saasGenerator) nightPool(wi int) []string {
+	if len(g.crew) > 0 {
+		return g.crew
 	}
-	if g.teamNightByRotation(team, wi) {
-		return g.nightWeek(team, wi)
+	if g.nightByRotation(wi) {
+		return g.nightWeek(wi)
 	}
-	return g.markedNightPeople(team, wi)
+	return g.markedNightPeople(wi)
 }
 
-// markedNightPeople is everyone on the team with TZ3 regular hours marked on
+// markedNightPeople is everyone on any team with TZ3 regular hours marked on
 // a weekday of the week.
-func (g *saasGenerator) markedNightPeople(team string, wi int) []string {
+func (g *saasGenerator) markedNightPeople(wi int) []string {
 	weekdays := saasWeekdaysOf(wi)
 	var out []string
-	for _, p := range g.teamPeople[team] {
+	for _, p := range g.everyone {
 		for _, iso := range weekdays {
 			if g.in.NightOn[p][iso] {
 				out = append(out, p)
@@ -860,41 +940,37 @@ func (g *saasGenerator) markedNightPeople(team string, wi int) []string {
 	return out
 }
 
-// teamNightByRotation is whether a team's nights that week go round its
-// engineers: when nobody has TZ3 regular hours marked that month, or nobody on
-// the team that week -- marks stop part-way through a month, and the nights
-// after them still need people.
-func (g *saasGenerator) teamNightByRotation(team string, wi int) bool {
-	return g.defaultNight || len(g.markedNightPeople(team, wi)) == 0
+// nightByRotation is whether the week's nights go round the engineers: when
+// nobody has TZ3 regular hours marked that month, or nobody that week --
+// marks stop part-way through a month, and the nights after them still need
+// people.
+func (g *saasGenerator) nightByRotation(wi int) bool {
+	return g.defaultNight || len(g.markedNightPeople(wi)) == 0
 }
 
-// nightWeek is a team's night pair for a week when it has no TZ3 regular
-// hours marked: two engineers free every weekday of the week, rotating week
-// by week through the team and passing over last week's pair while anybody
-// else is free. Leads are left out: their L3 is on TZ1. Anyone a lead marks away (leave, RnD, ENG, any allocation) is not
-// picked, which is how a lead keeps somebody off nights.
-func (g *saasGenerator) nightWeek(team string, wi int) []string {
-	weeks := g.nightWeeks[team]
-	if weeks == nil {
-		weeks = map[int][]string{}
-		g.nightWeeks[team] = weeks
-	}
-	if set, ok := weeks[wi]; ok {
+// nightWeek is the week's night people when nobody has TZ3 regular hours
+// marked: one per tier, engineers free every weekday of the week, taken from
+// every team in turn and rotating week by week, passing over last week's
+// people while anybody else is free. Leads are left out: their L3 is on TZ1.
+// Anyone a lead marks away (leave, RnD, ENG, any allocation) is not picked,
+// which is how a lead keeps somebody off nights.
+func (g *saasGenerator) nightWeek(wi int) []string {
+	if set, ok := g.nightWeeks[wi]; ok {
 		return set
 	}
 	prev := map[string]bool{}
-	for _, p := range weeks[wi-1] {
+	for _, p := range g.nightWeeks[wi-1] {
 		prev[p] = true
 	}
 	weekdays := saasWeekdaysOf(wi)
 	var engineers []string
-	for _, p := range g.teamPeople[team] {
+	for _, p := range g.everyone {
 		if !g.byID[p].IsLead {
 			engineers = append(engineers, p)
 		}
 	}
 	var pref, rest []string
-	for _, p := range saasRotate(engineers, wi*2) {
+	for _, p := range saasRotate(engineers, wi*saasNightTiers) {
 		free := true
 		for _, iso := range weekdays {
 			if g.isOff(p, iso) {
@@ -912,10 +988,10 @@ func (g *saasGenerator) nightWeek(team string, wi int) []string {
 		}
 	}
 	set := append(pref, rest...)
-	if len(set) > 2 {
-		set = set[:2]
+	if len(set) > saasNightTiers {
+		set = set[:saasNightTiers]
 	}
-	weeks[wi] = set
+	g.nightWeeks[wi] = set
 	return set
 }
 
@@ -935,7 +1011,8 @@ func (g *saasGenerator) anyNightIn(from, to time.Time) bool {
 }
 
 // turn records a turn, or warns that the slot is empty. A turn for a night
-// person carries their own team.
+// person carries the team they are on that night: the one a span moved them
+// to (the SaaS Night cover), or their own.
 func (g *saasGenerator) turn(user, team, shift, tier, iso, slot string) {
 	if user == "" {
 		if slot != "" {
@@ -945,6 +1022,9 @@ func (g *saasGenerator) turn(user, team, shift, tier, iso, slot string) {
 	}
 	if team == "" {
 		team = g.byID[user].TeamKey
+		if moved := g.in.NightTeam[user][iso]; moved != "" {
+			team = moved
+		}
 	}
 	t := saasPlannedTurn{UserID: user, TeamKey: team, ShiftCode: shift, Tier: tier, RotaDate: iso}
 	g.plan.Turns = append(g.plan.Turns, t)

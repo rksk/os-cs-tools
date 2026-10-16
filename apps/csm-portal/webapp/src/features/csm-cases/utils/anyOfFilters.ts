@@ -73,17 +73,16 @@ export interface AnyOfFilterFieldMeta {
 
 const ANY_OF_TYPE_OPTIONS = ALL_CASE_TYPES.map((v) => ({ value: v, label: CASE_TYPE_LABEL[v] }));
 
-// `state` inside a branch is `in`-only. Excludes `reopened`, same as the
-// bar's own `PRIMARY_STATES` (`CasesFilterBar.tsx`) — it's a valid backend
-// enum value, but never a case's own `state` (only ever a `nextStates`
-// transition marker, see `CaseState`'s own doc comment), so offering it here
-// would suggest a filter that can never match anything.
+// `state` inside a branch is `in`-only. The same set as the bar's own
+// `PRIMARY_STATES` (`caseFilterOptions.ts`), `reopened` included: a case can
+// be in it (see `CaseState`'s own doc comment).
 const ANY_OF_STATE_VALUES: (keyof typeof STATE_LABEL)[] = [
   "open",
   "work_in_progress",
   "solution_proposed",
   "awaiting_info",
   "waiting_on_wso2",
+  "reopened",
   "closed",
 ];
 const ANY_OF_STATE_OPTIONS = ANY_OF_STATE_VALUES.map((v) => ({

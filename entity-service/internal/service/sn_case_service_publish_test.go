@@ -49,6 +49,17 @@ func (m *mockEventPublisher) Publish(_ context.Context, eventType events.Type, e
 
 func (m *mockEventPublisher) Close() {}
 
+// mustJSONString encodes s as a JSON string literal, for embedding
+// user-authored text (e.g. HTML with quotes/newlines) into a hand-written
+// fake ServiceNow JSON response body without manually escaping it.
+func mustJSONString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 // findPublishCall returns the first recorded call of the given event type.
 // Tests assert on the call they care about rather than on the total publish
 // count: one mutation legitimately publishes several unrelated events (a
@@ -201,6 +212,80 @@ func TestSNCaseService_CreateCase_PublishesCaseCreated(t *testing.T) {
 	}
 	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@example.com" {
 		t.Errorf("recipients = %v, want [john.roe@example.com]", payload.Recipients)
+	}
+}
+
+// TestSNCaseService_CreateCase_StripsInlineBase64ImageFromDescription is the
+// regression guard for the fix to a real production bug: a case description
+// with a pasted screenshot embedded as raw base64 image data blew past Event
+// Hub's own per-message size limit and silently failed the whole
+// case.created publish (eventbus: publish: [10] Message Size Too Large) --
+// losing both the email and the Google Chat notification for a case that had
+// genuinely been created. This asserts the published payload's Description
+// carries no base64 payload at all and DescriptionTruncated is set, so
+// csm-notification-service knows to re-fetch the full content for its email.
+func TestSNCaseService_CreateCase_StripsInlineBase64ImageFromDescription(t *testing.T) {
+	const caseSysid = "1111111111111111111111111111aaab"
+	const projectSysid = "2222222222222222222222222222bbbc"
+	const watcherSysid = "3333333333333333333333333333cccd"
+
+	const rawDescription = `<p>See the attached screenshot:</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA" alt="screenshot"><p>Please advise.</p>`
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-011",
+		"number": "CS0011001",
+		"title": "Broken layout",
+		"description": ` + mustJSONString(rawDescription) + `,
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"severity": {"id": 3, "label": "3 - High"},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+
+	client := newTestCreateCaseClient(t, caseSysid, getCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher, nil, nil, "", nil)
+
+	req := domain.CreateCaseRequest{
+		Type:              "case",
+		ProjectID:         testProjectUUID,
+		DeploymentID:      testDeploymentUUID,
+		DeployedProductID: testDeployedProdID,
+		Subject:           "Broken layout",
+		Description:       rawDescription,
+		Severity:          domain.CaseSeverityHigh,
+		IssueType:         domain.CaseIssueTypeQuestion,
+	}
+
+	if _, err := svc.CreateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	call, ok := findPublishCall(publisher.calls, events.TypeCaseCreated)
+	if !ok {
+		t.Fatalf("expected a %s publish call, got %v", events.TypeCaseCreated, publishedTypes(publisher.calls))
+	}
+
+	var payload events.CaseCreatedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if !payload.DescriptionTruncated {
+		t.Error("descriptionTruncated = false, want true: the description had an embedded base64 image")
+	}
+	if strings.Contains(payload.Description, "base64") || strings.Contains(payload.Description, "iVBOR") {
+		t.Fatalf("expected no fragment of the base64 payload in the published event, got %q", payload.Description)
+	}
+	if !strings.Contains(payload.Description, "See the attached screenshot:") || !strings.Contains(payload.Description, "Please advise.") {
+		t.Fatalf("expected the surrounding text to survive, got %q", payload.Description)
 	}
 }
 
@@ -722,6 +807,84 @@ func TestSNCaseService_CreateCaseComment_PublishesCommentAdded(t *testing.T) {
 	}
 	if payload.IsSupportEngineerResponse {
 		t.Error("IsSupportEngineerResponse = true, want false when csEngineerRole is unconfigured")
+	}
+}
+
+// TestSNCaseService_CreateCaseComment_StripsInlineBase64ImageFromContent is
+// the comment-added counterpart of
+// TestSNCaseService_CreateCase_StripsInlineBase64ImageFromDescription: a
+// pasted screenshot embedded as raw base64 in a comment's body can blow past
+// Event Hub's per-message size limit the same way a case description can,
+// silently losing the case.comment_added publish (and with it the comment
+// notification) entirely.
+func TestSNCaseService_CreateCaseComment_StripsInlineBase64ImageFromContent(t *testing.T) {
+	caseSysid := sysid32('e')
+	projectSysid := sysid32('f')
+	watcherSysid := sysid32('0')
+	commentSysid := sysid32('1')
+	caseID := sysidToUUID(caseSysid)
+
+	const rawContent = `<p>Here's what I see:</p><img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD" alt="screenshot"><p>Any ideas?</p>`
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-021",
+		"number": "CS0021001",
+		"title": "Login is broken",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+	searchCommentsBody := `{
+		"comments": [
+			{"id": "` + commentSysid + `", "referenceId": "` + caseSysid + `", "content": ` + mustJSONString(rawContent) + `, "type": "comments", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith", "createdByFullName": "Agent Smith"}
+		],
+		"offset": 0, "limit": 20, "totalRecords": 1
+	}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, searchCommentsBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher, nil, nil, "", nil)
+
+	req := domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeComment,
+		Content: rawContent,
+	}
+
+	if _, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	call, ok := findPublishCall(publisher.calls, events.TypeCommentAdded)
+	if !ok {
+		t.Fatalf("expected a %s publish call, got %v", events.TypeCommentAdded, publishedTypes(publisher.calls))
+	}
+
+	var payload events.CommentAddedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if !payload.CaseCommentTruncated {
+		t.Error("caseCommentTruncated = false, want true: the comment had an embedded base64 image")
+	}
+	if strings.Contains(payload.CaseComment, "base64") || strings.Contains(payload.CaseComment, "/9j/4AAQ") {
+		t.Fatalf("expected no fragment of the base64 payload in the published event, got %q", payload.CaseComment)
+	}
+	if !strings.Contains(payload.CaseComment, "Here's what I see:") || !strings.Contains(payload.CaseComment, "Any ideas?") {
+		t.Fatalf("expected the surrounding text to survive, got %q", payload.CaseComment)
 	}
 }
 

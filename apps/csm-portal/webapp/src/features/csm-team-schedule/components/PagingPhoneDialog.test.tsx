@@ -58,7 +58,7 @@ describe("PagingPhoneDialog", () => {
   it("is a labelled modal that takes focus, explains itself, and gives focus back on Escape", () => {
     render(<Host />);
     const opener = openDialog();
-    const dialog = screen.getByRole("dialog", { name: "Add paging number for Jane Doe" });
+    const dialog = screen.getByRole("dialog", { name: "Add alert number for Jane Doe" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     const input = screen.getByLabelText("Mobile number (with country code)");
     expect(input).toHaveFocus();
@@ -108,7 +108,7 @@ describe("PagingPhoneDialog", () => {
     const onRemove = vi.fn();
     render(<Host mode="remove" onRemove={onRemove} />);
     openDialog();
-    expect(screen.getByRole("dialog", { name: "Remove paging number for Jane Doe?" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Remove alert number for Jane Doe?" })).toBeInTheDocument();
     expect(screen.getByText(/\+94•••••123/)).toBeInTheDocument();
     const remove = screen.getByRole("button", { name: "Remove" });
     expect(remove).toHaveFocus();

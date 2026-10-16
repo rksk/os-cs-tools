@@ -33,10 +33,10 @@ describe("phoneChipState", () => {
     const cases: [Parameters<typeof pagingMember>[0], string, string][] = [
       [{ membershipId: "a", hasProfilePhone: true, pagingPhone: phone() }, "Profile ✓", "ok"],
       [{ membershipId: "b", hasProfilePhone: false, pagingPhone: phone({ lastTestStatus: "completed", lastTestAt: at }) },
-        `Paging number ✓ tested ${new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`, "ok"],
-      [{ membershipId: "c", hasProfilePhone: false, pagingPhone: phone() }, "Paging number · not tested", "warn"],
-      [{ membershipId: "d", hasProfilePhone: false, pagingPhone: phone({ lastTestStatus: "pending" }) }, "Paging number · not tested", "warn"],
-      [{ membershipId: "e", hasProfilePhone: false, pagingPhone: phone({ lastTestStatus: "no-answer" }) }, "Paging number · test failed (no-answer)", "err"],
+        `Alert number ✓ tested ${new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`, "ok"],
+      [{ membershipId: "c", hasProfilePhone: false, pagingPhone: phone() }, "Alert number · not tested", "warn"],
+      [{ membershipId: "d", hasProfilePhone: false, pagingPhone: phone({ lastTestStatus: "pending" }) }, "Alert number · not tested", "warn"],
+      [{ membershipId: "e", hasProfilePhone: false, pagingPhone: phone({ lastTestStatus: "no-answer" }) }, "Alert number · test failed (no-answer)", "err"],
       [{ membershipId: "f", hasProfilePhone: false, pagingPhone: null }, "No number", "none"],
       // The 1st responder must have a number; the 2nd and 3rd are optional.
       [{ membershipId: "f1", hasProfilePhone: false, pagingPhone: null, responderRank: 1 }, "No number", "none"],

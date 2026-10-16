@@ -687,15 +687,22 @@ func recordNoticeSent(ctx context.Context, updater projectUpdater, projectID str
 	return nil
 }
 
-// suspend writes endDateClosureState=Suspended, unless this dimension has
+// suspend writes endDateClosureState=Closed, unless this dimension has
 // already moved past its initial "Open" state (checked against the
 // already-fetched endDateClosureState — no extra round-trip), mirroring
-// legacy's checkForOpenProject guard. Guarding on "not Open" rather than "==
-// Suspended" matters because endDateClosureState can progress further to
-// "Closed" via a process outside this component (confirmed via a real
-// suspended project, Postman, project
-// acac149b-eba1-4714-fcf5-f5dabad0cdb1) — an equality check against
-// "Suspended" alone would miss that real case and re-suspend indefinitely.
+// legacy's checkForOpenProject guard.
+//
+// "Closed" is the end-date value ServiceNow's "Update WSO2 Closure State"
+// business rule maps to an overall "Suspended" (an end-date "Suspended" did
+// not count there), and the only end-date suspension value Salesforce's
+// Closure_State_End_Date_Based__c picklist has. CSM's own roll-up accepts both,
+// so the overall closureState is "Suspended" either way. Invoice suspension
+// keeps writing "Suspended" (suspendInvoice), as legacy did.
+//
+// Guarding on "not Open" rather than one exact value matters: projects this
+// component suspended before it wrote "Closed" hold "Suspended" (and real
+// legacy-suspended projects hold "Closed", e.g. acac149b-eba1-4714-fcf5-
+// f5dabad0cdb1), and both must count as already handled.
 //
 // Deliberately logs nothing, matching DryRunProjectUpdater's own silence —
 // per explicit user direction, the log should show notice/email content
@@ -711,7 +718,7 @@ func suspend(ctx context.Context, updater projectUpdater, proj project) error {
 		return nil
 	}
 
-	body, err := json.Marshal(map[string]string{"endDateClosureState": "Suspended"})
+	body, err := json.Marshal(map[string]string{"endDateClosureState": "Closed"})
 	if err != nil {
 		return fmt.Errorf("marshal update request: %w", err)
 	}

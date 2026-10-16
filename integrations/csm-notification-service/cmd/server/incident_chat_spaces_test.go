@@ -43,6 +43,10 @@ func TestParseIncidentChatFanout(t *testing.T) {
 	if targets := got["Default SRE Group"]; len(got) != 1 || len(targets) != 2 || targets[0] != "Apollo SRE Group" || targets[1] != "Artemis SRE Group" {
 		t.Errorf("fanout = %+v", got)
 	}
+	dup := parseIncidentChatFanout(`{"Default SRE Group":["Apollo SRE Group"]," default sre group ":["Artemis SRE Group"],"MS/PC SRE Group":["Apollo SRE Group"]}`, spaces)
+	if _, ok := dup["MS/PC SRE Group"]; len(dup) != 1 || !ok {
+		t.Errorf("fanout with a group spelled twice = %+v; want only MS/PC SRE Group, the ambiguous group dropped", dup)
+	}
 	for _, raw := range []string{"", "   ", "not json", `["a"]`, `{"Default SRE Group":"Apollo SRE Group"}`} {
 		if got := parseIncidentChatFanout(raw, spaces); got != nil {
 			t.Errorf("parseIncidentChatFanout(%q) = %+v, want nil (no fan-out)", raw, got)

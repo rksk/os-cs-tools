@@ -38,6 +38,23 @@ const MAX_BACKOFF_ATTEMPTS = 10;
 const RECONNECT_IDLE_DELAY_MS = 5 * 60_000;
 
 /**
+ * Query key prefixes refreshed when the stream reports a case change.
+ * - CASE_COMMENTS: the activity feed.
+ * - CASE_DETAILS: the case's own attributes.
+ * - PROJECT_CASES: case list/search rows (state, assignee, severity).
+ * - CASES_STATS, SUPPORT_STATS, PROJECT_STATS: counts derived from case
+ *   state and severity (open/ongoing/outstanding, SLA status).
+ */
+const CASE_STREAM_INVALIDATION_KEYS = [
+  ApiQueryKeys.CASE_COMMENTS,
+  ApiQueryKeys.CASE_DETAILS,
+  ApiQueryKeys.PROJECT_CASES,
+  ApiQueryKeys.CASES_STATS,
+  ApiQueryKeys.SUPPORT_STATS,
+  ApiQueryKeys.PROJECT_STATS,
+] as const;
+
+/**
  * Exponential backoff with full jitter (attempt 0 is a random delay in
  * [0, base), attempt 1 in [0, base*2), ... capped at max) — a sustained
  * backend outage or misconfiguration would otherwise have every open
@@ -53,7 +70,8 @@ function reconnectDelay(attempt: number): number {
 }
 
 /**
- * Refetches the case's comments and details whenever the activity stream
+ * Refetches the case's comments, details and the lists/stats that show its
+ * attributes whenever the activity stream
  * reports the case changed. No-op unless both stream config keys are set.
  *
  * Uses `@sanity/eventsource` because native `EventSource` cannot set headers.
@@ -80,13 +98,14 @@ export function useCaseActivityStream(caseId: string | undefined): void {
     const invalidateCaseQueries = (): void => {
       // Invalidated by key prefix rather than the queries' full keys, which
       // also carry the project id this hook isn't given — the same thing
-      // usePostComment already does after posting a comment.
-      void queryClient.invalidateQueries({
-        queryKey: [ApiQueryKeys.CASE_COMMENTS],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: [ApiQueryKeys.CASE_DETAILS],
-      });
+      // usePostComment already does after posting a comment. The event is
+      // ID-only, so anything that renders this case's attributes (state,
+      // assignee, severity, acknowledgement) or its activity feed refetches.
+      // Only mounted queries refetch right away; the rest are marked stale
+      // and refetch on next mount, so the list/stat keys are cheap to include.
+      for (const key of CASE_STREAM_INVALIDATION_KEYS) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     };
 
     const scheduleReconnect = (): void => {

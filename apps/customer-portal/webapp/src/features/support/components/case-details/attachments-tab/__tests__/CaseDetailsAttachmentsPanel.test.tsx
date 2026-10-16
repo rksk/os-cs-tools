@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@wso2/oxygen-ui";
 import CaseDetailsAttachmentsPanel from "@case-details-attachments/CaseDetailsAttachmentsPanel";
@@ -55,7 +55,11 @@ const mockCaseAttachments: CaseAttachment[] = [
 
 vi.mock("../UploadAttachmentModal", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ onSuccess }: { onSuccess?: () => void }) => (
+    <button type="button" onClick={() => onSuccess?.()}>
+      simulate upload success
+    </button>
+  ),
 }));
 
 const queryClient = new QueryClient({
@@ -110,6 +114,23 @@ function renderPanel(caseId = "case-1") {
 }
 
 describe("CaseDetailsAttachmentsPanel", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("should not reload the page after a successful upload", () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    renderPanel();
+    fireEvent.click(
+      screen.getByRole("button", { name: /simulate upload success/i }),
+    );
+    expect(reload).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: /upload attachment/i }),
+    ).toBeInTheDocument();
+  });
+
   it("should render Upload Attachment button", () => {
     renderPanel();
     expect(

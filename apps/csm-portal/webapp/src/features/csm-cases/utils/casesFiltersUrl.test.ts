@@ -431,6 +431,22 @@ describe("OR groups (`anyOf` param)", () => {
   });
 });
 
+describe("the `reopened` state", () => {
+  it("survives the URL both ways: cases carried over from the previous system sit in it", () => {
+    const written = writeCasesFiltersToUrl({
+      ...DEFAULT_CASES_FILTERS,
+      states: ["open", "reopened"],
+      excludeStates: ["reopened"],
+    });
+
+    expect(written.get("states")).toBe("open,reopened");
+    expect(readCasesFiltersFromUrl(written)).toMatchObject({
+      states: ["open", "reopened"],
+      excludeStates: ["reopened"],
+    });
+  });
+});
+
 describe("casesHref", () => {
   it("returns the bare path when overrides reduce to defaults", () => {
     expect(casesHref({})).toBe("/cases");

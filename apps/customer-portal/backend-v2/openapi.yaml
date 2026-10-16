@@ -830,7 +830,11 @@ paths:
         layer. This is a deliberately restricted subset of entity-service's
         update contract — internal WSO2 support fields (severity, subject,
         description, work state, engineer assignment, fix-ETA dates, case
-        relinking, auto-closure control) are not customer-settable.
+        relinking, auto-closure control) are not customer-settable. A
+        stateKey is additionally rejected with 400 if it is not a legal
+        transition from the case's current state for a customer caller (see
+        CLAUDE.md's own state-transition section) — e.g. a customer may not
+        move an open case directly to work_in_progress.
       operationId: patchCasesId
       parameters:
         - name: id
@@ -8097,6 +8101,26 @@ components:
                 passed on). A held change refuses a proposed implementation time,
                 so the portal does not offer one; an answer is still accepted.
                 ABSENT when entity-service did not say, which is not "not held".
+            customerApprovalRequired:
+              type: boolean
+              description: >-
+                Whether the change request needs the customer's approval before
+                it is scheduled: the REQUIREMENT box, never the outcome
+                (hasCustomerApproved records that). The portal's workflow reads
+                it only to say "Not required" of a Customer Approval step the
+                change passed with no approval on record. Present only with a
+                read entity-service computed for a customer on the PostgreSQL
+                data source (the read that carries customerCanAnswer); ABSENT
+                otherwise, which means "unknown", never "not required": the
+                previous system's data source reports the box as false without
+                computing it.
+            customerReviewRequired:
+              type: boolean
+              description: >-
+                Whether the change request needs the customer's review before it
+                is closed: the REQUIREMENT box, never the outcome
+                (hasCustomerReviewed records that). Present and absent exactly
+                as customerApprovalRequired is.
             customerProposal:
               $ref: '#/components/schemas/ChangeRequestCustomerProposal'
             approvedBy:

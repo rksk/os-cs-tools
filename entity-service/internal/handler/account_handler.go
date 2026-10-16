@@ -62,6 +62,17 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(account)
 }
 
+// GetAccountHealthDetail handles GET /accounts/{id}/health-detail.
+func (h *AccountHandler) GetAccountHealthDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.svc.GetAccountHealthDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(detail)
+}
+
 // PatchAccountTeams handles PATCH /accounts/{id}, setting the account's CRE
 // and/or SRE team (Postgres data source only; no equivalent exists on
 // SNAccountHandler). Accepts creTeamId, sreTeamId, or both; at least one is
@@ -143,4 +154,16 @@ func (h *AccountContactHandler) SearchAccountContacts(w http.ResponseWriter, r *
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetAccountHealthDetail handles GET /accounts/{id}/health-detail for the
+// ServiceNow data source, which answers 400: the detail needs Postgres.
+func (h *SNAccountHandler) GetAccountHealthDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.svc.GetAccountHealthDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(detail)
 }

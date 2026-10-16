@@ -24,7 +24,8 @@ section is one you can open.
 Wherever a person's name appears (a case's creator or assignee, a comment's author, and
 similar references throughout the portal), clicking it opens their profile page. If the name
 can't yet be resolved to a profile (no id is available), it's shown as plain, unclickable
-text instead of a broken link.
+text instead of a broken link. A comment, activity entry, or escalation with no recorded
+author (written by the platform itself) shows **System** and isn't linked.
 
 Shortcuts for navigating between pages and personalizing your workspace (pinning, quick-nav,
 and similar) are covered in the **Navigation & personalization** topic.

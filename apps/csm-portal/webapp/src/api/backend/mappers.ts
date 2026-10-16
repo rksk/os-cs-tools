@@ -132,14 +132,25 @@ export function commentTypeFromInternal(
   return internal ? "work_note" : "comment";
 }
 
-/** Best display name off a {@link BeUserReference}, falling back to email. */
-function authorDisplayName(author: BeUserReference): string {
-  return author.name?.trim() || author.email?.trim() || "Unknown";
+/**
+ * Display name for an entry the platform itself wrote (automation, a
+ * server-side transition): the backend sends no `createdBy`, or one with
+ * neither a name nor an email. Not a real user: it carries no email/id, so
+ * nothing links to a profile or matches the signed-in user.
+ */
+export const SYSTEM_AUTHOR_NAME = "System";
+
+/** Best display name off a {@link BeUserReference}, falling back to email,
+ * then to {@link SYSTEM_AUTHOR_NAME} when the reference identifies no one. */
+function authorDisplayName(
+  author: BeUserReference | null | undefined,
+): string {
+  return author?.name?.trim() || author?.email?.trim() || SYSTEM_AUTHOR_NAME;
 }
 
 /** Best display name from a {@link BeComment}'s canonical `createdBy` reference. */
 function commentAuthorName(comment: BeComment): string {
-  return comment.createdBy ? authorDisplayName(comment.createdBy) : "Unknown";
+  return authorDisplayName(comment.createdBy);
 }
 
 /**
@@ -147,7 +158,7 @@ function commentAuthorName(comment: BeComment): string {
  * author name to their profile page.
  */
 function commentAuthorEmail(comment: BeComment): string | undefined {
-  return comment.createdBy?.email || undefined;
+  return comment.createdBy?.email?.trim() || undefined;
 }
 
 /**

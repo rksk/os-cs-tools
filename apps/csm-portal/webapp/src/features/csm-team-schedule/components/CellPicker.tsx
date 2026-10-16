@@ -120,6 +120,30 @@ function isoPlusDays(iso: string, n: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** The last day of n calendar months from an ISO day: 1 Nov plus 3 months
+ *  runs to 31 Jan. A day the later month does not have (31 Jan plus one
+ *  month) runs to that month's end, 28 Feb -- not the day before it, as the
+ *  span ends where the missing day would have been. */
+function isoPlusMonths(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  const day = d.getDate();
+  const end = new Date(d.getFullYear(), d.getMonth() + n, day);
+  if (end.getDate() !== day) end.setDate(0);
+  else end.setDate(end.getDate() - 1);
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+}
+
+/** The span lengths offered beside the dates: a week of leave up to a
+ *  six-month move. A week is seven days counting the first. */
+const SPAN_PRESETS: ReadonlyArray<{ label: string; days: number; months: number }> = [
+  { label: "1 week", days: 7, months: 0 },
+  { label: "2 weeks", days: 14, months: 0 },
+  { label: "1 month", days: 0, months: 1 },
+  { label: "2 months", days: 0, months: 2 },
+  { label: "3 months", days: 0, months: 3 },
+  { label: "6 months", days: 0, months: 6 },
+];
+
 /** "12 Mar" -- short enough to sit beside a chip in the picker's header. */
 function shortDate(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
@@ -360,6 +384,11 @@ export default function CellPicker({
   /** L1, L2 and L3 for every zone worked on the span's first day. */
   const grid = useMemo(() => escalationGrid(shifts, firstDay), [shifts, firstDay]);
 
+  /** No window of their rota is served, so there is no rotation or L1-L3 to
+   *  put them on. Said even when a move to another team is still offered:
+   *  the move buttons alone don't explain why the rota part is missing. */
+  const nothingToRoster = shifts.length === 0;
+
   /** Leave, then allocations, each under its own heading. */
   const awayGroups = useMemo(
     () =>
@@ -530,6 +559,15 @@ export default function CellPicker({
               <p className="pk-note pk-skip">
                 Days a rotation is not worked on are skipped — a weekday rotation over
                 a week sets the five weekdays.
+              </p>
+            ) : null}
+            {/* A rota whose windows the catalogue does not serve -- IaaS's sat
+                switched off for months -- left this side blank, and a lead
+                read the blank as not being allowed to roster. Say what it is. */}
+            {nothingToRoster ? (
+              <p className="pk-note pk-empty">
+                {teamNameOf(target.teamKey)} has no rota windows set up yet, so no rotation or
+                L1–L3 turn can be set here. Leave and allocations can still be marked.
               </p>
             ) : null}
             <div className="pk-grid">
@@ -703,6 +741,25 @@ export default function CellPicker({
               </label>
               <span className="pkr-n">
                 {span} day{span === 1 ? "" : "s"}
+              </span>
+              {/* Common lengths, so a week of leave or a months-long move (the
+                  SaaS Night cover is three to six) is one click rather than a lot
+                  of clicking in a date field. Each only fills "To"; nothing is
+                  marked until a tag is picked. */}
+              <span className="pkr-len">
+                {SPAN_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      const end = p.days ? isoPlusDays(firstDay, p.days - 1) : isoPlusMonths(firstDay, p.months);
+                      if (endField.current) endField.current.value = end;
+                      setUntil(end);
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </span>
               {/* The fields draw dates in the browser's own format (10/20/2026
                   on a US-English browser), which reads either way round; the

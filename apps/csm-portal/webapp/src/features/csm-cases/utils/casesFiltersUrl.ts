@@ -82,6 +82,7 @@ const VALID_STATES: CaseState[] = [
   "solution_proposed",
   "awaiting_info",
   "waiting_on_wso2",
+  "reopened",
   "closed",
 ];
 const VALID_CASE_TYPES: BeCaseType[] = ALL_CASE_TYPES;

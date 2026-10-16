@@ -35,8 +35,6 @@ import {
 import {
   ArrowLeft,
   TriangleAlert,
-  CircleCheckBig,
-  Circle,
   Server,
   Package,
   FileText,
@@ -54,14 +52,18 @@ import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
 import ApiErrorState from "@components/error/ApiErrorState";
 import { isNotFoundError } from "@utils/ApiError";
 import useGetChangeRequestDetails from "@features/operations/api/useGetChangeRequestDetails";
+import useGetChangeRequestApprovals from "@features/operations/api/useGetChangeRequestApprovals";
 import { usePatchChangeRequest } from "@features/operations/api/usePatchChangeRequest";
+import ChangeRequestWorkflow from "@features/operations/components/change-requests/ChangeRequestWorkflow";
 import ScheduledMaintenanceWindowCard from "@features/operations/components/change-requests/ScheduledMaintenanceWindowCard";
 import ProposeNewImplementationTimeModal from "@features/operations/components/change-requests/ProposeNewImplementationTimeModal";
 import ChangeRequestRejectConfirmDialog from "@features/operations/components/change-requests/ChangeRequestRejectConfirmDialog";
 import ChangeRequestDetailsLoadingSkeleton from "@features/operations/components/change-requests/ChangeRequestDetailsLoadingSkeleton";
 import {
+  APPROVALS_UNAVAILABLE,
   CHANGE_REQUEST_NOT_FOUND_MESSAGE,
   buildChangeRequestWorkflowStages,
+  deriveChangeRequestApproval,
   describeChangeRequestActionError,
   generateChangeRequestDetailsPdf,
   getAnsweredWindow,
@@ -79,6 +81,7 @@ import {
 } from "@features/operations/utils/changeRequestUi";
 import {
   ChangeRequestDecisionMode,
+  type ChangeRequestApprovalsRead,
   type ProposeNewTimeAvailability,
 } from "@features/operations/types/changeRequests";
 
@@ -137,10 +140,53 @@ export default function ChangeRequestDetailsPage(): JSX.Element {
     isFetching,
   } = useGetChangeRequestDetails(changeRequestId || "");
   const patchChangeRequest = usePatchChangeRequest(changeRequestId || "");
+  // The approval stages are the workflow's evidence: a step before the current
+  // one is shown done only when they (or the detail) say it happened. A read
+  // that fails is not a negative result: it is passed on as such
+  // (APPROVALS_UNAVAILABLE), the steps only the approvals could vouch for read
+  // "could not be loaded" (never "No approval recorded", never a tick) with a
+  // Retry, and the rest of the page is unaffected. Stages read before a later
+  // refetch failed are still a read, and are used.
+  const {
+    data: approvalsData,
+    isPending: isApprovalsPending,
+    isError: isApprovalsError,
+    errorUpdateCount: approvalsErrorCount,
+    isFetching: isApprovalsFetching,
+    refetch: refetchApprovals,
+  } = useGetChangeRequestApprovals(changeRequestId || "");
+  // A read that failed with nothing read is known by `isError` only until it is
+  // read again: a refetch of a query with no data puts it back to pending and
+  // clears the error (TanStack Query v5), and that is not a first load. The
+  // error count survives the refetch, so the failure stands (the notice and
+  // its Retry stay, the steps stay unknown) until a read succeeds.
+  const approvalsReadFailed = isApprovalsError || approvalsErrorCount > 0;
+  const approvals = useMemo<ChangeRequestApprovalsRead | undefined>(
+    () =>
+      approvalsData
+        ? (approvalsData.approvals ?? [])
+        : approvalsReadFailed
+          ? APPROVALS_UNAVAILABLE
+          : undefined,
+    [approvalsData, approvalsReadFailed],
+  );
+  const approvalsUnavailable = approvals === APPROVALS_UNAVAILABLE;
+  // The first read: the workflow shows placeholders, never "no record".
+  const isApprovalsLoading = isApprovalsPending && !approvalsUnavailable;
+  // A read after a failed one (Retry, or the refetch an answer makes).
+  const isApprovalsRetrying = approvalsUnavailable && isApprovalsFetching;
 
   const { workflowStages, currentStateIndex } = useMemo(
-    () => buildChangeRequestWorkflowStages(changeRequest),
-    [changeRequest],
+    () => buildChangeRequestWorkflowStages(changeRequest, approvals),
+    [changeRequest, approvals],
+  );
+  // Who approved the change and when: the record's own values, else the CAB
+  // stage's approver from the approvals, else "Not available" (source
+  // "unavailable" when the approvals could not be read: the PDF then says
+  // "Not available" rather than leaving the rows out).
+  const approval = useMemo(
+    () => deriveChangeRequestApproval(changeRequest, approvals),
+    [changeRequest, approvals],
   );
   const decisionMode = resolveCustomerDecisionMode(changeRequest);
   const canShowApprovalActions = decisionMode !== ChangeRequestDecisionMode.NONE;
@@ -386,14 +432,19 @@ export default function ChangeRequestDetailsPage(): JSX.Element {
         >
           Back to Change Requests
         </Button>
+        {/* Off while the approvals are read (the first read, or one after a
+            failed read): Approved By / Approved On may come from them, and a
+            PDF made before they arrive would print as if there were no
+            approval, or "Not available" for values about to arrive. */}
         <Button
           variant="outlined"
           size="small"
           startIcon={<Download size={18} />}
           color="warning"
+          disabled={isApprovalsLoading || isApprovalsRetrying}
           onClick={() => {
             try {
-              generateChangeRequestDetailsPdf(changeRequest, []);
+              generateChangeRequestDetailsPdf(changeRequest, [], approval);
             } catch (error) {
               const message =
                 error instanceof Error
@@ -898,8 +949,8 @@ export default function ChangeRequestDetailsPage(): JSX.Element {
                   <Typography variant="body2" color="text.secondary">
                     Approved By
                   </Typography>
-                  <Typography variant="body2">
-                    {changeRequest.approvedBy?.label || "Not available"}
+                  <Typography variant="body2" data-testid="cr-approved-by">
+                    {approval.approvedBy || "Not available"}
                   </Typography>
                 </Box>
                 <Box
@@ -911,9 +962,9 @@ export default function ChangeRequestDetailsPage(): JSX.Element {
                   <Typography variant="body2" color="text.secondary">
                     Approved Date
                   </Typography>
-                  <Typography variant="body2">
-                    {changeRequest.approvedOn
-                      ? formatDateTime(changeRequest.approvedOn)
+                  <Typography variant="body2" data-testid="cr-approved-on">
+                    {approval.approvedOn
+                      ? formatDateTime(approval.approvedOn)
                       : "Not available"}
                   </Typography>
                 </Box>
@@ -931,175 +982,14 @@ export default function ChangeRequestDetailsPage(): JSX.Element {
             pl: { xs: 0, md: 0.5 },
           }}
         >
-          <Paper variant="outlined">
-            <Box sx={{ px: 3, pt: 3 }}>
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}
-              >
-                <Typography variant="h6">Change Request Workflow</Typography>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Track the progress of this change request through each stage
-              </Typography>
-            </Box>
-
-            <Box sx={{ px: 3, pb: 3 }}>
-              <Stack spacing={0}>
-                {workflowStages.map((stage, index) => (
-                  <Box key={index} sx={{ position: "relative" }}>
-                    <Box sx={{ display: "flex", gap: 2 }}>
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: "50%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            border: "2px solid",
-                            bgcolor: stage.disabled
-                              ? alpha(colors.grey[500], 0.05)
-                              : stage.completed
-                                ? alpha(colors.green[500], 0.1)
-                                : stage.current
-                                  ? alpha(colors.blue[500], 0.1)
-                                  : alpha(colors.grey[500], 0.1),
-                            borderColor: stage.disabled
-                              ? colors.grey[200]
-                              : stage.completed
-                                ? colors.green[500]
-                                : stage.current
-                                  ? colors.blue[500]
-                                  : colors.grey[300],
-                            opacity: stage.disabled ? 0.5 : 1,
-                          }}
-                        >
-                          {stage.completed ? (
-                            <CircleCheckBig
-                              size={20}
-                              color={colors.green[600]}
-                            />
-                          ) : (
-                            <Circle
-                              size={20}
-                              color={
-                                stage.current
-                                  ? colors.blue[600]
-                                  : colors.grey[400]
-                              }
-                              fill={stage.current ? colors.blue[600] : "none"}
-                            />
-                          )}
-                        </Box>
-                        {index < workflowStages.length - 1 && (
-                          <Box
-                            sx={{
-                              width: 2,
-                              height: 64,
-                              mt: 0.5,
-                              bgcolor:
-                                currentStateIndex > index
-                                  ? colors.green[300]
-                                  : colors.grey[200],
-                              opacity: 1,
-                            }}
-                          />
-                        )}
-                      </Box>
-                      <Box
-                        sx={{
-                          flex: 1,
-                          pb: index < workflowStages.length - 1 ? 2 : 0,
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "flex-start",
-                          }}
-                        >
-                          <Box>
-                            <Box
-                              sx={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 1,
-                                mb: 0.5,
-                              }}
-                            >
-                              <Typography
-                                variant="body2"
-                                fontWeight={stage.current ? 600 : 500}
-                                color={
-                                  stage.disabled
-                                    ? "text.disabled"
-                                    : stage.current
-                                      ? colors.blue[900]
-                                      : "text.primary"
-                                }
-                                sx={{ opacity: stage.disabled ? 0.5 : 1 }}
-                              >
-                                {stage.name}
-                              </Typography>
-                              {stage.current && !stage.disabled && (
-                                <Box
-                                  sx={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 0.5,
-                                  }}
-                                >
-                                  <Box
-                                    sx={{
-                                      width: 6,
-                                      height: 6,
-                                      bgcolor: colors.blue[600],
-                                      borderRadius: "50%",
-                                      flexShrink: 0,
-                                    }}
-                                  />
-                                  <Typography
-                                    variant="caption"
-                                    sx={{
-                                      color: colors.blue[800],
-                                      fontSize: "0.7rem",
-                                    }}
-                                  >
-                                    Current
-                                  </Typography>
-                                </Box>
-                              )}
-                            </Box>
-                            <Typography
-                              variant="caption"
-                              color={
-                                stage.disabled
-                                  ? "text.disabled"
-                                  : stage.completed || stage.current
-                                    ? "text.primary"
-                                    : "text.disabled"
-                              }
-                              sx={{ opacity: stage.disabled ? 0.5 : 1 }}
-                            >
-                              {stage.description}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </Box>
-                    </Box>
-                  </Box>
-                ))}
-              </Stack>
-            </Box>
-          </Paper>
+          <ChangeRequestWorkflow
+            stages={workflowStages}
+            currentStateIndex={currentStateIndex}
+            isLoading={isApprovalsLoading}
+            approvalsUnavailable={approvalsUnavailable}
+            onRetry={() => void refetchApprovals()}
+            isRetrying={isApprovalsRetrying}
+          />
         </Box>
       </Box>
 

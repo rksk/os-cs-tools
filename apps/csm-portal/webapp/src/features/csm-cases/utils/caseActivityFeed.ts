@@ -58,6 +58,31 @@ export function compareFeedEntries(a: FeedEntry, b: FeedEntry): number {
   return feedEntryId(a).localeCompare(feedEntryId(b));
 }
 
+/** Entries rendered up front, and added per scroll step, by a windowed feed. */
+export const ACTIVITY_PAGE_SIZE = 50;
+
+/**
+ * The window size after one "load more" step. `Infinity` ("load all") is
+ * already as large as it gets and stays put.
+ */
+export function nextActivityLimit(limit: number, pageSize = ACTIVITY_PAGE_SIZE): number {
+  return limit + pageSize;
+}
+
+/**
+ * Smallest window (a whole number of pages) that includes the entry at
+ * `index` of the sorted list, or `current` when it is already inside it. Used
+ * to expand the window so a permalinked entry beyond it can render.
+ */
+export function activityLimitToReveal(
+  index: number,
+  current: number,
+  pageSize = ACTIVITY_PAGE_SIZE,
+): number {
+  if (index < 0 || index < current) return current;
+  return Math.ceil((index + 1) / pageSize) * pageSize;
+}
+
 /**
  * Same ordering/tie-break as {@link compareFeedEntries}, for call sites that
  * only ever have a flat `CsmCaseComment[]` to sort (no `FeedEntry` wrapper) —

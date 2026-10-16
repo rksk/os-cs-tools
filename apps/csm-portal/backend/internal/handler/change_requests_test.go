@@ -1566,6 +1566,36 @@ func TestGetChangeRequest_ReturnsCustomerGateFlags(t *testing.T) {
 	}
 }
 
+// A change request's tags ride on the raw pass-through, the same `tags` array a
+// case detail carries; they are added and removed through the case tag routes
+// (POST /cases/{id}/tags, DELETE /cases/{id}/tags/{tagId}, PermWrite), which
+// take a work item id, so this BFF has no change-request-specific tag route.
+func TestGetChangeRequest_PassesTagsThrough(t *testing.T) {
+	client := &mockEntityChangeRequestClient{
+		getChangeRequestFn: func(_ context.Context, _ string) ([]byte, error) {
+			return []byte(`{"id":"` + testCRID + `","state":"new","tags":[{"id":"aaaaaaaa-1111-2222-3333-444444444444","label":"apim-upgrade","color":null}]}`), nil
+		},
+	}
+	h := NewChangeRequestHandler(client)
+	r := withUser(httptest.NewRequest(http.MethodGet, "/change-requests/"+testCRID, nil))
+	r.SetPathValue("id", testCRID)
+	w := httptest.NewRecorder()
+	h.GetChangeRequest(w, r)
+	assertStatus(t, w, http.StatusOK)
+	resp := decodeJSON[map[string]any](t, w)
+	tags, _ := resp["tags"].([]any)
+	if len(tags) != 1 {
+		t.Fatalf("tags = %v, want the one tag passed through untouched", resp["tags"])
+	}
+	tag, _ := tags[0].(map[string]any)
+	if tag["id"] != "aaaaaaaa-1111-2222-3333-444444444444" || tag["label"] != "apim-upgrade" {
+		t.Errorf("tag = %v, want id and label as the entity service sent them", tag)
+	}
+	if _, present := tag["color"]; !present {
+		t.Errorf("tag = %v, want its (null) color kept: the raw body is not reshaped", tag)
+	}
+}
+
 const (
 	scopeProjectID    = "11111111-2222-3333-4444-555555555555"
 	scopeDeploymentID = "66666666-7777-8888-9999-aaaaaaaaaaaa"

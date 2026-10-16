@@ -186,6 +186,9 @@ export default function CaseMetaBand({
 }: CaseMetaBandProps): JSX.Element {
   const product = c.productContext;
   const tier = c.customerContext.tier;
+  // Some accounts carry no account type, which would render a meaningless "—"
+  // chip. Hide the whole cell instead.
+  const hasTier = !!(tier ?? "").trim();
   const [showDeployment, setShowDeployment] = useState(false);
   // So Back on the Account/Project/related-case/parent-case page returns here
   // instead of falling through to that page's own hardcoded list route (same
@@ -264,8 +267,9 @@ export default function CaseMetaBand({
           sx={[
             { px: 2, pb: 2, pt: 0.5, borderTop: 1, borderColor: "divider" },
             isAnnouncement
-              ? // Announcements only ever show 5 cells (Account, Tier,
-                // Project, Project type, State). A flex row lets each cell
+              ? // Announcements only ever show up to 5 cells (Account, Tier,
+                // Project, Project type, State); Tier is omitted when the
+                // account has no tier, leaving 4. A flex row lets each cell
                 // size to its content instead of stretching across a
                 // 1/5-width grid track (which concentrated all the slack
                 // into one gap before the last cell); `space-between` then
@@ -298,11 +302,13 @@ export default function CaseMetaBand({
               </Typography>
             )}
           </Cell>
-          <Cell label="Tier">
-            <Box sx={{ minWidth: 0 }}>
-              <SemanticChip role={tierColor(tier)} variant="outlined" label={tierLabel(tier)} />
-            </Box>
-          </Cell>
+          {hasTier && (
+            <Cell label="Tier">
+              <Box sx={{ minWidth: 0 }}>
+                <SemanticChip role={tierColor(tier)} variant="outlined" label={tierLabel(tier)} />
+              </Box>
+            </Cell>
+          )}
           {!isAnnouncement && (c.customerContext.creTeam || c.customerContext.sreTeam) && (
             <Cell label="CRE / SRE team">
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>

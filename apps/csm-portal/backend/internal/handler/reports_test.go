@@ -23,95 +23,79 @@ import (
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/viewer"
 )
 
 type mockReportsClient struct {
-	slaReport        servicenow.SLAReportDetails
-	slaErr           error
-	projectReport    servicenow.CSReportDetails
-	projectReportErr error
-	timelogs         servicenow.TimeLogBreakdownDetails
-	timelogsErr      error
+	timelogs     viewer.TimeLogBreakdownDetails
+	timelogsErr  error
+	gotProjectID string
 }
 
-func (m *mockReportsClient) GetSLAReport(ctx context.Context, projectSysID, from, to string) (servicenow.SLAReportDetails, error) {
-	return m.slaReport, m.slaErr
-}
-
-func (m *mockReportsClient) GetProjectReportDetails(ctx context.Context, projectSysID, from, to string) (servicenow.CSReportDetails, error) {
-	return m.projectReport, m.projectReportErr
-}
-
-func (m *mockReportsClient) GetTimeLogBreakdown(ctx context.Context, projectID string) (servicenow.TimeLogBreakdownDetails, error) {
+func (m *mockReportsClient) GetTimeLogBreakdown(ctx context.Context, projectID string) (viewer.TimeLogBreakdownDetails, error) {
+	m.gotProjectID = projectID
 	return m.timelogs, m.timelogsErr
 }
 
-func TestGenerateSLAReport_RequiresQueryParams(t *testing.T) {
-	h := NewReportsHandler(&mockReportsClient{}, viewerAccessGuard)
-	req := withUser(httptest.NewRequest(http.MethodGet, "/spl/generate-sla-report", nil))
+func TestGenerateTimelogsBreakdownReport_Success(t *testing.T) {
+	mock := &mockReportsClient{timelogs: viewer.TimeLogBreakdownDetails{
+		ProjectName: "Acme",
+		ProjectKey:  "ACME",
+		Cases:       []viewer.TimeLogBreakdownCase{{CaseNumber: "CS0001", TotalHours: "1h 30m"}},
+	}}
+	h := NewReportsHandler(mock, viewerAccessGuard)
+	req := withUser(httptest.NewRequest(http.MethodGet, "/generate-timelogs-breakdown-report?projectId=ACME", nil))
 	w := httptest.NewRecorder()
 
-	h.GenerateSLAReport(w, req)
+	h.GenerateTimelogsBreakdownReport(w, req)
 
-	assertStatus(t, w, http.StatusBadRequest)
+	assertStatus(t, w, http.StatusOK)
+	if mock.gotProjectID != "ACME" {
+		t.Errorf("client called with projectID=%q, want ACME", mock.gotProjectID)
+	}
+	got := decodeJSON[viewer.TimeLogBreakdownDetails](t, w)
+	if got.ProjectName != "Acme" || got.ProjectKey != "ACME" || len(got.Cases) != 1 || got.Cases[0].CaseNumber != "CS0001" {
+		t.Errorf("response = %+v, want the mock's report passed through", got)
+	}
 }
 
-func TestGenerateSLAReport_RejectsMissingSPLAccess(t *testing.T) {
-	h := NewReportsHandler(&mockReportsClient{}, viewerAccessGuard)
-	req := httptest.NewRequest(http.MethodGet, "/spl/generate-sla-report?projectSysId=p1&from=2024-01-01&to=2024-01-31", nil)
+func TestGenerateTimelogsBreakdownReport_RequiresProjectID(t *testing.T) {
+	mock := &mockReportsClient{}
+	h := NewReportsHandler(mock, viewerAccessGuard)
+	req := withUser(httptest.NewRequest(http.MethodGet, "/generate-timelogs-breakdown-report", nil))
+	w := httptest.NewRecorder()
+
+	h.GenerateTimelogsBreakdownReport(w, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	if mock.gotProjectID != "" {
+		t.Error("client should not have been called without a projectId")
+	}
+}
+
+func TestGenerateTimelogsBreakdownReport_RejectsMissingViewerAccess(t *testing.T) {
+	mock := &mockReportsClient{}
+	h := NewReportsHandler(mock, viewerAccessGuard)
+	req := httptest.NewRequest(http.MethodGet, "/generate-timelogs-breakdown-report?projectId=ACME", nil)
 	// Authenticated but holds no role granting PermViewerAccess.
 	req = req.WithContext(middleware.WithUserInfo(req.Context(), &middleware.UserInfo{Email: "nobody@example.com", UserID: "u-nobody"}))
 	w := httptest.NewRecorder()
 
-	h.GenerateSLAReport(w, req)
+	h.GenerateTimelogsBreakdownReport(w, req)
 
 	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestGenerateSLAReport_Success(t *testing.T) {
-	mock := &mockReportsClient{slaReport: servicenow.SLAReportDetails{ProjectName: "Acme"}}
-	h := NewReportsHandler(mock, viewerAccessGuard)
-	req := withUser(httptest.NewRequest(http.MethodGet, "/spl/generate-sla-report?projectSysId=p1&from=2024-01-01&to=2024-01-31", nil))
-	w := httptest.NewRecorder()
-
-	h.GenerateSLAReport(w, req)
-
-	assertStatus(t, w, http.StatusOK)
-	got := decodeJSON[servicenow.SLAReportDetails](t, w)
-	if got.ProjectName != "Acme" {
-		t.Errorf("ProjectName = %q, want Acme", got.ProjectName)
+	if mock.gotProjectID != "" {
+		t.Error("client should not have been called for a caller without viewer access")
 	}
 }
 
-func TestGenerateSLAReport_RejectsUnsafeProjectSysID(t *testing.T) {
-	h := NewReportsHandler(&mockReportsClient{}, viewerAccessGuard)
-	req := withUser(httptest.NewRequest(http.MethodGet, "/spl/generate-sla-report?projectSysId=p1%5EORactive%3Dtrue&from=2024-01-01&to=2024-01-31", nil))
-	w := httptest.NewRecorder()
-
-	h.GenerateSLAReport(w, req)
-
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
 func TestGenerateTimelogsBreakdownReport_NotFound(t *testing.T) {
-	mock := &mockReportsClient{timelogsErr: servicenow.ErrProjectNotFound}
+	mock := &mockReportsClient{timelogsErr: viewer.ErrProjectNotFound}
 	h := NewReportsHandler(mock, viewerAccessGuard)
-	req := withUser(httptest.NewRequest(http.MethodGet, "/spl/generate-timelogs-breakdown-report?projectId=p1", nil))
+	req := withUser(httptest.NewRequest(http.MethodGet, "/generate-timelogs-breakdown-report?projectId=p1", nil))
 	w := httptest.NewRecorder()
 
 	h.GenerateTimelogsBreakdownReport(w, req)
 
 	assertStatus(t, w, http.StatusNotFound)
-}
-
-func TestGetReportDetails_Success(t *testing.T) {
-	mock := &mockReportsClient{projectReport: servicenow.CSReportDetails{SubscriptionDetails: servicenow.SubscriptionDetail{ProjectName: "Acme"}}}
-	h := NewReportsHandler(mock, viewerAccessGuard)
-	req := withUser(httptest.NewRequest(http.MethodGet, "/spl/report-details?projectSysId=p1&from=2024-01-01&to=2024-01-31", nil))
-	w := httptest.NewRecorder()
-
-	h.GetReportDetails(w, req)
-
-	assertStatus(t, w, http.StatusOK)
 }

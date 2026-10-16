@@ -18,11 +18,25 @@
 
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import type { PagingChainResponse, PagingReadinessResponse } from "../types";
-import { pagingChain, pagingMember, readinessChain, readinessGap } from "../test/fixtures";
+import type {
+  CaseAlertSettings,
+  PagingChainResponse,
+  PagingReadinessResponse,
+} from "../types";
+import {
+  pagingChain,
+  pagingMember,
+  readinessChain,
+  readinessGap,
+} from "../test/fixtures";
 import { ADD_TO_PROFILE_HINT } from "../utils/pagingPhone";
 // vi.mock below is hoisted above this import, so the panel gets the mocks.
 import CasePagingTab from "./CasePagingTab";
@@ -45,20 +59,77 @@ vi.mock("@api/backend/client", () => ({
   },
   useBackendApi: () => ({}),
 }));
-vi.mock("@config/apiConfig", () => ({ apiConfig: { backendUrl: "https://example.test" } }));
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
 vi.mock("@context/error-banner/ErrorBannerContext", () => ({
   useErrorBanner: () => ({ showError: vi.fn() }),
 }));
+const alertSettings: { data?: CaseAlertSettings } = {};
+const noopMutation = {
+  mutate: vi.fn(),
+  mutateAsync: vi.fn(),
+  isPending: false,
+};
+vi.mock("../api/useCaseAlertSettings", () => ({
+  useCaseAlertSettings: () => ({
+    data: alertSettings.data,
+    isLoading: false,
+    isError: false,
+  }),
+  canViewCaseAlertSettings: (s?: CaseAlertSettings) =>
+    Boolean(s?.canManage.view),
+  useSaveCaseAlertRoom: () => noopMutation,
+  useSetCaseAlertWebhook: () => noopMutation,
+  useTestCaseAlertRoom: () => noopMutation,
+  useDeleteCaseAlertRoom: () => noopMutation,
+  useSaveCaseAlertRoute: () => noopMutation,
+  useDeleteCaseAlertRoute: () => noopMutation,
+  useSaveCaseAlertValues: () => noopMutation,
+  useDeleteCaseAlertValue: () => noopMutation,
+}));
+
+/** Settings a CSM admin may see and change. */
+function settingsFor(view: boolean): CaseAlertSettings {
+  return {
+    canManage: {
+      view,
+      roomLadders: view ? ["SRE", "SME"] : [],
+      routeLadders: view ? ["CRE", "SRE"] : [],
+    },
+    environment: "staging",
+    webhooksEnabled: true,
+    revision: { saved: 1 },
+    rooms: [],
+    routes: [],
+    values: [],
+  };
+}
+
+const VIEW_KEY = "csm-ts.alert-settings.view";
+
 vi.mock("../api/usePagingChain", () => ({
-  useGetPagingChain: () => ({ data: chain.data, isLoading: false, isError: false, dataUpdatedAt: 0 }),
+  useGetPagingChain: () => ({
+    data: chain.data,
+    isLoading: false,
+    isError: false,
+    dataUpdatedAt: 0,
+  }),
   usePatchPagingMember: () => ({ mutateAsync }),
-  useGetPagingReadiness: () => ({ data: readiness.data, isLoading: false, isError: false }),
+  useGetPagingReadiness: () => ({
+    data: readiness.data,
+    isLoading: false,
+    isError: false,
+  }),
   usePutPagingContact: () => ({ mutate: putMutate, isPending: false }),
   useDeletePagingContact: () => ({ mutate: delMutate, isPending: false }),
   useTestPagingContact: () => ({ mutate: testMutate, isPending: false }),
 }));
 
 beforeEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+  alertSettings.data = undefined;
   mutateAsync.mockReset();
   putMutate.mockReset();
   delMutate.mockReset();
@@ -74,7 +145,15 @@ beforeEach(() => {
         chain: "SRE_SAAS",
         label: "SaaS SRE",
         ready: false,
-        gaps: [readinessGap({ code: "NO_L1", message: "No L1 in TZ2", fix: "rota", zoneCode: "TZ2", date: "2026-10-10" })],
+        gaps: [
+          readinessGap({
+            code: "NO_L1",
+            message: "No L1 in TZ2",
+            fix: "rota",
+            zoneCode: "TZ2",
+            date: "2026-10-10",
+          }),
+        ],
       }),
       readinessChain({ chain: "SRE_IAAS", label: "IaaS SRE" }),
       readinessChain({ chain: "SME", label: "SME" }),
@@ -82,31 +161,45 @@ beforeEach(() => {
   };
 });
 
-describe("CasePagingTab", () => {
-  it("opens on CRE: the editable chain, with its readiness", () => {
-    render(<CasePagingTab onOpenRota={vi.fn()} />);
-    expect(screen.getByRole("tab", { name: "CRE" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: /Edit alert chain/ })).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "CRE alert chain by team and level" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: /^Alpha/ })).toBeInTheDocument();
-    expect(screen.getByText(/✓ ready for the next 7 days/)).toBeInTheDocument();
-  });
+/** Settings rights for the given ladders. */
+function rights(...ladders: ("CRE" | "SRE" | "SME")[]): CaseAlertSettings {
+  return {
+    ...settingsFor(true),
+    canManage: {
+      view: true,
+      roomLadders: ladders,
+      routeLadders: ladders.filter((l) => l !== "SME"),
+    },
+  };
+}
 
-  it("switches to a rota'd chain: read-only, its own readiness, and a way to the rota", () => {
+/** The headings of the chains under "Who gets alerts". */
+function chainHeadings(): string[] {
+  return screen
+    .queryAllByRole("heading", { level: 2 })
+    .map((h) => h.textContent ?? "");
+}
+
+describe("CasePagingTab", () => {
+  it("lists every SRE and SME chain under SRE, each with its readiness and a way to its rota", () => {
     const onOpenRota = vi.fn();
     render(<CasePagingTab onOpenRota={onOpenRota} />);
-    fireEvent.click(screen.getByRole("tab", { name: "SaaS SRE" }));
-
-    expect(screen.getByRole("tab", { name: "SaaS SRE" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByRole("button", { name: /Edit alert chain/ })).not.toBeInTheDocument();
+    // No settings rights: one family, no family tabs, no sub-tabs.
+    expect(screen.queryByRole("tablist", { name: "Family" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Show" })).not.toBeInTheDocument();
+    expect(chainHeadings()).toEqual([
+      "SaaS SRE alert chain",
+      "IaaS SRE alert chain",
+      "PaaS SRE alert chain",
+      "SME alert chain",
+    ]);
     expect(
-      screen.getByText(/People come from the SaaS SRE rota; set them in the Team Schedule views/),
+      screen.getByText("PaaS SRE has no rota yet, so there is no alert chain to show."),
     ).toBeInTheDocument();
     expect(screen.getByText(/⚠ 1 gap/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open the SaaS SRE rota" }));
     expect(onOpenRota).toHaveBeenLastCalledWith({ family: "SRE", rotaCode: "SRE_SAAS" });
-
     // A rota gap opens the rota on its zone and day.
     fireEvent.click(screen.getByRole("button", { name: /Open the rota on/ }));
     expect(onOpenRota).toHaveBeenLastCalledWith({
@@ -116,123 +209,174 @@ describe("CasePagingTab", () => {
       zoneCode: "TZ2",
       date: "2026-10-10",
     });
-  });
-
-  it("opens SME on its family, leaving the rota to the page", () => {
-    const onOpenRota = vi.fn();
-    render(<CasePagingTab onOpenRota={onOpenRota} />);
-    fireEvent.click(screen.getByRole("tab", { name: "SME" }));
     fireEvent.click(screen.getByRole("button", { name: "Open the SME rota" }));
-    expect(onOpenRota).toHaveBeenCalledWith({ family: "SME", rotaCode: undefined });
+    expect(onOpenRota).toHaveBeenLastCalledWith({ family: "SME", rotaCode: undefined });
   });
 
-  it("opens on the reader's own chain when given one, and the picker still switches", () => {
+  it("keeps a reader to their own chains", () => {
+    render(<CasePagingTab onOpenRota={vi.fn()} visibleChains={["SRE_SAAS", "SRE_IAAS"]} />);
+    expect(chainHeadings()).toEqual(["SaaS SRE alert chain", "IaaS SRE alert chain"]);
+  });
+
+  it("tells a reader with no chain of theirs so", () => {
+    render(<CasePagingTab onOpenRota={vi.fn()} visibleChains={[]} />);
+    expect(screen.getByText("There is no alert chain of yours to show.")).toBeInTheDocument();
+  });
+
+  it("offers CRE and SRE family tabs to a CSM admin, opening on CRE's settings alone", () => {
+    alertSettings.data = rights("CRE", "SRE", "SME");
     render(<CasePagingTab onOpenRota={vi.fn()} initialChain="SME" />);
-    expect(screen.getByRole("tab", { name: "SME" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Open the SME rota" })).toBeInTheDocument();
-    expect(screen.queryByRole("table", { name: "CRE alert chain by team and level" })).not.toBeInTheDocument();
+    const families = screen.getByRole("tablist", { name: "Family" });
+    expect(within(families).getAllByRole("tab").map((t) => t.textContent)).toEqual(["CRE", "SRE"]);
+    expect(within(families).getByRole("tab", { name: "CRE" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "CRE settings" })).toBeInTheDocument();
+    // CRE has no "Who gets alerts" here: no sub-tabs.
+    expect(screen.queryByRole("tablist", { name: "Show" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "CRE" }));
-    expect(screen.getByRole("tab", { name: "CRE" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("table", { name: "CRE alert chain by team and level" })).toBeInTheDocument();
+    fireEvent.click(within(families).getByRole("tab", { name: "SRE" }));
+    expect(screen.getByRole("tablist", { name: "Show" })).toBeInTheDocument();
   });
 
-  it("opens an IaaS SRE reader on the IaaS SRE chain", () => {
-    render(<CasePagingTab onOpenRota={vi.fn()} initialChain="SRE_IAAS" />);
-    expect(screen.getByRole("tab", { name: "IaaS SRE" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Open the IaaS SRE rota" })).toBeInTheDocument();
+  it("offers CRE only to those who may change its settings", () => {
+    alertSettings.data = rights("SRE", "SME");
+    render(<CasePagingTab onOpenRota={vi.fn()} initialChain="CRE" />);
+    expect(screen.queryByRole("tab", { name: "CRE" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "CRE settings" })).not.toBeInTheDocument();
   });
 
-  it("offers an SME rota admin every chain, opening on SME", () => {
-    render(<CasePagingTab onOpenRota={vi.fn()} initialChain="SME" />);
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
-    expect(screen.getByRole("tab", { name: "SME" })).toHaveAttribute("aria-selected", "true");
+  it("shows CRE's settings alone to a CRE rota admin: no tabs, no chain", () => {
+    alertSettings.data = rights("CRE");
+    render(<CasePagingTab onOpenRota={vi.fn()} initialChain="CRE" visibleChains={[]} />);
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CRE settings" })).toBeInTheDocument();
+    expect(chainHeadings()).toEqual([]);
   });
 
-  it("offers the chains in order: CRE, the three SRE sub-teams together, then SME", () => {
+  it("switches SRE between who gets alerts and the settings, and remembers the choice", () => {
+    alertSettings.data = rights("SRE", "SME");
+    const { unmount } = render(<CasePagingTab onOpenRota={vi.fn()} />);
+    const show = screen.getByRole("tablist", { name: "Show" });
+    expect(within(show).getByRole("tab", { name: "Who gets alerts" })).toHaveAttribute("aria-selected", "true");
+    expect(chainHeadings()).toContain("SaaS SRE alert chain");
+
+    fireEvent.click(within(show).getByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "SRE settings" })).toBeInTheDocument();
+    expect(screen.getByText("SaaS, IaaS and SME")).toBeInTheDocument();
+    expect(chainHeadings()).toEqual([]);
+    expect(window.localStorage.getItem(VIEW_KEY)).toBe("settings");
+
+    unmount();
     render(<CasePagingTab onOpenRota={vi.fn()} />);
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "CRE",
-      "SaaS SRE",
-      "IaaS SRE",
-      "PaaS SRE",
-      "SME",
+    expect(screen.getByRole("heading", { name: "SRE settings" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Who gets alerts" }));
+    expect(window.localStorage.getItem(VIEW_KEY)).toBe("chain");
+  });
+
+  it("lists SRE and SME teams together in the SRE tab's chat routing", () => {
+    alertSettings.data = {
+      ...rights("SRE", "SME"),
+      routeOptions: {
+        groups: [],
+        rotas: [],
+        teams: [
+          { key: "apollo", name: "Apollo", family: "SRE" },
+          { key: "saas-night-cover", name: "SaaS Night cover", family: "SRE" },
+        ],
+      },
+    };
+    window.localStorage.setItem(VIEW_KEY, "settings");
+    render(
+      <CasePagingTab
+        onOpenRota={vi.fn()}
+        teams={[{ key: "asgardeo", name: "Asgardeo", family: "SME" }]}
+        moveTargetKeys={["saas-night-cover"]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "+ Add team chat routing" }));
+    const team = within(screen.getByRole("dialog")).getByLabelText("Team");
+    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All SRE teams (shared space)",
+      "Apollo",
+      "Asgardeo",
     ]);
   });
 
-  it("shows PaaS SRE, says why it cannot be picked, and stays put when clicked", () => {
-    render(<CasePagingTab onOpenRota={vi.fn()} />);
-    const paas = screen.getByRole("tab", { name: "PaaS SRE" });
-    expect(paas).toHaveAttribute("aria-disabled", "true");
-    expect(paas).toHaveAttribute("title", "No PaaS rota yet");
-    fireEvent.click(paas);
-    expect(screen.getByRole("tab", { name: "CRE" })).toHaveAttribute("aria-selected", "true");
-    expect(paas).toHaveAttribute("aria-selected", "false");
-  });
-
-  it("goes back to the editable chain from a read-only one", () => {
-    render(<CasePagingTab onOpenRota={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: "IaaS SRE" }));
-    expect(screen.getByText(/People come from the IaaS SRE rota/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "CRE" }));
-    expect(screen.getByRole("button", { name: /Edit alert chain/ })).toBeInTheDocument();
-  });
-
-  it("shows a phone chip by each person and runs the paging-number actions", () => {
-    const base = pagingChain();
-    chain.data = {
-      ...base,
-      members: base.members.map((m) =>
-        m.membershipId === "a2"
-          ? {
-              ...m,
-              canEditPhone: true,
-              hasProfilePhone: false,
-              pagingPhone: { masked: "+94•••••123", phone: "+94771234123", setBy: "x", setAt: "2026-10-01T09:00:00Z" },
-            }
-          : m.membershipId === "a1"
-            ? { ...m, hasProfilePhone: true }
-            : m,
-      ),
+  it("keeps a family's changes while the other family is on screen", () => {
+    alertSettings.data = {
+      ...rights("CRE", "SRE", "SME"),
+      routeOptions: {
+        groups: [{ key: "atlas", name: "Atlas", family: "CRE" }],
+        rotas: [],
+        teams: [{ key: "atlas", name: "Atlas", family: "CRE" }],
+      },
     };
+    window.localStorage.setItem("csm-ts.alert-settings.open", JSON.stringify(["CRE.redirects"]));
     render(<CasePagingTab onOpenRota={vi.fn()} />);
-    // Jane Doe (lead) has a profile number; John Roe (1st responder) a paging one.
-    expect(screen.getByText("Profile ✓")).toBeInTheDocument();
-    expect(screen.getByText(/Paging number · not tested/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("When a case is assigned to"), { target: { value: "Atlas" } });
+    fireEvent.change(screen.getByLabelText("send its alerts to"), { target: { value: "team:atlas" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("region", { name: "CRE changes to submit" })).toHaveTextContent("1 change not saved yet");
 
-    fireEvent.click(screen.getByRole("button", { name: "Test call John Roe's paging number" }));
-    expect(testMutate).toHaveBeenCalledWith("u-a2", expect.anything());
-
-    // A number is changed on the profile, not here.
-    expect(screen.queryByRole("button", { name: "Change John Roe's paging number" })).not.toBeInTheDocument();
-    expect(putMutate).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove John Roe's paging number" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
-    expect(delMutate).toHaveBeenCalledWith("u-a2", expect.anything());
+    fireEvent.click(screen.getByRole("tab", { name: "SRE" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("region", { name: "SRE changes to submit" })).toHaveTextContent("No changes to submit.");
+    fireEvent.click(screen.getByRole("tab", { name: "CRE" }));
+    expect(screen.getByRole("region", { name: "CRE changes to submit" })).toHaveTextContent("1 change not saved yet");
   });
 
   it("points a missing number to the profile, even for a person the reader may edit", () => {
     const base = pagingChain();
     chain.data = {
       ...base,
-      members: [...base.members, pagingMember({ membershipId: "a4", name: "Sam Lee", canEditPhone: true, hasProfilePhone: false })],
+      members: [
+        ...base.members,
+        pagingMember({
+          membershipId: "a4",
+          name: "Sam Lee",
+          canEditPhone: true,
+          hasProfilePhone: false,
+        }),
+      ],
     };
-    readiness.data!.chains[0] = readinessChain({
-      chain: "CRE",
-      label: "CRE",
+    readiness.data!.chains[1] = readinessChain({
+      chain: "SRE_SAAS",
+      label: "SaaS SRE",
       ready: false,
       gaps: [
-        readinessGap({ code: "NO_PHONE", fix: "profile", userId: "u-a4", message: "Sam Lee (L1) has no number" }),
-        readinessGap({ code: "NO_PHONE", fix: "profile", userId: "u-a3", message: "Ann Poe (L1) has no number" }),
+        readinessGap({
+          code: "NO_PHONE",
+          fix: "profile",
+          userId: "u-a4",
+          message: "Sam Lee (L1) has no number",
+        }),
+        readinessGap({
+          code: "NO_PHONE",
+          fix: "profile",
+          userId: "u-a3",
+          message: "Ann Poe (L1) has no number",
+        }),
       ],
     });
     render(<CasePagingTab onOpenRota={vi.fn()} />);
-    const strip = screen.getByRole("list", { name: "CRE gaps" });
+    const strip = screen.getByRole("list", { name: "SaaS SRE gaps" });
     const [sam, ann] = within(strip).getAllByRole("listitem");
     expect(within(sam).queryByRole("button", { name: "Add number" })).not.toBeInTheDocument();
     expect(sam).toHaveTextContent(ADD_TO_PROFILE_HINT);
     expect(ann).toHaveTextContent(ADD_TO_PROFILE_HINT);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("still switches when the browser's storage throws", () => {
+    alertSettings.data = rights("SRE", "SME");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    render(<CasePagingTab onOpenRota={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Who gets alerts" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "SRE settings" })).toBeInTheDocument();
   });
 });

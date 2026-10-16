@@ -69,7 +69,8 @@ type googleChatSender interface {
 	SendCaseCreatedAlert(ctx context.Context, audience, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error
 	SendSecurityReportAnalysisAlert(ctx context.Context, audience, caseNumber, wso2CaseID, productName, title, team, caseLink string) error
 	SendCaseAcknowledgedAlert(ctx context.Context, audience, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error
-	SendSeverityChangedAlert(ctx context.Context, audience, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error
+	SendSecurityReportAnalysisAcknowledgedAlert(ctx context.Context, audience, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error
+	SendSeverityChangedAlert(ctx context.Context, audience, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error
 	SendFrustrationAlert(ctx context.Context, audience, caseNumber, wso2CaseID, productName, reason string, frustrationLevel float64, caseLink string) error
 	// The sr.* cards route to the SR's SRE team (sreTeamName) as the
 	// audience -- see handleSRCreated.
@@ -138,6 +139,19 @@ type linkResolver interface {
 // operation project_contact.invited's identity step needs.
 type identityProvisioner interface {
 	EnsureExternalUser(ctx context.Context, email, givenName, familyName string) (scim.ExternalUser, error)
+}
+
+// fullContentFetcher abstracts entity.CustomerEntityClient's
+// GetCaseDescription/GetCommentContent for testability — the re-fetch
+// handleCaseCreated/handleCommentAdded make when a payload's own
+// Description/CaseComment was stripped of an embedded base64 image to fit
+// under Event Hub's message-size limit (see events.CaseCreatedPayload.
+// DescriptionTruncated's own doc comment). An HTTP GET has no comparable
+// size ceiling, so this is how the full, original content (images included)
+// reaches the notification EMAIL specifically; nothing else reads it.
+type fullContentFetcher interface {
+	GetCaseDescription(ctx context.Context, caseID string) (string, error)
+	GetCommentContent(ctx context.Context, commentID string) (string, error)
 }
 
 // onboardingStepRecorder abstracts entity.CustomerEntityClient's
@@ -223,6 +237,16 @@ type Dispatcher struct {
 	// their own SLA-tracking call entirely, same optional-feature posture as
 	// frustrationDetector above.
 	slaEngine slaEngineService
+
+	// fullContent is set via WithFullContentFetcher — nil (no entity-service
+	// client configured for this) means handleCaseCreated/handleCommentAdded
+	// simply use the event payload's own (possibly image-stripped)
+	// Description/CaseComment for the email, same as before this feature
+	// existed, rather than erroring. Even when configured, a fetch failure
+	// falls back to that same stripped content and logs a warning — this is
+	// a best-effort enrichment of the email body, never a reason to fail or
+	// delay the notification.
+	fullContent fullContentFetcher
 
 	// emailSendingEnabled (EMAIL_SENDING_ENABLED, the disable-entirely
 	// `!= "false"` convention CALL_SENDING_ENABLED below also uses) is
@@ -374,6 +398,54 @@ func (d *Dispatcher) WithFrustrationDetection(detector escalationDetector) *Disp
 func (d *Dispatcher) WithSLAEngine(engine slaEngineService) *Dispatcher {
 	d.slaEngine = engine
 	return d
+}
+
+// WithFullContentFetcher configures handleCaseCreated/handleCommentAdded's
+// truncated-content re-fetch (see fullContentFetcher) and returns d for
+// chaining. Not part of NewDispatcher's parameter list deliberately — same
+// "optional per deployment" reasoning as WithSLAEngine above: without it,
+// both handlers simply use the event payload's own content for the email,
+// exactly as they did before this feature existed.
+func (d *Dispatcher) WithFullContentFetcher(f fullContentFetcher) *Dispatcher {
+	d.fullContent = f
+	return d
+}
+
+// resolveFullCaseDescription returns the case's full, original description
+// for the case.created email body when truncated is true (entity-service
+// stripped an embedded base64 image to fit under Event Hub's message-size
+// limit) and a fullContentFetcher is configured, falling back to stripped
+// (the event payload's own, already-safe content) on any fetch failure — a
+// transient entity-service hiccup must degrade the email's fidelity, never
+// its delivery. Calling d.fullContent's method only when it's known
+// non-nil avoids invoking a method on a nil interface, which panics
+// regardless of which concrete type would otherwise have handled it. Not
+// called at all when truncated is false — the common case pays no extra
+// round trip.
+func (d *Dispatcher) resolveFullCaseDescription(ctx context.Context, truncated bool, stripped, caseID string) string {
+	if !truncated || d.fullContent == nil {
+		return stripped
+	}
+	full, err := d.fullContent.GetCaseDescription(ctx, caseID)
+	if err != nil {
+		slog.WarnContext(ctx, "dispatch: fetching full case description for truncated case.created email failed, using the stripped content", "caseId", caseID, "err", err)
+		return stripped
+	}
+	return full
+}
+
+// resolveFullCommentContent is resolveFullCaseDescription's
+// case.comment_added counterpart, for CaseCommentTruncated/CaseComment.
+func (d *Dispatcher) resolveFullCommentContent(ctx context.Context, truncated bool, stripped, commentID string) string {
+	if !truncated || d.fullContent == nil {
+		return stripped
+	}
+	full, err := d.fullContent.GetCommentContent(ctx, commentID)
+	if err != nil {
+		slog.WarnContext(ctx, "dispatch: fetching full comment content for truncated case.comment_added email failed, using the stripped content", "commentId", commentID, "err", err)
+		return stripped
+	}
+	return full
 }
 
 // pagingTestCaller places a paging-number test call; internal/paging's
@@ -787,6 +859,14 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 
 	var errs []error
 
+	// Resolved once, outside sendPerGroup's own render callback (which runs
+	// once per recipient-link group — at most two today): a truncated
+	// description must be fetched exactly once per event, never once per
+	// group. The Google Chat alert below deliberately keeps using p.Product/
+	// p.Team/etc. (not this) — it never reads Description/CaseComment at
+	// all, so it has nothing to recover here.
+	description := d.resolveFullCaseDescription(ctx, p.DescriptionTruncated, p.Description, p.CaseID)
+
 	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		errs = append(errs, err)
@@ -804,7 +884,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 				Priority:                  emailSeverityLabel(p.Priority),
 				Product:                   p.Product,
 				CreatedAt:                 p.CreatedAt,
-				Description:               p.Description,
+				Description:               description,
 				IncidentImpactDescription: p.IncidentImpactDescription,
 				CaseLink:                  caseLink,
 				CommentLink:               commentLinkFor(caseLink, ""),
@@ -816,22 +896,25 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 	}
 
-	// Chat is deliberately skipped for entity-service's four non-"case"
-	// types (engagement, service_request, security_report_analysis,
-	// announcement) — explicit product direction: those types notify their
-	// audience by email only. An exclude-list rather than an include-list
-	// on purpose: CaseType is a freeform display string in general (only
+	// Chat is deliberately skipped for entity-service's three remaining
+	// non-"case" types (engagement, service_request, announcement) —
+	// explicit product direction: those types notify their audience by
+	// email only. An exclude-list rather than an include-list on purpose:
+	// CaseType is a freeform display string in general (only
 	// entity-service's own real payloads use this exact UPPER_SNAKE
 	// vocabulary), so anything else — including "CASE" itself, an empty
 	// value, or an unrecognized one — stays chat-eligible, matching this
 	// file's own established "don't suppress on an unrecognized value"
 	// convention (see e.g. the unmatched-product Chat-space fallback).
+	// security_report_analysis is its own case below: it does get a Chat
+	// alert, just a dedicated card with no severity line (that type never
+	// carries one) rather than SendCaseCreatedAlert's.
 	//
 	// Also skipped for a LOW/S4-severity "case" — explicit product
 	// direction: S4 is WSO2's own best-efforts support tier and doesn't
 	// warrant a Chat alert the way S0-S3 do. Only affects "case" in
-	// practice (the other four types never carry a severity at all, so
-	// p.Priority is always "" for them, never "LOW").
+	// practice (the other three excluded types never carry a severity at
+	// all, so p.Priority is always "" for them, never "LOW").
 	//
 	// chatKey is simply never claimed when skipped; forgetting an unclaimed
 	// key below is a harmless no-op (see Dispatcher.forget), so nothing
@@ -841,7 +924,21 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	// unconfigured audience is a no-op inside SendCaseCreatedAlert itself,
 	// not distinguishable here from a genuine send, so there's no "empty
 	// product, skip" branch left the way there used to be.
-	if !isNonCaseCaseType(p.CaseType) && !isLowSeverity(p.Priority) {
+	switch {
+	case isLowSeverity(p.Priority):
+		// No chat — see the doc comment above.
+	case isSecurityReportAnalysisCaseType(p.CaseType):
+		chatOwned := d.claim(chatKey)
+		if chatOwned {
+			caseLink := d.links.CSMLink(p.CaseID)
+			title := truncateTitle(p.CaseTitle, maxChatTitleLength)
+			chatErr := d.googleChat.SendSecurityReportAnalysisAlert(ctx, chataudience.IncidentMonitor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, p.Product, title, p.Team, caseLink)
+			if chatErr != nil {
+				errs = append(errs, chatErr)
+				d.forget(chatKey)
+			}
+		}
+	case !isNonCaseCaseType(p.CaseType):
 		chatOwned := d.claim(chatKey)
 		if chatOwned {
 			caseLink := d.links.CSMLink(p.CaseID)
@@ -942,6 +1039,13 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 	}
 	baseKey := recordBaseKey(record)
 	subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, p.CaseTitle)
+	// Resolved once, outside sendPerGroup's own render callback — see
+	// handleCaseCreated's identical reasoning. checkFrustration above
+	// deliberately keeps using p.CaseComment (the stripped, already-delivered
+	// text): frustration analysis works on the words, which survive
+	// stripping untouched — only the embedded image itself is gone — so it
+	// has no reason to pay for this fetch too.
+	caseComment := d.resolveFullCommentContent(ctx, p.CaseCommentTruncated, p.CaseComment, p.CommentID)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, d.links.CSMLink(p.CaseID), func(caseLink, intendedFor string) (string, []notifications.InlineImage) {
 		if p.IsInternalNote {
 			// See events.CommentAddedPayload.IsInternalNote's own doc
@@ -949,9 +1053,9 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 			// as the case reference — this audience is always wso2.com
 			// staff, who recognize the internal reference, not ServiceNow's
 			// own case number.
-			return notifications.RenderInternalNoteEmail(p.Name, displayInternalRef(p.WSO2CaseID, p.CaseID), p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink, intendedFor)
+			return notifications.RenderInternalNoteEmail(p.Name, displayInternalRef(p.WSO2CaseID, p.CaseID), p.CaseTitle, caseComment, commentLinkFor(caseLink, p.CommentID), caseLink, intendedFor)
 		}
-		return notifications.RenderCommentAddedEmail(p.Name, displayCaseRef(p.CaseNumber, p.CaseID), p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink, intendedFor)
+		return notifications.RenderCommentAddedEmail(p.Name, displayCaseRef(p.CaseNumber, p.CaseID), p.CaseTitle, caseComment, commentLinkFor(caseLink, p.CommentID), caseLink, intendedFor)
 	})
 	if record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
@@ -969,6 +1073,12 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 // falling back to Incident Monitor, plus the Evaluation/Onboarding/Americas/
 // weekend overlays. A failure on one resolved audience doesn't stop the
 // others (errors.Join, same as sendBreachAlert), each logged individually.
+//
+// One exception: isMigrationEngagementComment (case type "engagement",
+// engagement type "migration") routes to chataudience.Migration instead of
+// calling chataudience.Resolve at all — a migration engagement's frustration
+// alert always goes to the Migration audience alone, never the case's own
+// team/Incident Monitor, by explicit product direction.
 //
 // Deliberately best-effort and entirely independent of handleCommentAdded's
 // own email-sending return value: a failure here (entity-service's role
@@ -995,6 +1105,14 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 // key) — matching the exact repeated-Chat-alert-on-retry-and-DLQ-hand-off
 // incident this file's own history already documents for the email/other
 // Chat channels.
+// isMigrationEngagementComment reports whether p landed on a migration
+// engagement -- case type "engagement", engagement type "migration" --
+// case/whitespace-insensitive, same convention as severityLabelAndColor.
+func isMigrationEngagementComment(p events.CommentAddedPayload) bool {
+	return strings.EqualFold(strings.TrimSpace(p.CaseType), "ENGAGEMENT") &&
+		strings.EqualFold(strings.TrimSpace(p.EngagementType), "migration")
+}
+
 func (d *Dispatcher) checkFrustration(ctx context.Context, record eventbus.Record, p events.CommentAddedPayload) {
 	if d.frustrationDetector == nil || p.IsInternalNote || p.AuthorEmail == "" || p.CaseComment == "" {
 		return
@@ -1037,7 +1155,17 @@ func (d *Dispatcher) checkFrustration(ctx context.Context, record eventbus.Recor
 	}
 
 	caseLink := d.links.CSMLink(p.CaseID)
-	audiences := chataudience.Resolve(p.Team, p.IsEvaluationAccount, p.ProjectOnboardingStatus, time.Now(), d.googleChat.HasAudienceSpace)
+	var audiences []string
+	if isMigrationEngagementComment(p) {
+		// A migration engagement's frustration alert goes to the Migration
+		// audience instead of the usual team/Incident Monitor routing --
+		// the one case this routes by engagement type rather than by team,
+		// so it replaces chataudience.Resolve's decision entirely rather
+		// than adding to it.
+		audiences = []string{chataudience.Migration}
+	} else {
+		audiences = chataudience.Resolve(p.Team, p.IsEvaluationAccount, p.ProjectOnboardingStatus, time.Now(), d.googleChat.HasAudienceSpace)
+	}
 	for _, audience := range audiences {
 		if err := d.googleChat.SendFrustrationAlert(ctx, audience, p.CaseNumber, p.WSO2CaseID, p.Product, result.Reason, result.FrustratedLevel, caseLink); err != nil {
 			slog.ErrorContext(ctx, "dispatch: frustration detection, send chat alert failed", "caseID", p.CaseID, "audience", audience, "err", err)
@@ -1228,9 +1356,16 @@ func (d *Dispatcher) handleCaseAcknowledged(ctx context.Context, record eventbus
 	chatOwned := d.claim(chatKey)
 	var chatErr error
 	if chatOwned {
-		severityLabel, severityColor := severityLabelAndColor(p.Severity)
 		caseLink := d.links.CSMLink(p.CaseID)
-		chatErr = d.googleChat.SendCaseAcknowledgedAlert(ctx, chataudience.IncidentMonitor, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName)
+		if isSecurityReportAnalysisCaseType(p.CaseType) {
+			// No severity line — see SendSecurityReportAnalysisAcknowledgedAlert's
+			// own doc comment for why this type gets its own card instead of
+			// severityLabelAndColor's "Unknown" fallback below.
+			chatErr = d.googleChat.SendSecurityReportAnalysisAcknowledgedAlert(ctx, chataudience.IncidentMonitor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName)
+		} else {
+			severityLabel, severityColor := severityLabelAndColor(p.Severity)
+			chatErr = d.googleChat.SendCaseAcknowledgedAlert(ctx, chataudience.IncidentMonitor, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName)
+		}
 		if chatErr != nil {
 			d.forget(chatKey)
 			chatOwned = false
@@ -1342,11 +1477,20 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 	// reasoning as handleIncidentCreated's own doc comment, and the same
 	// shape handleCaseCreated's own chat block uses (outside its email
 	// if/else, not nested inside the success branch).
-	chatOwned := d.claim(chatKey)
+	//
+	// Product rule: a move TO low severity (S4) never posts to the Incident
+	// Monitor chat, whatever the old severity was; a move to any higher
+	// severity (S0-S3, including an upgrade from S4) always does. Only the
+	// NEW severity matters. chatKey is simply never claimed when skipped;
+	// forgetting an unclaimed key below is a harmless no-op.
+	chatOwned := false
+	if !isLowSeverity(p.NewSeverity) {
+		chatOwned = d.claim(chatKey)
+	}
 	if chatOwned {
 		caseLink := d.links.CSMLink(p.CaseID)
 		title := truncateTitle(p.CaseTitle, maxChatTitleLength)
-		if chatErr := d.googleChat.SendSeverityChangedAlert(ctx, chataudience.IncidentMonitor, oldLabel, oldColor, newLabel, newColor, caseRef, p.WSO2CaseID, title, p.Team, caseLink); chatErr != nil {
+		if chatErr := d.googleChat.SendSeverityChangedAlert(ctx, chataudience.IncidentMonitor, oldLabel, oldColor, newLabel, newColor, caseRef, p.WSO2CaseID, p.Product, title, p.Team, caseLink); chatErr != nil {
 			errs = append(errs, chatErr)
 			d.forget(chatKey)
 		}
@@ -1434,22 +1578,35 @@ var severityDisplay = map[string]struct{ label, color string }{
 }
 
 // nonCaseCaseTypes are entity-service's own case.created CaseType values
-// (strings.ToUpper(req.Type)) for the four types that never carry a
-// severity — engagement/service_request/security_report_analysis/
-// announcement, see that service's own CLAUDE.md — for which
-// handleCaseCreated skips the Google Chat alert and notifies by email only.
+// (strings.ToUpper(req.Type)) for the three types that never carry a
+// severity and are never offered a dedicated Chat card either —
+// engagement/service_request/announcement, see that service's own
+// CLAUDE.md — for which handleCaseCreated skips the Google Chat alert and
+// notifies by email only. security_report_analysis also never carries a
+// severity but is NOT in this list — see isSecurityReportAnalysisCaseType
+// below, which handleCaseCreated/handleCaseAcknowledged check first.
 var nonCaseCaseTypes = map[string]bool{
-	"ENGAGEMENT":               true,
-	"SERVICE_REQUEST":          true,
-	"SECURITY_REPORT_ANALYSIS": true,
-	"ANNOUNCEMENT":             true,
+	"ENGAGEMENT":      true,
+	"SERVICE_REQUEST": true,
+	"ANNOUNCEMENT":    true,
 }
 
-// isNonCaseCaseType reports whether caseType is one of the four types Chat
-// is skipped for. See handleCaseCreated's own call site comment for why
-// this is an exclude-list, not an include-list.
+// isNonCaseCaseType reports whether caseType is one of the three types Chat
+// is skipped entirely for. See handleCaseCreated's own call site comment
+// for why this is an exclude-list, not an include-list.
 func isNonCaseCaseType(caseType string) bool {
 	return nonCaseCaseTypes[caseType]
+}
+
+// isSecurityReportAnalysisCaseType reports whether caseType is
+// entity-service's "SECURITY_REPORT_ANALYSIS" CaseType value. Checked
+// before isNonCaseCaseType by both handleCaseCreated and
+// handleCaseAcknowledged: this type does get a Chat alert, just through a
+// dedicated card with no severity line (SendSecurityReportAnalysisAlert/
+// SendSecurityReportAnalysisAcknowledgedAlert) instead of the "case" cards,
+// since severity is never set for it.
+func isSecurityReportAnalysisCaseType(caseType string) bool {
+	return caseType == "SECURITY_REPORT_ANALYSIS"
 }
 
 // isLowSeverity reports whether severity is entity-service's LOW/S4 value
@@ -1889,12 +2046,8 @@ func (d *Dispatcher) incidentAudiences(ctx context.Context, t events.Type, incid
 			"type", string(t), "incidentId", incidentID, "number", number)
 		return nil
 	}
-	targets, fanout := d.incidentChatFanout[strings.ToLower(strings.TrimSpace(team))]
-	if !fanout {
-		targets = []string{team}
-	}
 	var audiences []string
-	for _, target := range targets {
+	for _, target := range notifications.IncidentGroups(d.incidentChatFanout, team) {
 		audience := notifications.IncidentAudience(target)
 		if !d.googleChat.HasAudienceSpace(audience) {
 			slog.InfoContext(ctx, "dispatch: assignment group has no INCIDENT_CHAT_SPACES entry, no chat alert",

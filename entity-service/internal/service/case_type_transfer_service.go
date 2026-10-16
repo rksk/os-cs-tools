@@ -315,6 +315,35 @@ func (s *caseService) transferCaseType(ctx context.Context, req domain.UpdateCas
 		}
 	}
 
+	// A ticket that transfers INTO security_report_analysis gets the same
+	// case.created event (and therefore the same Chat alert,
+	// SendSecurityReportAnalysisAlert) a case genuinely created as one would —
+	// reusing publishCaseCreatedEvent rather than inventing a second,
+	// type-transfer-specific event, since the consuming side already knows
+	// how to turn one into the right card for this type and nothing else
+	// about it differs. This is the one gap "no event is published on a type
+	// transfer" (this function's own history) left open in practice: an S4
+	// case is never alerted on creation (isLowSeverity in dispatch.go), so a
+	// case quietly transferred into security_report_analysis — now tracked
+	// by Security Center, not a best-efforts support tier — would otherwise
+	// never get a Chat alert at all. Gated on the DESTINATION type alone,
+	// regardless of what it transferred from (a case of any severity, an
+	// engagement, a service request): every one of those already had its own
+	// creation alert (or, for a case, deliberately didn't, per the same
+	// severity gate) for the type it WAS; this is a distinct notification
+	// for the type it IS now. publishCaseCreatedEvent re-fetches the case
+	// fresh via getCaseByID, so it reads the already-committed new type,
+	// recipients and content — no caller-supplied fields matter here beyond
+	// Type (the only one the function branches on) and the case id. Not
+	// gated on the reverse direction (a ticket transferred OUT of
+	// security_report_analysis) or into any other type: only this one
+	// destination was asked for, and only this one needs it, since SRA is
+	// the only type never otherwise reached for a case whose source
+	// severity never got a creation alert.
+	if result.Type == "security_report_analysis" {
+		publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, domain.CreateCaseRequest{Type: "security_report_analysis"}, req.ID)
+	}
+
 	resp := domain.UpdateCaseResponse{
 		Message: "Case type changed successfully.",
 		Case: domain.UpdatedCase{

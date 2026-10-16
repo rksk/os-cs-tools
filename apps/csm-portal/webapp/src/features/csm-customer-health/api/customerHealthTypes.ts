@@ -16,8 +16,8 @@
 
 // Ported verbatim from apps/support-portal-lite/webapp's own
 // customerHealthTypes.ts — these field names are already verified
-// against the real Go backend (internal/handler/spl_customer_health*.go,
-// internal/risk/*.go, internal/servicenow/customer_health.go).
+// against the real Go backend (internal/handler/customer_health*.go,
+// internal/risk/*.go, internal/viewer/viewer.go).
 
 export interface AccountSummary {
   accountSysId: string;
@@ -90,14 +90,23 @@ export interface AccountDetail {
 }
 
 export type RiskFilterKey =
-  | "hasNoGoLive"
-  | "noSupportCases6mo"
+  | "hasGoneLive"
+  | "hasRecentCases"
   | "hasEolProduct"
   | "hasAbandonedMigrations"
   | "hasMigrationDelays"
   | "hasRecentEscalations";
 
 export type HealthStatusType = "to_be_reviewed" | "healthy" | "at_risk";
+
+// Shared between the health-status filter dropdown (CustomerHealthFilters)
+// and the table's own "Filtered by: X" summary text (CustomerHealthTable),
+// so the dropdown's wording and that summary can never drift apart.
+export const HEALTH_STATUS_LABELS: Record<string, string> = {
+  at_risk: "At Risk",
+  healthy: "Healthy",
+  to_be_reviewed: "To Be Reviewed",
+};
 
 export interface RiskActionItem {
   id: number;

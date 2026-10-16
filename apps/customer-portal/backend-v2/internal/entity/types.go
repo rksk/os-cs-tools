@@ -2002,6 +2002,18 @@ type ChangeRequest struct {
 	// Passed through unchanged -- see dto.ChangeRequestDetails.
 	CustomerCanAnswer *bool `json:"customerCanAnswer,omitempty"`
 
+	// CustomerApprovalRequired / CustomerReviewRequired are the change request's
+	// two requirement boxes: whether it needs the customer's approval before it is
+	// scheduled, and the customer's review before it is closed. entity-service
+	// computes them on the PostgreSQL data source (the stored flags, which the
+	// migration keeps in step with the previous system's own boxes); on the
+	// previous system's data source it does not compute them and sends them as
+	// false, which is why they are pointers here (absent stays nil) and why the
+	// DTO passes them on only with a read entity-service made for a customer on
+	// PostgreSQL -- see dto.MapChangeRequestDetails.
+	CustomerApprovalRequired *bool `json:"customerApprovalRequired,omitempty"`
+	CustomerReviewRequired   *bool `json:"customerReviewRequired,omitempty"`
+
 	// CustomerProposal is entity-service's view of a time a customer proposed for the change
 	// request (kept as the proposed start and its confirmation, customer_updated_on /
 	// customer_updated_date_confirmation): the proposed start, whether WSO2 has answered, and -- for

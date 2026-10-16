@@ -118,6 +118,46 @@ func TestWithSubscriptionEndDateState_FirstEverWrite(t *testing.T) {
 	}
 }
 
+// TestWithState_NullBlobIsAFirstWrite: on the CSM database a project that never
+// had a notice has suspension_process_state NULL, which the API returns as
+// JSON null. Decoding null into the map left it nil, and writing the section
+// panicked ("assignment to entry in nil map"), stopping the whole run after the
+// first notice email. Both sections must treat null like no state at all.
+func TestWithState_NullBlobIsAFirstWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		with func(json.RawMessage, closure.NoticeWindow, map[string]string) (json.RawMessage, error)
+	}{
+		{"subscription end date", subscriptionEndDateKey, WithSubscriptionEndDateState},
+		{"due invoices", dueInvoicesKey, WithDueInvoicesState},
+	} {
+		for _, raw := range []string{"null", " null "} {
+			t.Run(tc.name+"/"+raw, func(t *testing.T) {
+				got, err := tc.with(json.RawMessage(raw), closure.NoticeWindow0, map[string]string{"actionSendEmailNotification": "SUCCESSFUL"})
+				if err != nil {
+					t.Fatalf("error = %v, want nil", err)
+				}
+				var blob map[string]map[string]string
+				if err := json.Unmarshal(got, &blob); err != nil {
+					t.Fatalf("output is not valid JSON: %v (%s)", err, got)
+				}
+				if len(blob) != 1 || blob[tc.key]["event_type"] != "suspend" || blob[tc.key]["actionSendEmailNotification"] != "SUCCESSFUL" {
+					t.Errorf("output = %s, want only %s with event_type suspend", got, tc.key)
+				}
+			})
+		}
+	}
+
+	// Reading a null blob is "no prior notice", not an error.
+	if w, err := LastNoticeWindow(json.RawMessage("null")); err != nil || w != nil {
+		t.Errorf("LastNoticeWindow(null) = %v, %v; want nil, nil", w, err)
+	}
+	if w, err := LastNoticeWindowForInvoices(json.RawMessage("null")); err != nil || w != nil {
+		t.Errorf("LastNoticeWindowForInvoices(null) = %v, %v; want nil, nil", w, err)
+	}
+}
+
 // TestWithSubscriptionEndDateState_PreservesOtherSectionsByteForByte is the
 // dedicated, thorough test for the one behavior that could silently corrupt
 // real production data on the next write: based_on_due_invoices and

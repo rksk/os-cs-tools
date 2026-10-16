@@ -72,6 +72,7 @@ type scimUser struct {
 // the caller (AccessGuard.RolesFor's own AUTH_<ROLE>_ROLES configuration) to
 // recognize.
 type scimRoleEntry struct {
+	Value   string `json:"value"`
 	Display string `json:"display"`
 }
 
@@ -119,6 +120,66 @@ func (r *scimRoles) UnmarshalJSON(b []byte) error {
 	values := make([]string, len(entries))
 	for i, e := range entries {
 		values[i] = e.Display
+	}
+	*r = values
+	return nil
+}
+
+// scimUserByID mirrors the SCIM User record returned by GET
+// /organizations/internal/users/{id} -- the canonical resource, which always
+// carries the complete "roles" array, unlike a /Users/.search response
+// (scimUser above), which only carries whichever attributes the caller asked
+// for. Only the field this client actually needs from it is modeled.
+type scimUserByID struct {
+	Roles scimRoleAssignments `json:"roles,omitempty"`
+}
+
+// scimRoleAssignments decodes the SCIM "roles" attribute the same shape
+// scimRoles does (every observed variant: bare string, array of strings,
+// bare {value,display} object, array of {value,display} objects -- see
+// scimRoles' own doc comment for why all four are accepted), but keeps each
+// entry's Value (the role's own unique Asgardeo ID) alongside its Display,
+// instead of collapsing to Display alone: a caller matching a held role
+// against ASGARDEO_ROLE_IDS needs the ID, since two distinct roles can share
+// a display name. A shape with no id available (a bare string, or an object
+// with no "value") decodes with an empty ID -- RoleAssignment.ID is not
+// guaranteed non-empty.
+type scimRoleAssignments []RoleAssignment
+
+func (r *scimRoleAssignments) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		if s == "" {
+			*r = nil
+		} else {
+			*r = []RoleAssignment{{Name: s}}
+		}
+		return nil
+	}
+
+	var oneEntry scimRoleEntry
+	if err := json.Unmarshal(b, &oneEntry); err == nil {
+		*r = []RoleAssignment{{ID: oneEntry.Value, Name: oneEntry.Display}}
+		return nil
+	}
+
+	var strs []string
+	if err := json.Unmarshal(b, &strs); err == nil {
+		values := make([]RoleAssignment, len(strs))
+		for i, s := range strs {
+			values[i] = RoleAssignment{Name: s}
+		}
+		*r = values
+		return nil
+	}
+
+	var entries []scimRoleEntry
+	if err := json.Unmarshal(b, &entries); err != nil {
+		return fmt.Errorf("roles must be a string, an object, or an array of either: %w", err)
+	}
+	values := make([]RoleAssignment, len(entries))
+	for i, e := range entries {
+		values[i] = RoleAssignment{ID: e.Value, Name: e.Display}
 	}
 	*r = values
 	return nil
@@ -187,6 +248,11 @@ type scimAddRoleMembersResponse struct {
 
 // UserInfo holds the SCIM-derived fields for a user, extracted from the raw SCIM response.
 type UserInfo struct {
+	// ID is the user's own Asgardeo UUID -- needed to then call
+	// GetUserByID, since /Users/.search's own "roles" attribute does not
+	// reliably carry each role's ID (see GetUserByID's own doc comment).
+	// Empty if the search response carried none (not observed in practice).
+	ID                     string
 	PhoneNumber            *string
 	LastPasswordUpdateTime *string
 	// Roles is the user's full Asgardeo role assignment, spanning every
@@ -215,6 +281,15 @@ type RoleMember struct {
 	// prefix stripped. Falls back to the raw display value if it carries no
 	// "/" (defensive -- not observed in practice).
 	Email string
+}
+
+// RoleAssignment is one role a user holds, as returned by GetUserByID. ID is
+// the role's own Asgardeo UUID -- the thing to match against
+// ASGARDEO_ROLE_IDS, since Name (the role's display name) can be shared by
+// more than one distinct role.
+type RoleAssignment struct {
+	ID   string
+	Name string
 }
 
 // ExternalUserInfo holds the SCIM "external" org existence/lock status for a

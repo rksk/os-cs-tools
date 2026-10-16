@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, expect, it } from "vitest";
-import { isCloudSupportSubscription } from "./subscriptionType";
+import { canRaiseServiceRequests, isCloudSupportSubscription } from "./subscriptionType";
 
 describe("isCloudSupportSubscription", () => {
   it.each(["cloud_support", "cloud_evaluation_support"] as const)(
@@ -32,5 +32,20 @@ describe("isCloudSupportSubscription", () => {
   it("is false when the subscription type is unknown", () => {
     expect(isCloudSupportSubscription(undefined)).toBe(false);
     expect(isCloudSupportSubscription(null)).toBe(false);
+  });
+});
+
+describe("canRaiseServiceRequests", () => {
+  it.each(["managed_cloud_subscription", "cloud_support"])("is true for %s", (type) => {
+    expect(canRaiseServiceRequests(type)).toBe(true);
+  });
+
+  it.each(["subscription", "cloud_evaluation_support"])("is false for %s", (type) => {
+    expect(canRaiseServiceRequests(type)).toBe(false);
+  });
+
+  it("is false when the subscription type is unknown", () => {
+    expect(canRaiseServiceRequests(undefined)).toBe(false);
+    expect(canRaiseServiceRequests(null)).toBe(false);
   });
 });

@@ -85,7 +85,14 @@ export default function FeaturePreviewDialog({
             {candidates.map((node) => {
               // Resolved WITHOUT any preview override, so the badge always
               // shows this deployment's real current state, not the
-              // admin's own already-applied toggle.
+              // admin's own already-applied toggle — it never changes
+              // meaning: it's still describing what everyone ELSE sees,
+              // which stays hidden/WIP regardless of this one admin's own
+              // toggle. But showing it right next to an already-on switch
+              // reads as a contradiction ("Hidden" beside a lit-up toggle
+              // the admin can clearly see), so it's dropped for exactly as
+              // long as this admin's own override is active — restored the
+              // moment they turn it back off.
               const state = featureState(node.id, access);
               const enabled = Boolean(overrides[node.id]);
               return (
@@ -102,11 +109,13 @@ export default function FeaturePreviewDialog({
                     <Typography variant="body2" noWrap>
                       {node.label}
                     </Typography>
-                    <Chip
-                      size="small"
-                      color={state === "wip" ? "warning" : "default"}
-                      label={state === "wip" ? "WIP" : "Hidden"}
-                    />
+                    {!enabled && (
+                      <Chip
+                        size="small"
+                        color={state === "wip" ? "warning" : "default"}
+                        label={state === "wip" ? "WIP" : "Hidden"}
+                      />
+                    )}
                   </Box>
                   <Switch
                     size="small"

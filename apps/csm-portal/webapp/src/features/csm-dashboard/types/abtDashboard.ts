@@ -33,9 +33,11 @@ export type CaseState =
   | "waiting_on_wso2"
   | "closed"
   /**
-   * Only ever appears as a `nextStates` entry on a closed case, never as a
-   * case's own `state` — it signals "Create related case" is available, not
-   * an actual reopen (the data source has no such transition). See
+   * On a closed case's `nextStates` it is only a signal that "Create related
+   * case" is available, not an actual reopen (the data source has no such
+   * transition). A case can still BE in this state, though: cases carried
+   * over from the previous system hold it, and the dashboard tiles count
+   * them, so the list's State filter must be able to select it. See
    * `CsmCaseDetail.nextStates` and `CaseActionBar`'s `reopened` handling.
    */
   | "reopened";

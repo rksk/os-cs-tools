@@ -54,6 +54,14 @@ import type { BeCaseIssueType } from "@api/backend/types";
 import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import type { CreateRelatedCaseNavState } from "@features/csm-cases/types/csmCases";
 import { useNavTransition } from "@hooks/useNavTransition";
+import CaseWatchListSection from "@features/csm-cases/components/CaseWatchListSection";
+import { useSearchProjectContacts } from "@features/csm-projects/api/useSearchProjectContacts";
+import {
+  NO_WATCH_LIST_EDITS,
+  eligibleContactWatchers,
+  resolveWatchList,
+  type WatchListEdits,
+} from "@features/csm-cases/utils/createCaseWatchList";
 
 const SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
 
@@ -125,6 +133,21 @@ export default function CsmCaseCreatePage(): JSX.Element {
   const [attachments, setAttachments] = useState<EncodedAttachment[]>([]);
 
   const deployments = useSearchDeployments(projectId || undefined);
+
+  // Watch list: pre-filled from the project's registered contacts, then edited.
+  // Only the engineer's edits are state; the list itself is derived, so
+  // contacts that load late still pre-fill and nothing the engineer removed or
+  // added is ever overwritten. Edits belong to one project and reset with it.
+  const projectContacts = useSearchProjectContacts(projectId || undefined);
+  const [watchEdits, setWatchEdits] = useState<WatchListEdits>(NO_WATCH_LIST_EDITS);
+  const watchPrefill = useMemo(
+    () => eligibleContactWatchers(projectContacts.data),
+    [projectContacts.data],
+  );
+  const watchers = useMemo(
+    () => resolveWatchList(watchPrefill, watchEdits),
+    [watchPrefill, watchEdits],
+  );
 
   // Details for the selected project (locked or picked) — the subscription
   // type drives the cloud-project deployment behaviour below. (The display
@@ -214,6 +237,9 @@ export default function CsmCaseCreatePage(): JSX.Element {
       subject.trim().length > 0 &&
       !isEmptyHtml(description) &&
       !descriptionOverLimit &&
+      // Hold submit until the project's contacts load so the pre-filled
+      // watchers are not silently dropped; a failed load does not block.
+      !projectContacts.isLoading &&
       !submitting,
     [
       projectId,
@@ -224,6 +250,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
       subject,
       description,
       descriptionOverLimit,
+      projectContacts.isLoading,
       submitting,
     ],
   );
@@ -231,6 +258,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
   // Cascade resets: a parent change invalidates its children.
   const onProjectChange = (next: string): void => {
     setProjectId(next);
+    setWatchEdits(NO_WATCH_LIST_EDITS);
     setDeploymentId("");
     setDeployedProductId("");
   };
@@ -253,6 +281,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
         severity: priorityFromSeverity(severity),
         issueType: issueType,
         relatedCaseId,
+        ...(watchers.length > 0 && { watchList: watchers.map((w) => w.email) }),
       });
       // The create endpoint doesn't attach files for standard cases, so upload
       // them to the new case afterwards. A partial failure still lands the case.
@@ -531,6 +560,22 @@ export default function CsmCaseCreatePage(): JSX.Element {
                 {descriptionError}
               </Typography>
             )}
+          </Grid>
+
+          <Grid size={{ xs: 12 }}>
+            <CaseWatchListSection
+              projectId={projectId}
+              watchers={watchers}
+              edits={watchEdits}
+              onEditsChange={setWatchEdits}
+              contacts={{
+                isLoading: projectContacts.isLoading,
+                isError: projectContacts.isError,
+                refetch: () => void projectContacts.refetch(),
+              }}
+              noEligibleContacts={projectContacts.isSuccess && watchPrefill.length === 0}
+              disabled={submitting}
+            />
           </Grid>
 
           <Grid size={{ xs: 12 }}>

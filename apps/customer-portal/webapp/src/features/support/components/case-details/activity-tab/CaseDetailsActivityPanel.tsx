@@ -34,7 +34,10 @@ import { compareByCreatedOnThenId } from "@features/support/utils/support";
 import ActivityCommentInput from "@case-details-activity/ActivityCommentInput";
 import CommentBubble from "@case-details-activity/CommentBubble";
 import ImageFullscreenModal from "@case-details-activity/ImageFullscreenModal";
-import { hasDisplayableContent } from "@features/support/utils/support";
+import {
+  hasDisplayableContent,
+  withSystemAuthor,
+} from "@features/support/utils/support";
 import type {
   ActivityContentProps,
   CaseDetailsActivityPanelProps,
@@ -109,8 +112,11 @@ export default function CaseDetailsActivityPanel({
   const allCaseCommentsLoaded = !hasNextPage && !isFetchingNextPage && !isCommentsLoading;
 
   const mergedTimeline = useMemo(() => {
-    const caseComments =
-      commentsData?.pages?.flatMap((p) => p.comments) ?? [];
+    // Only case comments get the "System" label: conversation messages send
+    // an empty createdBy for Novera replies, which must stay bot-labelled.
+    const caseComments = (
+      commentsData?.pages?.flatMap((p) => p.comments) ?? []
+    ).map(withSystemAuthor);
     const conversationComments: CaseComment[] = allCaseCommentsLoaded
       ? (conversationData?.pages?.flatMap((page) => page.comments) ?? []).map(
           (comment) => ({
@@ -338,7 +344,10 @@ function ActivityContent({
         ) : (
           commentsToShow.map((comment) => {
             const commentCreatorEmail = comment.createdBy?.toLowerCase() ?? "";
-            const isCurrentUser = commentCreatorEmail === currentUserEmail;
+            // Guard the empty case: an unloaded profile must not match an
+            // author-less entry as "mine".
+            const isCurrentUser =
+              !!currentUserEmail && commentCreatorEmail === currentUserEmail;
 
             return (
               <CommentBubble

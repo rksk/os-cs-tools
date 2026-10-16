@@ -19,8 +19,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strconv"
 	"testing"
+
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/viewer"
 )
 
 // mockEntityReportsClient implements entityReportsClient. searchCasesPages
@@ -121,7 +126,7 @@ func TestGetTimeLogBreakdown_PagesThroughAllCasesAndTimeCards(t *testing.T) {
 		}
 	}
 
-	c := NewPostgresReportsClient(entity, nil)
+	c := NewPostgresReportsClient(entity)
 	got, err := c.GetTimeLogBreakdown(context.Background(), "PRJ001")
 	if err != nil {
 		t.Fatalf("GetTimeLogBreakdown: %v", err)
@@ -157,4 +162,60 @@ func makeTimeCardViews(n int, hours float64) []entityTimeCardView {
 		views[i] = entityTimeCardView{ID: "tc-" + strconv.Itoa(i), TotalTime: hours, WorkDate: "2026-01-01"}
 	}
 	return views
+}
+
+func TestFormatHoursMinutes(t *testing.T) {
+	cases := []struct {
+		hours float64
+		want  string
+	}{
+		{0, "0m"},
+		{0.5, "30m"},
+		{1, "1h 0m"},
+		{1.5, "1h 30m"},
+		{2.0833, "2h 5m"}, // 125 minutes
+		{0.0083, "0m"},    // under half a minute rounds down
+		{0.0084, "1m"},    // just over half a minute rounds up
+	}
+	for _, tc := range cases {
+		if got := formatHoursMinutes(tc.hours); got != tc.want {
+			t.Errorf("formatHoursMinutes(%v) = %q, want %q", tc.hours, got, tc.want)
+		}
+	}
+}
+
+func TestGetTimeLogBreakdown_AcceptsProjectUUID(t *testing.T) {
+	const projectID = "90269291-b2c3-46cb-9214-ee52c70f861d"
+	mock := &mockEntityReportsClient{
+		searchProjectsFn: func(context.Context, []byte) ([]byte, error) {
+			t.Fatal("SearchProjects must not be called for a project UUID")
+			return nil, nil
+		},
+		getProjectFn: func(_ context.Context, id string) ([]byte, error) {
+			if id != projectID {
+				t.Errorf("GetProject id = %q, want %q", id, projectID)
+			}
+			return []byte(`{"id":"` + projectID + `","name":"Solstice Platforms Production","key":"GEN02-PROJ1","subscriptionType":"managed_cloud_subscription"}`), nil
+		},
+		searchCasesPages: [][]byte{[]byte(`{"cases":[],"total":0}`)},
+	}
+	result, err := NewPostgresReportsClient(mock).GetTimeLogBreakdown(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("GetTimeLogBreakdown: %v", err)
+	}
+	if result.ProjectKey != "GEN02-PROJ1" || result.ProjectName != "Solstice Platforms Production" {
+		t.Errorf("project = %q / %q", result.ProjectName, result.ProjectKey)
+	}
+}
+
+func TestGetTimeLogBreakdown_UnknownProjectUUIDIsNotFound(t *testing.T) {
+	mock := &mockEntityReportsClient{
+		getProjectFn: func(context.Context, string) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: `{"message":"project not found"}`}
+		},
+	}
+	_, err := NewPostgresReportsClient(mock).GetTimeLogBreakdown(context.Background(), "90269291-b2c3-46cb-9214-ee52c70f861d")
+	if !errors.Is(err, viewer.ErrProjectNotFound) {
+		t.Fatalf("err = %v, want viewer.ErrProjectNotFound", err)
+	}
 }

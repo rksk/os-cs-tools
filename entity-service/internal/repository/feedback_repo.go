@@ -67,6 +67,13 @@ type FeedbackRepository interface {
 	AggregateFeedbackByPeriod(ctx context.Context, f FeedbackFilter, unit string) ([]domain.FeedbackBucketResult, error)
 	// AggregateFeedbackByRating groups feedback by rating value, rating ascending.
 	AggregateFeedbackByRating(ctx context.Context, f FeedbackFilter) ([]FeedbackRatingBucket, error)
+	// AggregateFeedbackReasons counts the follow-up reasons recorded
+	// (work_item_feedback_reason, migration 0128) on feedback whose rating is
+	// rating, grouped by the stored reason text. BucketStart is the reason,
+	// Count the number of feedback records that ticked it and AvgRating the
+	// rating itself (every record in the group has it). Most-ticked first, ties
+	// by reason. f.Rating is ignored in favour of rating.
+	AggregateFeedbackReasons(ctx context.Context, f FeedbackFilter, rating int) ([]domain.FeedbackBucketResult, error)
 }
 
 type feedbackRepo struct {
@@ -231,6 +238,38 @@ func (r *feedbackRepo) AggregateFeedbackByRating(ctx context.Context, f Feedback
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate feedback rating buckets: %w", err)
+	}
+	return out, nil
+}
+
+func (r *feedbackRepo) AggregateFeedbackReasons(ctx context.Context, f FeedbackFilter, rating int) ([]domain.FeedbackBucketResult, error) {
+	f.Rating = &rating
+	where, args := buildFeedbackWhere(f)
+	// The reason text is authoritative (no FK to the option row), and the
+	// rating comes from the feedback record itself rather than the metric name.
+	query := fmt.Sprintf(`
+		SELECT r.reason, COUNT(DISTINCT f.id)
+		%s
+		JOIN work_item_feedback_reason r ON r.feedback_id = f.id
+		%s
+		GROUP BY r.reason
+		ORDER BY COUNT(DISTINCT f.id) DESC, r.reason`, feedbackFromJoins, where)
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate feedback reasons: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.FeedbackBucketResult{}
+	for rows.Next() {
+		b := domain.FeedbackBucketResult{AvgRating: float64(rating)}
+		if err := rows.Scan(&b.BucketStart, &b.Count); err != nil {
+			return nil, fmt.Errorf("scan feedback reason bucket: %w", err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate feedback reason buckets: %w", err)
 	}
 	return out, nil
 }

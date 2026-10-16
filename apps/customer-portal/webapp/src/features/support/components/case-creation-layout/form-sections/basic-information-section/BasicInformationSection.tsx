@@ -342,7 +342,9 @@ export function BasicInformationSection({
                 renderValue={(value) => {
                   if (value === "") {
                     if (isProductDropdownDisabled) {
-                      return "Select deployment first";
+                      return hideDeploymentField
+                        ? EMPTY_DROPDOWN_PLACEHOLDER
+                        : "Select deployment first";
                     }
                     if (showNoProductsHint) {
                       return EMPTY_DROPDOWN_PLACEHOLDER;
@@ -365,7 +367,9 @@ export function BasicInformationSection({
               >
                 <MenuItem value="" disabled>
                   {isProductDropdownDisabled
-                    ? "Select deployment first"
+                    ? hideDeploymentField
+                      ? EMPTY_DROPDOWN_PLACEHOLDER
+                      : "Select deployment first"
                     : showNoProductsHint
                       ? EMPTY_DROPDOWN_PLACEHOLDER
                       : `Select ${isCloudSupportProject(projectTypeLabel) ? "Product" : "Product Version"}...`}

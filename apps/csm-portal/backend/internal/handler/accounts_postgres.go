@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/viewer"
 )
 
 // entityEscalationsClient is the subset of internal/entity.CustomerEntityClient
@@ -70,9 +70,8 @@ type entitySearchEscalationsResponse struct {
 // SearchEscalations is then filtered by -- entity-service's own per-request
 // cap (SearchCases rejects a limit above 50, same as every other search in
 // that service), so this pages through like GetProductList/GetABTTeamList
-// do, up to a safety bound rather than assuming one page covers it. Sized to
-// match customer_health_postgres.go's own accountCasesFull bound (2000, not
-// this file's original 1000): a real account checked directly against
+// do, up to a safety bound rather than assuming one page covers it. Sized at
+// 2000 cases (not the original 1000): a real account checked directly against
 // staging has 1,585 cases, which the original 1000-case cap would have
 // silently truncated, missing that account's own escalations on any case
 // past the cutoff.
@@ -97,24 +96,19 @@ const (
 // derived (EL0 = de-escalated back to baseline, anything else = escalated)
 // since case_escalation has no open/closed column of its own.
 //
-// EscalateCase stays ServiceNow-backed via the wrapped sn client, but has no
-// real caller: CsmAccountDetailPage.tsx's EscalationsSection is read-only by
-// design (see its own doc comment), and the actual "escalate a case" UI
-// (EscalateCaseDialog.tsx) already goes through the unrelated, already
-// entity-service-backed POST /cases/{id}/escalations instead. Left wired
-// rather than deleted, since nothing in this change set removes dead routes
-// wholesale -- see cmd/server/main.go's own route registration.
+// The actual "escalate a case" action is not part of this type:
+// CsmAccountDetailPage.tsx's EscalationsSection is read-only by design (see
+// its own doc comment), and the real escalate UI (EscalateCaseDialog.tsx)
+// goes through the entity-service-backed POST /cases/{id}/escalations.
 type postgresViewerAccountClient struct {
 	entity entityEscalationsClient
-	sn     viewerAccountClient
 }
 
 // NewPostgresViewerAccountClient builds a postgresViewerAccountClient.
 // entity is the same *entity.CustomerEntityClient every other CS Portal
-// handler uses; sn is kept only for EscalateCase (see this type's own doc
-// comment).
-func NewPostgresViewerAccountClient(entity entityEscalationsClient, sn viewerAccountClient) *postgresViewerAccountClient {
-	return &postgresViewerAccountClient{entity: entity, sn: sn}
+// handler uses.
+func NewPostgresViewerAccountClient(entity entityEscalationsClient) *postgresViewerAccountClient {
+	return &postgresViewerAccountClient{entity: entity}
 }
 
 // entityEscalationsSearchMaxLimit is entity-service's own hard cap on
@@ -126,16 +120,16 @@ func NewPostgresViewerAccountClient(entity entityEscalationsClient, sn viewerAcc
 const entityEscalationsSearchMaxLimit = 50
 
 // GetEscalationsByAccount implements viewerAccountClient.
-func (c *postgresViewerAccountClient) GetEscalationsByAccount(ctx context.Context, accountID string, offset, limit int) ([]servicenow.EscalationDetail, error) {
+func (c *postgresViewerAccountClient) GetEscalationsByAccount(ctx context.Context, accountID string, offset, limit int) ([]viewer.EscalationDetail, error) {
 	caseIDs, err := c.accountCaseIDs(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
 	if len(caseIDs) == 0 {
-		return []servicenow.EscalationDetail{}, nil
+		return []viewer.EscalationDetail{}, nil
 	}
 
-	results := make([]servicenow.EscalationDetail, 0, limit)
+	results := make([]viewer.EscalationDetail, 0, limit)
 	for fetched, pageOffset := 0, offset; fetched < limit; {
 		pageLimit := limit - fetched
 		if pageLimit > entityEscalationsSearchMaxLimit {
@@ -158,7 +152,7 @@ func (c *postgresViewerAccountClient) GetEscalationsByAccount(ctx context.Contex
 			return nil, fmt.Errorf("unmarshal entity-service escalations response: %w", err)
 		}
 		for _, e := range resp.Escalations {
-			results = append(results, servicenow.EscalationDetail{
+			results = append(results, viewer.EscalationDetail{
 				ID:          e.ID,
 				EscalatedOn: e.CreatedOn,
 				State:       escalationState(e.CurrentLevel.ID),
@@ -192,21 +186,13 @@ func escalationState(currentLevelID string) string {
 
 // accountCaseIDs pages through the account's own cases (work_item.account_id,
 // a real, direct column) to build the case id set GetEscalationsByAccount
-// filters escalations by. Scoped to customerHealthCaseLikeTypes (case,
-// service_request, engagement, security_report_analysis) -- entity-service's
-// own case-search type allow-list genuinely includes "announcement" too, so
-// an accountId-only filter with no type restriction would also match an
-// account's announcements, which never carry escalations but would still
-// pointlessly inflate this id set.
+// filters escalations by.
 func (c *postgresViewerAccountClient) accountCaseIDs(ctx context.Context, accountID string) ([]string, error) {
 	var caseIDs []string
 	for page := 0; page < accountEscalationCasePageCap; page++ {
 		body, err := json.Marshal(entitySearchCasesRequest{
 			Filters: entitySearchCasesFilters{
-				Filters: []entityCaseFieldFilter{
-					{Field: "accountId", Op: "in", Values: []string{accountID}},
-					{Field: "type", Op: "in", Values: customerHealthCaseLikeTypes},
-				},
+				Filters: []entityCaseFieldFilter{{Field: "accountId", Op: "in", Values: []string{accountID}}},
 			},
 			Pagination: entityPagination{Limit: accountEscalationCasePageLimit, Offset: page * accountEscalationCasePageLimit},
 		})
@@ -230,10 +216,4 @@ func (c *postgresViewerAccountClient) accountCaseIDs(ctx context.Context, accoun
 	}
 	sort.Strings(caseIDs)
 	return caseIDs, nil
-}
-
-// EscalateCase implements viewerAccountClient by delegating to the wrapped
-// ServiceNow client — see this type's own doc comment for why.
-func (c *postgresViewerAccountClient) EscalateCase(ctx context.Context, accountID, caseID string, request servicenow.EscalationRequest, submittedByEmail string) (servicenow.EscalationResponse, error) {
-	return c.sn.EscalateCase(ctx, accountID, caseID, request, submittedByEmail)
 }

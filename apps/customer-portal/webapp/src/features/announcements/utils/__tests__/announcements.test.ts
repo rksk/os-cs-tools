@@ -24,6 +24,7 @@ import {
   formatAnnouncementsClearFiltersButtonLabel,
   getAnnouncementTotalPages,
   isAnnouncementDescriptionEffectivelyEmpty,
+  isDescriptionEchoedInComment,
   normalizeAnnouncementDescriptionHtml,
   resolveAnnouncementListFilterOptions,
 } from "@features/announcements/utils/announcements";
@@ -69,6 +70,70 @@ describe("normalizeAnnouncementDescriptionHtml", () => {
 describe("isAnnouncementDescriptionEffectivelyEmpty", () => {
   it("returns true for whitespace-only html", () => {
     expect(isAnnouncementDescriptionEffectivelyEmpty("<p>   </p>")).toBe(true);
+  });
+});
+
+describe("isDescriptionEchoedInComment", () => {
+  const description = "<p>Scheduled downtime on Friday.</p><p>No action needed.</p>";
+
+  it("matches an exact echo", () => {
+    expect(isDescriptionEchoedInComment(description, description)).toBe(true);
+  });
+
+  it("ignores markup, entity encoding and whitespace between blocks", () => {
+    expect(
+      isDescriptionEchoedInComment(
+        "<p>Tom &amp; Jerry&nbsp;rule</p><p>Second</p>",
+        "<div>Tom & Jerry rule\n\nSecond</div>",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches an origin comment that puts the bold Description label ahead of the body", () => {
+    // The shape of an origin comment written by ServiceNow's announcement flow.
+    expect(
+      isDescriptionEchoedInComment(
+        description,
+        `<b><u>Description</u></b><br><p></p>${description}`,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not match the label followed by different text", () => {
+    expect(
+      isDescriptionEchoedInComment(
+        description,
+        "<b><u>Description</u></b><br><p>Something else entirely.</p>",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match a comment that quotes the description and adds its own text", () => {
+    // An update that repeats the description and then says something new must
+    // stay visible -- hiding it would lose that new text.
+    expect(
+      isDescriptionEchoedInComment(
+        description,
+        `<p>Update:</p>${description}<p>The window has moved to Saturday.</p>`,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match a comment with different text", () => {
+    expect(
+      isDescriptionEchoedInComment(description, "<p>Update: the window moved to Saturday.</p>"),
+    ).toBe(false);
+  });
+
+  it("never treats a blank description as echoed", () => {
+    expect(isDescriptionEchoedInComment("<p>  </p>", "<p>anything</p>")).toBe(false);
+    expect(isDescriptionEchoedInComment(undefined, "<p>anything</p>")).toBe(false);
+    expect(isDescriptionEchoedInComment(null, "<p>anything</p>")).toBe(false);
+  });
+
+  it("returns false when there is no comment to compare", () => {
+    expect(isDescriptionEchoedInComment(description, undefined)).toBe(false);
+    expect(isDescriptionEchoedInComment(description, "")).toBe(false);
   });
 });
 

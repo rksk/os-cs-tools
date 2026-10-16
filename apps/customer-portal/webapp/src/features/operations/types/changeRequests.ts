@@ -117,9 +117,56 @@ export type ChangeRequestDetails = ChangeRequestItem & {
    * when nothing was ever proposed (or the data source cannot say).
    */
   customerProposal?: ChangeRequestCustomerProposal | null;
+  /**
+   * The two requirement boxes: whether the change request needs the customer's
+   * approval before it is scheduled / the customer's review before it is closed.
+   * The REQUIREMENT, never the outcome (`hasCustomerApproved` /
+   * `hasCustomerReviewed` record that). Present only when the backend read them
+   * for a customer on the current data source; omitted when it cannot say (the
+   * previous system's data source), which is "unknown", never "not required".
+   */
+  customerApprovalRequired?: boolean | null;
+  customerReviewRequired?: boolean | null;
   approvedBy: IdLabelRef | null;
   approvedOn: string | null;
 };
+
+// --- Approvals (GET /change-requests/{id}/approvals) ----------------------
+
+/** One approver's row on an approval stage; the status is an open upper-case set (APPROVED, REQUESTED, ...). */
+export type ChangeRequestApprover = {
+  id: string;
+  name: string;
+  status: string;
+  respondedOn?: string | null;
+};
+
+/**
+ * One approval stage of a change request as the customer reads it. The
+ * customer's own stages (Customer Approval / Customer Review) come whole, with
+ * the contacts' rows by name; WSO2's internal stages (Peer, CAB, Review) come as
+ * their label and status only, with no approver rows.
+ */
+export type ChangeRequestApproval = {
+  stage: string;
+  approverType: string;
+  approverName: string;
+  /** "APPROVED", "REJECTED" or "PENDING". */
+  status: string;
+  approvers: ChangeRequestApprover[];
+};
+
+export type ChangeRequestApprovalsResponse = {
+  approvals: ChangeRequestApproval[];
+};
+
+/**
+ * What the page has of the approvals: the stages as read (an empty list is a
+ * read that found none), or "unavailable" when the read failed and nothing was
+ * read before it. A failed read is not a negative result: what the approvals
+ * would say is unknown, so nothing is said either way.
+ */
+export type ChangeRequestApprovalsRead = ReadonlyArray<ChangeRequestApproval> | "unavailable";
 
 // Response type for change request search results.
 export type ChangeRequestSearchResponse = PaginationResponse & {
@@ -226,13 +273,62 @@ export type ProposeNewTimeAvailability =
    */
   | "unavailable";
 
+/**
+ * What the workflow can say of a step, from the record alone:
+ *
+ * - `completed`: the record shows it happened (an approval on file, a state the
+ *   change has been through).
+ * - `current`: the change request is there now.
+ * - `not-required`: the step does not apply to this change (its requirement box
+ *   is off), so it is passed without an approval.
+ * - `no-record`: the change request has moved past the step, and nothing on
+ *   record says the step happened (an approval that was never recorded, or a
+ *   change migrated from the previous system without its approvals). Neutral:
+ *   not a tick, not a failure.
+ * - `unavailable`: the change request has moved past the step, and only the
+ *   approvals could say whether it happened, but they could not be read. Not
+ *   known either way: neither a tick nor "no record".
+ * - `pending`: not reached yet.
+ * - `disabled`: cannot happen on the path the change request took (Closed on a
+ *   canceled change, Customer Review after a rollback).
+ */
+export type ChangeRequestWorkflowStageStatus =
+  | "completed"
+  | "current"
+  | "not-required"
+  | "no-record"
+  | "unavailable"
+  | "pending"
+  | "disabled";
+
 // Item type for a change request workflow stage.
 export type ChangeRequestWorkflowStage = {
   name: string;
   description: string;
+  status: ChangeRequestWorkflowStageStatus;
+  /** `status === "completed"`, kept for the renderers that read the booleans. */
   completed: boolean;
+  /** `status === "current"`. */
   current: boolean;
+  /** `status === "disabled"`. */
   disabled: boolean;
+};
+
+/**
+ * Who approved a change request and when, as the page prints it: the record's
+ * own `approvedBy` / `approvedOn` when it has them, else the CAB (Authorize)
+ * stage's approver from the approvals, else nothing ("Not available").
+ */
+export type ChangeRequestApprovalRecord = {
+  approvedBy: string | null;
+  approvedOn: string | null;
+  /**
+   * Where the two values came from; "none" when both are null. "unavailable"
+   * when both are null because the record has neither and the approvals could
+   * not be read: who approved it is not known, which is not the same as no
+   * approval.
+   */
+  source: "record" | "approvals" | "none" | "unavailable";
 };
 
 // --- Change requests UI (list, calendar, filters) ---------------------------

@@ -22,6 +22,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Box, Typography, Paper, Stack, Button, Chip, Tabs, Tab, Select, MenuItem, FormControl, InputLabel,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tooltip,
+  AdapterDateFns, DatePickers,
 } from "@wso2/oxygen-ui";
 import { ClipboardListIcon, PlusIcon, MessageSquareIcon, ChevronDownIcon, ChevronUpIcon } from "@wso2/oxygen-ui-icons-react";
 import { useTheme, type Theme } from "@mui/material/styles";
@@ -37,7 +38,28 @@ import {
 import CircularLoading from "./CircularLoading";
 import type { ProjectDetail, ProjectHealthStatus, RiskActionItem } from "../api/customerHealthTypes";
 
+const { DatePicker, LocalizationProvider } = DatePickers;
+
 const STATUS_LABELS: Record<string, string> = { open: "Open", in_progress: "In Progress", resolved: "Resolved", cancelled: "Cancelled" };
+
+/** "YYYY-MM-DD" to a local-midnight Date, matching the Cases filter bars'
+ * own `parseDateOnly` (e.g. IncidentsFilterBar.tsx) -- avoids the UTC-parse
+ * day-shift `new Date(dateString)` can cause depending on the viewer's
+ * timezone. */
+function parseDueDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Local-midnight Date back to "YYYY-MM-DD", matching `dueDate`'s wire format. */
+function formatDueDateOnly(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function getPriorityLabel(priority: string): string {
   const p = priority.toUpperCase();
@@ -187,10 +209,17 @@ function AddActionItemDialog({ open, onClose, accountId, projectsWithOpenRisks, 
               </Select>
             </FormControl>
             <TextField fullWidth label="Assigned To (Email)" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} />
-            <TextField
-              fullWidth required label="Due Date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
+            <LocalizationProvider dateAdapter={AdapterDateFns}>
+              <DatePicker
+                label="Due Date *"
+                value={parseDueDateOnly(dueDate)}
+                onChange={(date) => setDueDate(date ? formatDueDateOnly(date) : "")}
+                slotProps={{
+                  textField: { fullWidth: true, required: true },
+                  field: { clearable: true },
+                }}
+              />
+            </LocalizationProvider>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -432,15 +461,32 @@ export default function ActionItemsSection({
           <Tab label={`RESOLVED (${counts.resolved})`} value="resolved" />
           <Tab label={`CANCELLED (${counts.cancelled})`} value="cancelled" />
         </Tabs>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>All Projects</InputLabel>
-          <Select value={selectedProjectSysId} label="All Projects" onChange={(e) => setSelectedProjectSysId(e.target.value)}>
-            <MenuItem value="">All Projects</MenuItem>
-            {projectsWithOpenRisks.map((p) => (
-              <MenuItem key={p.sysId} value={p.sysId}>{p.name}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        {projectsWithOpenRisks.length > 1 && (
+          // No label prop / InputLabel -- the plain displayEmpty + renderValue
+          // style every sibling filter in this app uses (see
+          // RiskIndicatorSelect.tsx's own doc comment: a floating
+          // InputLabel + notched OutlinedInput here previously rendered its
+          // closed-state text off-center, since with no selection the
+          // InputLabel sits in placeholder position while the Select's own
+          // content (the matching empty-value MenuItem) renders underneath
+          // it, so the textAlign: center rule only ever centered one of the
+          // two overlapping texts). Hidden entirely with one or zero
+          // projects to choose from -- nothing to filter by.
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <Select
+              value={selectedProjectSysId}
+              onChange={(e) => setSelectedProjectSysId(e.target.value)}
+              displayEmpty
+              renderValue={(value) => projectsWithOpenRisks.find((p) => p.sysId === value)?.name ?? "All Projects"}
+              sx={{ "& .MuiSelect-select": { textAlign: "center" } }}
+            >
+              <MenuItem value="">All Projects</MenuItem>
+              {projectsWithOpenRisks.map((p) => (
+                <MenuItem key={p.sysId} value={p.sysId}>{p.name}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
       </Stack>
 
       {itemsLoading && <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>Loading...</Typography>}

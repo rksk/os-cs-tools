@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useLogger } from "@hooks/useLogger";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { ApiQueryKeys } from "@constants/apiConstants";
@@ -329,5 +329,15 @@ export function useGetCsmCases(
     },
     enabled,
     staleTime: 30_000,
+    // Opening a case (same tab or a new one) unmounts this list or just
+    // blurs it. Coming back must show the same page, not kick off another
+    // search — the header Refresh button is the explicit reload. The
+    // default cache lifetime is five minutes, which would drop that page
+    // and force a search on the next visit; keep it for the rest of the
+    // browser session instead. Cached pages stay visible while a later
+    // page or filter fetch is in flight.
+    gcTime: Infinity,
+    refetchOnMount: false,
+    placeholderData: keepPreviousData,
   });
 }

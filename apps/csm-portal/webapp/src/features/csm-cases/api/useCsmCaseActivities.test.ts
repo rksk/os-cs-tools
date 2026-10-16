@@ -93,7 +93,15 @@ describe("auditEntryFromBeActivity", () => {
       createdOn: "2026-07-01T00:00:00Z",
       changes: [],
     };
-    expect(auditEntryFromBeActivity(nothing).actor).toBe("Unknown");
+    const mapped = auditEntryFromBeActivity(nothing);
+    expect(mapped.actor).toBe("System");
+    expect(mapped.actorUser).toBeUndefined();
+
+    const blankRef: BeCaseActivityEntry = {
+      ...nothing,
+      createdBy: { id: null, email: " ", name: "" },
+    };
+    expect(auditEntryFromBeActivity(blankRef).actor).toBe("System");
   });
 
   it("defaults changes to an empty array when absent", () => {

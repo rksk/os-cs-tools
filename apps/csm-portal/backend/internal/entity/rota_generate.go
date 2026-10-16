@@ -28,3 +28,13 @@ import (
 func (c *CustomerEntityClient) GenerateRotaMonth(ctx context.Context, code string, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/team-schedule/rotas/"+url.PathEscape(code)+"/generate", body)
 }
+
+// GetRotaNightCrew calls GET /team-schedule/rotas/{code}/night-crew on the
+// entity service: the TZ3 people each month from..to (YYYY-MM) was generated
+// with, which the Month roster lists under the night cover.
+func (c *CustomerEntityClient) GetRotaNightCrew(ctx context.Context, code, from, to string) ([]byte, error) {
+	q := url.Values{}
+	q.Set("from", from)
+	q.Set("to", to)
+	return c.do(ctx, http.MethodGet, "/team-schedule/rotas/"+url.PathEscape(code)+"/night-crew?"+q.Encode(), nil)
+}

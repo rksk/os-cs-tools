@@ -72,6 +72,9 @@ type AccountRow struct {
 	CreatedOn  time.Time
 	CreatedBy  string
 	UpdatedOn  time.Time
+	// Health is set only by a SearchAccounts call whose filters asked for the
+	// health summary (see AccountHealthRow); nil on every other path.
+	Health *AccountHealthRow
 }
 
 // AccountRepository defines the persistence operations for the account table.
@@ -83,6 +86,10 @@ type AccountRepository interface {
 	// GetAccountByID returns the account with the given UUID, or a NotFoundError
 	// if no such account exists.
 	GetAccountByID(ctx context.Context, id string) (AccountRow, error)
+	// GetAccountHealthDetail returns the per-project customer-health breakdown of
+	// the account with the given UUID, or a NotFoundError if no such account
+	// exists. See account_health_detail.go for the statements it runs.
+	GetAccountHealthDetail(ctx context.Context, id string) (AccountHealthDetailRow, error)
 	// UpdateAccountTeams sets the account's CRE and/or SRE team. A nil
 	// creTeamID/sreTeamID leaves that assignment unchanged; there is no way
 	// to explicitly clear an assignment to "no team" via this method (see
@@ -149,8 +156,10 @@ const accountSelectColumns = `
 	            OR (ar.from_account_id = a.id AND ar.is_reverse_relationship AND ar.relationship_label = '` + relationshipLabelCustomerOf + `')),
 	a.created_on, a.created_by, a.updated_on`
 
-const accountFromJoins = `
-	FROM account a
+// accountLeftJoins is every join accountSelectColumns and the search filters
+// refer to, without the FROM clause, so a query that reaches account through
+// another relation (the health-summary page) can reuse it.
+const accountLeftJoins = `
 	LEFT JOIN "user" tow ON tow.id = a.technical_owner_id
 	LEFT JOIN "user" mgr ON mgr.id = a.account_manager_id
 	LEFT JOIN "user" ram ON ram.id = a.renewal_account_manager_id
@@ -158,9 +167,13 @@ const accountFromJoins = `
 	LEFT JOIN "group" cre ON cre.id = a.cre_team_id
 	LEFT JOIN "group" sre ON sre.id = a.sre_team_id`
 
-func scanAccountRow(row interface{ Scan(...any) error }) (AccountRow, error) {
-	var a AccountRow
-	err := row.Scan(
+const accountFromJoins = `
+	FROM account a` + accountLeftJoins
+
+// accountRowScanDests returns the scan destinations for accountSelectColumns,
+// in column order.
+func accountRowScanDests(a *AccountRow) []any {
+	return []any{
 		&a.ID, &a.Name, &a.Number, &a.Classification, &a.Pod, &a.SfID, &a.Region, &a.SubRegion,
 		&a.Country, &a.City, &a.DriveLocation,
 		&a.ActivationDate, &a.DeactivationDate,
@@ -171,60 +184,21 @@ func scanAccountRow(row interface{ Scan(...any) error }) (AccountRow, error) {
 		&a.CreTeamID, &a.CreTeamName, &a.SreTeamID, &a.SreTeamName,
 		&a.HasAgent, &a.HasKbReferences, &a.HasPartner,
 		&a.CreatedOn, &a.CreatedBy, &a.UpdatedOn,
-	)
+	}
+}
+
+func scanAccountRow(row interface{ Scan(...any) error }) (AccountRow, error) {
+	var a AccountRow
+	err := row.Scan(accountRowScanDests(&a)...)
 	return a, err
 }
 
 // SearchAccounts implements AccountRepository.
 func (r *accountRepo) SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) ([]AccountRow, int, error) {
-	filterArgs := []any{}
-	argIdx := 1
+	where, filterArgs, argIdx := buildAccountSearchWhere(req.Filters)
 
-	// An account deleted in Salesforce (deleted_on, migration 0171) is not a
-	// live account and is left out of every list; GetAccountByID still
-	// resolves it, so the projects and cases that reference it keep working.
-	where := "WHERE a.deleted_on IS NULL"
-
-	if req.Filters.SearchQuery != "" {
-		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(req.Filters.SearchQuery)
-		pattern := "%" + escaped + "%"
-		// a.number added so a caller can resolve an account by its
-		// ServiceNow-style number (e.g. "ACC0001") the same way case number
-		// resolution already works elsewhere — search, then match the exact
-		// "number" field in the response (see this repo's own AccountRow.Number).
-		where += fmt.Sprintf(" AND (a.name ILIKE $%d ESCAPE '\\' OR a.sf_id ILIKE $%d ESCAPE '\\' OR a.number ILIKE $%d ESCAPE '\\')", argIdx, argIdx, argIdx)
-		filterArgs = append(filterArgs, pattern)
-		argIdx++
-	}
-	if req.Filters.Pod != "" {
-		where += fmt.Sprintf(" AND a.global_pod = $%d", argIdx)
-		filterArgs = append(filterArgs, req.Filters.Pod)
-		argIdx++
-	}
-	if req.Filters.Classification != "" {
-		where += fmt.Sprintf(" AND a.classification = $%d", argIdx)
-		filterArgs = append(filterArgs, req.Filters.Classification)
-		argIdx++
-	}
-	if req.Filters.OwnerEmail != "" {
-		where += fmt.Sprintf(" AND (lower(tow.email) = lower($%d) OR lower(mgr.email) = lower($%d) OR lower(ram.email) = lower($%d))", argIdx, argIdx, argIdx)
-		filterArgs = append(filterArgs, req.Filters.OwnerEmail)
-		argIdx++
-	}
-	if req.Filters.Active != nil {
-		if *req.Filters.Active {
-			where += " AND a.deactivation_date IS NULL"
-		} else {
-			where += " AND a.deactivation_date IS NOT NULL"
-		}
-	}
-	if req.Filters.LifeCycle != "" {
-		where += fmt.Sprintf(" AND a.life_cycle = $%d", argIdx)
-		filterArgs = append(filterArgs, req.Filters.LifeCycle)
-		argIdx++
-	}
-	if req.Filters.HasProject {
-		where += " AND EXISTS (SELECT 1 FROM project p WHERE p.account_id = a.id)"
+	if accountSearchNeedsHealth(req.Filters) {
+		return r.searchAccountsWithHealth(ctx, req, where, filterArgs, argIdx)
 	}
 
 	countQuery := "SELECT COUNT(*) " + accountFromJoins + " " + where
@@ -544,4 +518,77 @@ func (r *accountRepo) LookupUserIDByEmail(ctx context.Context, email string) (*s
 
 func (r *accountRepo) LookupAccountIDBySfID(ctx context.Context, sfID string) (*string, error) {
 	return resolveIDBySfID(WithSystemIdentity(ctx), r.db, resolveAccountBySfIDQuery, "account", sfID)
+}
+
+// buildAccountSearchWhere renders the WHERE clause for an account search over
+// accountFromJoins (aliases a, tow, mgr, ram, cre, sre), its bound arguments,
+// and the next free placeholder index.
+func buildAccountSearchWhere(f domain.SearchAccountsFilters) (string, []any, int) {
+	filterArgs := []any{}
+	argIdx := 1
+
+	// An account deleted in Salesforce (deleted_on, migration 0171) is not a
+	// live account and is left out of every list; GetAccountByID still
+	// resolves it, so the projects and cases that reference it keep working.
+	where := "WHERE a.deleted_on IS NULL"
+
+	if f.SearchQuery != "" {
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.SearchQuery)
+		pattern := "%" + escaped + "%"
+		// a.number added so a caller can resolve an account by its
+		// ServiceNow-style number (e.g. "ACC0001") the same way case number
+		// resolution already works elsewhere — search, then match the exact
+		// "number" field in the response (see this repo's own AccountRow.Number).
+		where += fmt.Sprintf(" AND (a.name ILIKE $%d ESCAPE '\\' OR a.sf_id ILIKE $%d ESCAPE '\\' OR a.number ILIKE $%d ESCAPE '\\')", argIdx, argIdx, argIdx)
+		filterArgs = append(filterArgs, pattern)
+		argIdx++
+	}
+	if f.Pod != "" {
+		where += fmt.Sprintf(" AND a.global_pod = $%d", argIdx)
+		filterArgs = append(filterArgs, f.Pod)
+		argIdx++
+	}
+	if f.Classification != "" {
+		where += fmt.Sprintf(" AND a.classification = $%d", argIdx)
+		filterArgs = append(filterArgs, f.Classification)
+		argIdx++
+	}
+	if f.OwnerEmail != "" {
+		where += fmt.Sprintf(" AND (lower(tow.email) = lower($%d) OR lower(mgr.email) = lower($%d) OR lower(ram.email) = lower($%d))", argIdx, argIdx, argIdx)
+		filterArgs = append(filterArgs, f.OwnerEmail)
+		argIdx++
+	}
+	if f.Active != nil {
+		if *f.Active {
+			where += " AND a.deactivation_date IS NULL"
+		} else {
+			where += " AND a.deactivation_date IS NOT NULL"
+		}
+	}
+	if f.LifeCycle != "" {
+		where += fmt.Sprintf(" AND a.life_cycle = $%d", argIdx)
+		filterArgs = append(filterArgs, f.LifeCycle)
+		argIdx++
+	}
+	if f.HasProject {
+		where += " AND EXISTS (SELECT 1 FROM project p WHERE p.account_id = a.id)"
+	}
+
+	if len(f.SubRegion) > 0 {
+		where += fmt.Sprintf(" AND a.sub_region = ANY($%d::text[])", argIdx)
+		filterArgs = append(filterArgs, f.SubRegion)
+		argIdx++
+	}
+	if team := strings.TrimSpace(f.AbtTeam); team != "" {
+		where += fmt.Sprintf(" AND (lower(cre.name) = lower($%d) OR lower(sre.name) = lower($%d))", argIdx, argIdx)
+		filterArgs = append(filterArgs, team)
+		argIdx++
+	}
+	if product := strings.TrimSpace(f.Product); product != "" {
+		where += fmt.Sprintf(" AND "+accountHasProductPredicate, argIdx)
+		filterArgs = append(filterArgs, product)
+		argIdx++
+	}
+
+	return where, filterArgs, argIdx
 }

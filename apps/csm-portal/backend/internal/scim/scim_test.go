@@ -123,6 +123,121 @@ func TestClient_GetRole(t *testing.T) {
 	})
 }
 
+func TestClient_SearchUser(t *testing.T) {
+	t.Run("requests the id attribute and returns it on UserInfo", func(t *testing.T) {
+		// Regression test: the search request's "attributes" list controls
+		// exactly which fields Asgardeo returns -- id is not included for
+		// free, so a request that omits it comes back with an empty id and
+		// silently breaks GetUserByID's caller downstream (withPortalRoles).
+		var gotBody struct {
+			Attributes []string `json:"attributes"`
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"totalResults": 1,
+				"itemsPerPage": 1,
+				"Resources": [{"id": "70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e", "userName": "DEFAULT/jane.doe@wso2.com"}]
+			}`))
+		}))
+		defer srv.Close()
+
+		info, err := testClient(srv).SearchUser(context.Background(), "jane.doe@wso2.com")
+		if err != nil {
+			t.Fatalf("SearchUser: %v", err)
+		}
+
+		found := false
+		for _, a := range gotBody.Attributes {
+			if a == "id" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("request attributes = %v, want it to include %q", gotBody.Attributes, "id")
+		}
+
+		if info == nil || info.ID != "70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e" {
+			t.Errorf("info = %+v, want ID = %q", info, "70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e")
+		}
+	})
+}
+
+func TestClient_GetUserByID(t *testing.T) {
+	t.Run("hits the internal org's user-by-id path and extracts role assignments by ID and name", func(t *testing.T) {
+		var gotMethod, gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotMethod, gotPath = r.Method, r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id": "70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e",
+				"userName": "DEFAULT/jane.doe@wso2.com",
+				"roles": [
+					{"value": "role-id-1", "display": "app-csm-admin", "audienceType": "application"},
+					{"value": "role-id-2", "display": "app-csm-admin", "audienceType": "application"}
+				]
+			}`))
+		}))
+		defer srv.Close()
+
+		assignments, err := testClient(srv).GetUserByID(context.Background(), "70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e")
+		if err != nil {
+			t.Fatalf("GetUserByID: %v", err)
+		}
+
+		if gotMethod != http.MethodGet {
+			t.Errorf("method = %q, want GET", gotMethod)
+		}
+		if gotPath != "/organizations/internal/users/70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e" {
+			t.Errorf("path = %q, want /organizations/internal/users/70aa5b28-c8ca-4fc7-9da4-6a9ebfaad99e", gotPath)
+		}
+
+		// Two distinct roles sharing the same display name must both survive
+		// -- this is the whole reason GetUserByID returns IDs, not names.
+		want := []RoleAssignment{
+			{ID: "role-id-1", Name: "app-csm-admin"},
+			{ID: "role-id-2", Name: "app-csm-admin"},
+		}
+		if !reflect.DeepEqual(assignments, want) {
+			t.Errorf("assignments = %+v, want %+v", assignments, want)
+		}
+	})
+
+	t.Run("a user with no roles returns an empty, non-nil slice", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id": "u-1", "userName": "DEFAULT/jane.doe@wso2.com"}`))
+		}))
+		defer srv.Close()
+
+		assignments, err := testClient(srv).GetUserByID(context.Background(), "u-1")
+		if err != nil {
+			t.Fatalf("GetUserByID: %v", err)
+		}
+		if assignments == nil || len(assignments) != 0 {
+			t.Errorf("assignments = %+v, want an empty non-nil slice", assignments)
+		}
+	})
+
+	t.Run("propagates a 404 as apierror.Error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"user not found"}`))
+		}))
+		defer srv.Close()
+
+		_, err := testClient(srv).GetUserByID(context.Background(), "unknown-id")
+		apiErr, ok := err.(*apierror.Error)
+		if !ok {
+			t.Fatalf("err = %v (%T), want *apierror.Error", err, err)
+		}
+		if apiErr.StatusCode != http.StatusNotFound {
+			t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
+		}
+	})
+}
+
 func TestClient_AddRoleMembers(t *testing.T) {
 	t.Run("POSTs the internal org's role-members path with the given emails", func(t *testing.T) {
 		var gotMethod, gotPath string

@@ -14,10 +14,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, FormControlLabel, Switch, TextField, Typography } from "@wso2/oxygen-ui";
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
+  Switch,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { Code } from "@wso2/oxygen-ui-icons-react";
 import { useCallback, useState, type JSX } from "react";
 import Editor from "@components/rich-text-editor/Editor";
+import HtmlSourcePreview from "@components/rich-text-editor/HtmlSourcePreview";
+import { htmlNeedsSourceEditing } from "@components/rich-text-editor/richHtmlFidelity";
 import type { ToolbarVariant } from "@components/rich-text-editor/ToolBar";
 
 /**
@@ -36,6 +49,16 @@ import type { ToolbarVariant } from "@components/rich-text-editor/ToolBar";
  * `InitialValuePlugin`), not on every change, so without the remount the
  * rich view would keep showing whatever it last rendered instead of the
  * edited source.
+ *
+ * With `keepStyledHtmlAsSource` set, content the rich editor cannot represent
+ * (a bordered box, coloured links, anything with inline styling it has no node
+ * for -- see `htmlNeedsSourceEditing`) opens in source mode and stays there:
+ * loading it into the rich editor would rewrite it to a plainer version and
+ * report that as an edit. The editor is only mounted for such content if the
+ * user explicitly asks for it, after a warning. It is opt-in so that every
+ * other caller keeps exactly the behaviour it always had; the announcement
+ * screens turn it on because an announcement's styled layout is what customers
+ * see.
  */
 export default function EditorWithSourceToggle({
   value,
@@ -46,6 +69,7 @@ export default function EditorWithSourceToggle({
   toolbarVariant = "full",
   disabled = false,
   id,
+  keepStyledHtmlAsSource = false,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -55,14 +79,50 @@ export default function EditorWithSourceToggle({
   toolbarVariant?: ToolbarVariant;
   disabled?: boolean;
   id?: string;
+  /** Keep HTML the rich editor would flatten in source mode, and warn before switching away. */
+  keepStyledHtmlAsSource?: boolean;
 }): JSX.Element {
-  const [sourceMode, setSourceMode] = useState(false);
+  // null until the user flips the switch themselves; after that their choice wins.
+  const [userSourceChoice, setUserSourceChoice] = useState<boolean | null>(null);
+  // Latched: true once the value has needed source mode, and never cleared by
+  // the value changing again, so deleting the last styled element while typing
+  // in the source box does not yank the user into the rich editor mid-edit.
+  // Set during render (not in an effect) so the rich editor is never mounted
+  // with the value that arrives after the first paint, which is exactly how the
+  // request dialog supplies it.
+  const losesStyling = useCallback(
+    (html: string): boolean => keepStyledHtmlAsSource && htmlNeedsSourceEditing(html),
+    [keepStyledHtmlAsSource],
+  );
+  const [needsSource, setNeedsSource] = useState(() => losesStyling(value));
+  if (!needsSource && userSourceChoice === null && losesStyling(value)) {
+    setNeedsSource(true);
+  }
+  const sourceMode = userSourceChoice ?? needsSource;
   const [editorMountKey, setEditorMountKey] = useState(0);
+  const [confirmRichOpen, setConfirmRichOpen] = useState(false);
 
-  const toggleSourceMode = useCallback((next: boolean) => {
-    setSourceMode(next);
-    if (!next) setEditorMountKey((k) => k + 1);
+  const switchToRich = useCallback(() => {
+    setUserSourceChoice(false);
+    setEditorMountKey((k) => k + 1);
   }, []);
+
+  const toggleSourceMode = useCallback(
+    (next: boolean) => {
+      if (next) {
+        setUserSourceChoice(true);
+        return;
+      }
+      // Going back to the rich view re-parses the HTML, which simplifies it.
+      // Say so before doing it to content that has styling to lose.
+      if (losesStyling(value)) {
+        setConfirmRichOpen(true);
+        return;
+      }
+      switchToRich();
+    },
+    [value, switchToRich, losesStyling],
+  );
 
   return (
     <Box>
@@ -123,8 +183,38 @@ export default function EditorWithSourceToggle({
       {sourceMode && (
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
           Output is sent as-is. Use this to fix paste-formatting or insert tables.
+          {needsSource && userSourceChoice === null &&
+            " This content has styling the rich editor can't keep (such as boxes or coloured links), so it is shown as HTML source to preserve it exactly. The preview shows how it will look."}
         </Typography>
       )}
+      {sourceMode && keepStyledHtmlAsSource && (
+        <HtmlSourcePreview html={value} onChange={disabled ? undefined : onChange} />
+      )}
+
+      <Dialog open={confirmRichOpen} onClose={() => setConfirmRichOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Switch to the rich editor?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            This content uses styling the rich editor can't keep, such as boxes, coloured links
+            and nested layout. Switching will simplify it and the original styling will be lost.
+            Staying in HTML source keeps it exactly as written, and the preview below the source box shows how it will look.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmRichOpen(false)} autoFocus>
+            Keep HTML source
+          </Button>
+          <Button
+            color="warning"
+            onClick={() => {
+              setConfirmRichOpen(false);
+              switchToRich();
+            }}
+          >
+            Switch and simplify
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

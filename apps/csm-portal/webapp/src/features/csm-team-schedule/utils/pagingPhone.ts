@@ -59,6 +59,20 @@ export function phoneIsOptional(m: PagingChainMember): boolean {
  *  person's own profile, not added from the Case Alerts tab. */
 export const ADD_TO_PROFILE_HINT = "Add the number to their profile (avatar › Profile)";
 
+/** Why someone with no number on their profile cannot be made a 1st, 2nd or
+ *  3rd responder (Level 0). The backend refuses the change with the same
+ *  words; the panel says it before asking. */
+export function responderNeedsProfilePhoneMessage(name: string): string {
+  return `${name} can't be added to Level 0: a phone number should be included in their CSM Profile (avatar › Profile)`;
+}
+
+/** Whether this person may be picked as a 1st, 2nd or 3rd responder as far as
+ *  the page knows: false only when their profile is known to have no number.
+ *  An unknown answer is left to the backend, which checks again. */
+export function mayBeResponder(m: PagingChainMember): boolean {
+  return m.hasProfilePhone !== false;
+}
+
 export function phoneChipState(m: PagingChainMember): PhoneChipState {
   if (m.hasProfilePhone === true) return { label: "Profile ✓", tone: "ok" };
   const p = m.pagingPhone;
@@ -67,14 +81,14 @@ export function phoneChipState(m: PagingChainMember): PhoneChipState {
     switch (p.lastTestStatus) {
       case "completed": {
         const on = fmtShortDate(p.lastTestAt);
-        return { label: `Paging number ✓ tested${on ? ` ${on}` : ""}`, tone: "ok", masked };
+        return { label: `Alert number ✓ tested${on ? ` ${on}` : ""}`, tone: "ok", masked };
       }
       case "no-answer":
       case "busy":
       case "failed":
-        return { label: `Paging number · test failed (${p.lastTestStatus})`, tone: "err", masked };
+        return { label: `Alert number · test failed (${p.lastTestStatus})`, tone: "err", masked };
       default:
-        return { label: "Paging number · not tested", tone: "warn", masked };
+        return { label: "Alert number · not tested", tone: "warn", masked };
     }
   }
   if (m.hasProfilePhone === false) {

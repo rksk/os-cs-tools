@@ -301,7 +301,7 @@ func TestBuildEscalationReply(t *testing.T) {
 		RecipientName: "Jane Doe", Firing: "2026-10-13 15:26 IST", ThreadKey: "incident-abc",
 	})
 	card := msg.CardsV2[0].Card
-	if card.Header.Title != "Escalated to L2" || card.Header.Subtitle != "INC0100914" {
+	if card.Header.Title != "Escalated to L2" || card.Header.Subtitle != "#INC0100914" {
 		t.Errorf("header = %q / %q", card.Header.Title, card.Header.Subtitle)
 	}
 	body := card.Sections[0].Widgets[0].TextParagraph.Text
@@ -311,12 +311,42 @@ func TestBuildEscalationReply(t *testing.T) {
 	if msg.Thread == nil || msg.Thread.ThreadKey != "incident-abc" {
 		t.Errorf("thread = %+v, want the incident card's thread", msg.Thread)
 	}
-	withInstruction := buildEscalationReply(EscalationAlert{Rung: "L2", RungRole: "SaaS SRE L2 Support", Instruction: "Assign <it> to yourself."}).CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text
-	if !strings.Contains(withInstruction, "Assign &lt;it&gt; to yourself.") {
-		t.Errorf("reply = %q, want the escaped stop instruction", withInstruction)
-	}
 	if title := buildEscalationReply(EscalationAlert{Rung: "L1"}).CardsV2[0].Card.Header.Title; title != "Notifying L1" {
 		t.Errorf("first rung title = %q, want Notifying L1", title)
+	}
+}
+
+func TestBuildEscalationUnansweredReply(t *testing.T) {
+	msg := buildEscalationUnansweredReply(EscalationUnanswered{
+		Chain: "SaaS SRE", IncidentRef: "INC0100950", Called: []string{"L1 Jane Doe", "L2 John Roe"}, ThreadKey: "incident-abc",
+	})
+	card := msg.CardsV2[0].Card
+	if card.Header.Title != "Unanswered" || card.Header.Subtitle != "#INC0100950" {
+		t.Errorf("header = %q / %q", card.Header.Title, card.Header.Subtitle)
+	}
+	body := card.Sections[0].Widgets[0].TextParagraph.Text
+	if body != "<b>Nobody acknowledged this incident</b><br>Called L1 Jane Doe, L2 John Roe<br>No further calls will be made." {
+		t.Errorf("body = %q", body)
+	}
+	if msg.Thread == nil || msg.Thread.ThreadKey != "incident-abc" {
+		t.Errorf("thread = %+v, want the incident card's thread", msg.Thread)
+	}
+}
+
+func TestBuildEscalationHandoffReply(t *testing.T) {
+	card := buildEscalationHandoffReply(EscalationHandoff{
+		SMETeam: "Choreo Runtime", By: "lead@wso2.com", Paging: true, IncidentRef: "INC0100950",
+	}).CardsV2[0].Card
+	if card.Header.Title != "Escalated to Choreo Runtime SMEs" || card.Header.Subtitle != "#INC0100950" {
+		t.Errorf("header = %q / %q", card.Header.Title, card.Header.Subtitle)
+	}
+	body := card.Sections[0].Widgets[0].TextParagraph.Text
+	want := "<b>Escalated by lead@wso2.com</b>"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+	if body := buildEscalationHandoffReply(EscalationHandoff{SMETeam: "Choreo Runtime", IncidentRef: "INC1"}).CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text; !strings.Contains(body, "No Choreo Runtime SME could be paged") {
+		t.Errorf("unpaged body = %q", body)
 	}
 }
 
@@ -382,5 +412,49 @@ func TestBuildEscalationHandoffCard(t *testing.T) {
 		if msg.Thread == nil || msg.Thread.ThreadKey != "incident-escalation-1" {
 			t.Errorf("thread = %+v", msg.Thread)
 		}
+	}
+}
+
+func TestBuildEscalationStoppedCard(t *testing.T) {
+	full := buildEscalationStoppedCard(EscalationStopped{
+		Audience: "CRE Case Paging", Chain: "CRE", IncidentRef: "CS0379024", Title: "Duplicate <users>",
+		Priority: "CRITICAL", Outcome: "Acknowledged", Detail: "Acknowledged by eng@wso2.com (assigned and a public comment).",
+		Answered: true, Paged: []string{"L1 Jane", "L2 Ravi"}, Cancelled: 5,
+		PortalURL: "https://csm.example/cases/1", PortalLabel: "View case", ThreadKey: "incident-escalation-1",
+	})
+	card := full.CardsV2[0].Card
+	if card.Header.Title != "✅ Acknowledged: CRE paging stopped" {
+		t.Errorf("title = %q", card.Header.Title)
+	}
+	if card.Header.Subtitle != "CS0379024 - Duplicate <users>" {
+		t.Errorf("subtitle = %q", card.Header.Subtitle)
+	}
+	body := card.Sections[0].Widgets[0].TextParagraph.Text
+	for _, want := range []string{"eng@wso2.com", "5 pending calls cancelled.", "Paged: L1 Jane, L2 Ravi", "Priority CRITICAL", "View case"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body has no %q: %s", want, body)
+		}
+	}
+	if full.Thread == nil || full.Thread.ThreadKey != "incident-escalation-1" {
+		t.Errorf("thread = %+v; want the ladder's own", full.Thread)
+	}
+
+	reply := buildEscalationStoppedCard(EscalationStopped{
+		Audience: "Apollo SRE Group", Chain: "SaaS SRE", IncidentRef: "INC1", Title: "Latency", Priority: "HIGH",
+		Outcome: "Severity changed to CRITICAL", Restarted: true, Cancelled: 1,
+		PortalURL: "https://csm.example/incidents/1", Reply: true, ThreadKey: "incident-1",
+	})
+	card = reply.CardsV2[0].Card
+	if card.Header.Title != "\U0001F501 Severity changed to CRITICAL: SaaS SRE paging restarts" || card.Header.Subtitle != "#INC1" {
+		t.Errorf("reply header = %q / %q", card.Header.Title, card.Header.Subtitle)
+	}
+	body = card.Sections[0].Widgets[0].TextParagraph.Text
+	if !strings.Contains(body, "1 pending call cancelled.") || strings.Contains(body, "Priority") || strings.Contains(body, "href") {
+		t.Errorf("a reply under the incident card should stay short: %s", body)
+	}
+
+	closed := buildEscalationStoppedCard(EscalationStopped{IncidentRef: "CS1", Outcome: "Case closed"})
+	if got := closed.CardsV2[0].Card.Header.Title; got != "⏹ Case closed: CRE paging stopped" {
+		t.Errorf("closed title = %q", got)
 	}
 }

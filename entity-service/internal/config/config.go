@@ -539,6 +539,32 @@ type Config struct {
 	AuthJWKSURL            string
 	AuthUserTokenAudiences []string
 	AuthClockSkew          time.Duration
+	// AuthAdminRoles is AUTH_ADMIN_ROLES, comma-separated: the same variable,
+	// with the same value, as csm-portal-backend's -- the token roles that make
+	// a caller a CSM Portal admin. Read here for the Team Schedule only: a CSM
+	// Portal admin is its admin on the Rota access tab, who grants and takes
+	// back rota admin and rota marker, and may change every Case Alerts
+	// setting. Matched exactly, as the portal does. Empty means nobody is (the
+	// portal's own rule for an unset role).
+	AuthAdminRoles []string
+	// CaseAlertsSecretKey is CASE_ALERTS_SECRET_KEY: 32 bytes, base64, the
+	// AES-256-GCM key that seals the Case Alerts chat-room webhook URLs
+	// (migration 0233). One per environment, so a database copied from
+	// another environment cannot open its URLs. Empty turns saving a URL
+	// off; nothing else depends on it.
+	CaseAlertsSecretKey string
+	// CaseAlertsSecretKeyID is CASE_ALERTS_SECRET_KEY_ID, stored beside each
+	// sealed URL ("1" when unset). A URL sealed under another id is treated as
+	// not set.
+	CaseAlertsSecretKeyID string
+	// CaseAlertsRuntimeClientIDs is CASE_ALERTS_RUNTIME_CLIENT_IDS: the
+	// service client ids (csm-notification-service's) allowed to read the
+	// Case Alerts settings with the webhook URLs opened. Empty means none is.
+	CaseAlertsRuntimeClientIDs []string
+	// CaseAlertsEnvironment is CASE_ALERTS_ENVIRONMENT, a label the Case
+	// Alerts tab shows (e.g. "staging", "production") so an admin knows which
+	// environment's rooms they are changing. Optional.
+	CaseAlertsEnvironment string
 	// M2MClientIDsRaw is the M2M_CLIENT_IDS value, a comma-separated list of
 	// Asgardeo application client ids for pure machine-to-machine callers --
 	// no human in the loop at all (the GitHub webhook delivery/service-
@@ -762,6 +788,11 @@ func Load() *Config {
 		AuthJWKSURL:                                   os.Getenv("AUTH_JWKS_URL"),
 		AuthUserTokenAudiences:                        splitComma(os.Getenv("AUTH_USER_TOKEN_AUDIENCES")),
 		AuthClockSkew:                                 envDuration("AUTH_CLOCK_SKEW", 30*time.Second),
+		AuthAdminRoles:                                splitComma(os.Getenv("AUTH_ADMIN_ROLES")),
+		CaseAlertsSecretKey:                           strings.TrimSpace(os.Getenv("CASE_ALERTS_SECRET_KEY")),
+		CaseAlertsSecretKeyID:                         getEnvOrDefault("CASE_ALERTS_SECRET_KEY_ID", "1"),
+		CaseAlertsRuntimeClientIDs:                    splitComma(os.Getenv("CASE_ALERTS_RUNTIME_CLIENT_IDS")),
+		CaseAlertsEnvironment:                         strings.TrimSpace(os.Getenv("CASE_ALERTS_ENVIRONMENT")),
 		M2MClientIDsRaw:                               os.Getenv("M2M_CLIENT_IDS"),
 		CSMPortalBackendClientID:                      os.Getenv("CSM_PORTAL_BACKEND_CLIENT_ID"),
 		CSMPortalUserDomain:                           strings.TrimPrefix(os.Getenv("CSM_PORTAL_USER_DOMAIN"), "@"),

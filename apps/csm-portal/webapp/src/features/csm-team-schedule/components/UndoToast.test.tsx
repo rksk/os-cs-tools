@@ -72,4 +72,32 @@ describe("UndoToast", () => {
     });
     expect(p.onDismiss).toHaveBeenCalledTimes(1);
   });
+
+  it("stays while focus is on it after the pointer leaves, and the other way round", () => {
+    const p = props();
+    render(<UndoToast offer={{ id: 1, message: "x", undo: vi.fn() }} {...p} />);
+    const status = screen.getByRole("status");
+    const later = () =>
+      act(() => {
+        vi.advanceTimersByTime(UNDO_MS + 100);
+      });
+
+    // Pointer on, Tab to Undo, pointer off: focus still holds it.
+    fireEvent.mouseEnter(status);
+    fireEvent.focus(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.mouseLeave(status);
+    later();
+    expect(p.onDismiss).not.toHaveBeenCalled();
+
+    // Pointer back, focus out: the pointer still holds it.
+    fireEvent.mouseEnter(status);
+    fireEvent.blur(screen.getByRole("button", { name: "Undo" }));
+    later();
+    expect(p.onDismiss).not.toHaveBeenCalled();
+
+    // Both gone: it goes after the usual time.
+    fireEvent.mouseLeave(status);
+    later();
+    expect(p.onDismiss).toHaveBeenCalledTimes(1);
+  });
 });

@@ -300,6 +300,7 @@ export default function CreateEolAnnouncementForm(): JSX.Element {
               the editor in a labelled group for assistive tech. */}
           <Box role="group" aria-labelledby="eol-announcement-description-label">
             <EditorWithSourceToggle
+              keepStyledHtmlAsSource
               value={description}
               onChange={setDescription}
               placeholder="Describe the announcement…"

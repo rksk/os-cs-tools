@@ -418,7 +418,7 @@ func TestAnnouncementVisibilityCreateCallRequestIntegration(t *testing.T) {
 		ctx := repository.WithCallerIdentity(context.Background(), repository.SearchScope{ProjectIDs: []string{avProjectID}, ViewerEmail: email})
 		_, err := repo.CreateCallRequest(ctx, domain.CreateCallRequestRequest{
 			CaseID: caseID, Reason: "guard test", UTCTimes: []string{"2030-01-01T10:00:00Z"}, DurationMinutes: 30,
-		}, callerUserID, email, domain.CallRequestStatePendingOnWSO2)
+		}, callerUserID, email)
 		return err
 	}
 

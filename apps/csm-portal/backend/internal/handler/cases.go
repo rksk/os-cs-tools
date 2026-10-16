@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,7 +31,6 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
 )
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -82,12 +82,17 @@ type entityCaseClient interface {
 	SearchCaseActivities(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	SearchCases(ctx context.Context, body []byte) ([]byte, error)
 	AggregateCases(ctx context.Context, body []byte) ([]byte, error)
+	VolumeTrend(ctx context.Context, body []byte) ([]byte, error)
 	SearchFeedback(ctx context.Context, body []byte) ([]byte, error)
 	AggregateFeedback(ctx context.Context, body []byte) ([]byte, error)
 	GetCase(ctx context.Context, caseID string) ([]byte, error)
 	// GetProductRepoMapping calls GET /products/github-repo?name= on the
 	// entity service. The response is the GitHub repository for that product.
 	GetProductRepoMapping(ctx context.Context, name string) ([]byte, error)
+	// SearchDeployedProducts calls POST /deployed-products/search on the entity
+	// service. Filing a Git issue reads one deployment's deployed products for the
+	// product's abbreviation and version.
+	SearchDeployedProducts(ctx context.Context, body []byte) ([]byte, error)
 	CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error)
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
 	GetCaseAttachmentContent(ctx context.Context, attachmentID string) ([]byte, string, error)
@@ -151,11 +156,11 @@ func NewCaseHandler(entity entityCaseClient) *CaseHandler {
 // (the route-level permission it already carries, shared with every other
 // case-type view) cannot express. PermViewSecurityReportCases, not
 // PermViewSecurityCenter: the latter also gates /products/vulnerabilities and
-// stays admin/cs_engineer/comment_updater-only, while the former additionally
-// grants Viewer read access to these cases without opening Vulnerabilities to
-// them. service_request has no equivalent check at all — every PermView
-// holder can already search/fetch that type. Returns h for chaining at the
-// construction site.
+// stays admin/cs_engineer/comment_updater/security_team-only, while the
+// former additionally grants Viewer read access to these cases without
+// opening Vulnerabilities to them. service_request has no equivalent check
+// at all — every PermView holder can already search/fetch that type.
+// Returns h for chaining at the construction site.
 //
 // GetCase deliberately gets no equivalent check: CaseView.type is only
 // populated for ServiceNow cases (null on Postgres — see entity-service's own
@@ -423,6 +428,14 @@ func (h *CaseHandler) CreateCase(w http.ResponseWriter, r *http.Request) {
 
 	// Strip any client-supplied createdBy to prevent identity spoofing.
 	body, err = stripField(body, "createdBy")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	// Only a support case carries a watch list on create; the entity service
+	// decides who may be added. Other create types are forwarded untouched.
+	body, err = normalizeCaseCreateWatchList(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
@@ -743,6 +756,53 @@ type caseFieldFilterFragment struct {
 // too much, never too little.
 const announcementCaseType = "announcement"
 
+// maxCaseCreateWatchList caps how many watchers one create request may name.
+const maxCaseCreateWatchList = 500
+
+// normalizeCaseCreateWatchList validates and trims the optional watchList of a
+// POST /cases body whose type is "case". It must be an array of at most
+// maxCaseCreateWatchList non-empty strings; each entry is trimmed. An omitted,
+// null or empty list leaves the body byte-for-byte unchanged, as does any other
+// create type. Whether each entry is an eligible watcher (and that entries are
+// all emails or all user ids) is the entity service's decision, not repeated here.
+func normalizeCaseCreateWatchList(body []byte) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body, nil // not an object: left to the entity service to reject
+	}
+	var typ string
+	if raw, ok := m["type"]; !ok || json.Unmarshal(raw, &typ) != nil || strings.TrimSpace(typ) != "case" {
+		return body, nil
+	}
+	raw, ok := m["watchList"]
+	if !ok || string(bytes.TrimSpace(raw)) == "null" {
+		return body, nil
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return body, nil
+	}
+	if len(list) > maxCaseCreateWatchList {
+		return nil, fmt.Errorf("watchList has %d entries, max %d", len(list), maxCaseCreateWatchList)
+	}
+	for i, w := range list {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			return nil, errors.New("watchList entry is empty")
+		}
+		list[i] = w
+	}
+	trimmed, err := json.Marshal(list)
+	if err != nil {
+		return nil, err
+	}
+	m["watchList"] = trimmed
+	return json.Marshal(m)
+}
+
 // caseCreateTargetsAnnouncement reports whether a POST /cases body asks for a
 // work item of type announcement. It reads the top-level keys as a token
 // stream, so EVERY "type" in the body is judged, not just the one a map would
@@ -902,6 +962,44 @@ func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity AggregateCases failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to aggregate cases.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// VolumeTrend handles POST /cases/volume-trend.
+// Day-bucketed case-volume trend (opened vs. closed, one point per day over
+// a trailing window), for the Case Summary dashboard's trend chart. Window
+// size and value validation are upstream by the entity service; this layer
+// only forwards the request and passes the response through as-is.
+func (h *CaseHandler) VolumeTrend(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.VolumeTrend(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity VolumeTrend failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to load case volume trend.")
 		return
 	}
 
@@ -2052,66 +2150,4 @@ func (h *CaseHandler) CreateCaseGithubIssue(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusCreated, result)
-}
-
-// viewerCaseClient abstracts the ServiceNow operations used by ViewerCaseHandler.
-// GetCases/GetCaseByNumber/GetCommentsAndWorknotes used to live here too,
-// backed first by ServiceNow and later by a Postgres translation layer --
-// both removed in favor of calling CS Portal's own POST /cases/search,
-// GET /cases/{id}, and POST /cases/{id}/comments/search directly (worknote
-// creation similarly merged onto POST /cases/{id}/comments, using the same
-// entity-service CommentType distinction CS Portal's own comment handler
-// already exposes -- see splWorknotesHandler's removal). Attachments have no
-// entity-service equivalent at all yet (no Postgres storage/backfill path),
-// so that one stays here, ServiceNow-backed, unmerged.
-type viewerCaseClient interface {
-	GetAttachmentsInfo(ctx context.Context, caseNumber string, offset, limit int) ([]servicenow.AttachmentInfo, error)
-}
-
-// ViewerCaseHandler handles HTTP requests for SupportPortalLite's case-
-// attachments endpoint -- the one piece of the case domain with no
-// Postgres/entity-service equivalent to merge onto (see viewerCaseClient's own
-// doc comment). Reading, searching, and commenting on cases now goes
-// through CS Portal's own /cases routes directly.
-type ViewerCaseHandler struct {
-	sn          viewerCaseClient
-	accessGuard *AccessGuard
-}
-
-// NewViewerCaseHandler creates a ViewerCaseHandler.
-func NewViewerCaseHandler(sn viewerCaseClient, accessGuard *AccessGuard) *ViewerCaseHandler {
-	return &ViewerCaseHandler{sn: sn, accessGuard: accessGuard}
-}
-
-// GetAttachmentsInfo handles GET /cases/{caseId}/attachments-info.
-func (h *ViewerCaseHandler) GetAttachmentsInfo(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
-	if !ok {
-		return
-	}
-	caseID := r.PathValue("caseId")
-	if caseID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
-	offset, limit, ok := parsePaginationParams(w, r)
-	if !ok {
-		return
-	}
-
-	result, err := h.sn.GetAttachmentsInfo(r.Context(), caseID, offset, limit)
-	if err != nil {
-		if errors.Is(err, servicenow.ErrCaseNotFound) {
-			writeError(w, http.StatusNotFound, ErrMsgNotFound)
-			return
-		}
-		if isUnsafeQueryValue(err) {
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-			return
-		}
-		slog.ErrorContext(r.Context(), "servicenow GetAttachmentsInfo failed", "userID", user.UserID, "caseID", caseID, "err", err)
-		mapUpstreamErrorGeneric(w, err, "Failed to retrieve case attachments.")
-		return
-	}
-	writeJSONValue(w, http.StatusOK, result)
 }

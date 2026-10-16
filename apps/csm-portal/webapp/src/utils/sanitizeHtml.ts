@@ -42,6 +42,44 @@ export function sanitizeRichTextHtml(html: string): string {
   return DOMPurify.sanitize(html);
 }
 
+/** An `<a>` tag that mentions a `target` attribute (deliberately over-inclusive). */
+const LINK_WITH_TARGET = /<a\b[^>]*target\s*=/i;
+
+/**
+ * Sanitize an announcement's HTML for display: {@link sanitizeRichTextHtml}'s
+ * default policy, plus links the author set to open in a new tab keep doing so.
+ *
+ * Announcements are authored as HTML that may carry `target="_blank"` on its
+ * links (a PDF download, a policy page), but DOMPurify's default policy drops
+ * `target`, so they opened over the announcement. A `_blank` target is kept
+ * (any other value is removed: `_top`, `_parent` and named frames) and always
+ * gets `rel="noopener noreferrer"`. This is applied to the sanitised fragment,
+ * not through a hook, so it touches announcement HTML only and no other
+ * sanitize() call in the app.
+ */
+export function sanitizeAnnouncementHtml(html: string): string {
+  // Only a link that carries a target needs anything different; every other
+  // announcement gets exactly the sanitiser call it always did.
+  if (!LINK_WITH_TARGET.test(html)) return DOMPurify.sanitize(html);
+  const fragment = DOMPurify.sanitize(html, { ADD_ATTR: ["target"], RETURN_DOM_FRAGMENT: true });
+  // ADD_ATTR allows `target` on every element; only a link may keep one (a form
+  // or image map with a target would submit or navigate into another context).
+  for (const el of Array.from(fragment.querySelectorAll("[target]"))) {
+    if (el.tagName !== "A") el.removeAttribute("target");
+  }
+  for (const link of Array.from(fragment.querySelectorAll("a"))) {
+    if (link.getAttribute("target")?.toLowerCase() === "_blank") {
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+    } else {
+      link.removeAttribute("target");
+    }
+  }
+  const holder = document.createElement("div");
+  holder.appendChild(fragment);
+  return holder.innerHTML;
+}
+
 /** DOMPurify config for backend description/body HTML: strips tables and code blocks. */
 export const DESCRIPTION_PURIFY_CONFIG = {
   FORBID_TAGS: ["table", "thead", "tbody", "tfoot", "tr", "th", "td", "colgroup", "col", "code", "pre"],

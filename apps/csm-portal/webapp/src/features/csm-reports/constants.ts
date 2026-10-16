@@ -16,8 +16,6 @@
 
 // Ported from the source app's constants/constants.tsx — the reports-domain
 // subset only.
-export const COLOURS = ["#1F84A6", "#25AAE1", "#3EB5E5", "#57C0E9", "#70CBED", "#89D6F1", "#A2E1F5"];
-
 export const CONSUMED_QUERY_HOURS = "Consumed Query Hours";
 export const REAMAINING_QUERY_HOURS = "Remaining Query Hours";
 export const HOURS = "Hours";

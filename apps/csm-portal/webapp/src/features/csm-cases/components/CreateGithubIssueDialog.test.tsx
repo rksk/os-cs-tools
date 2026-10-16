@@ -486,7 +486,7 @@ describe("CreateGithubIssueDialog — confirm step before filing a real issue", 
         title: "Token issuance is slow",
         description: "Latency spiked after the last deploy.",
         issueTypeLabel: "Type/Discussion",
-        priorityLevel: "Priority/Critical",
+        priorityLevel: "Priority/Critical(P1)",
         repoOverride: { owner: "example-org", repo: "example-repo" },
       }),
     );

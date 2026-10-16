@@ -15,6 +15,7 @@
 // under the License.
 
 import {
+  Box,
   Chip,
   Paper,
   Skeleton,
@@ -38,6 +39,10 @@ import {
   findOnboardingMembership,
   indexOnboardingMembershipsByEmail,
 } from "@features/csm-projects/utils/onboardingStatus";
+import {
+  projectContactRoleChips,
+  projectContactRoleChipSx,
+} from "@features/csm-projects/utils/projectContactRoles";
 import type { BeProjectContact } from "@api/backend/types";
 
 const COLUMN_COUNT = 5;
@@ -71,9 +76,22 @@ interface AccessStatus {
 // (`grantsCaseAccess` absent), so a backend deploy that hasn't caught up yet
 // degrades to the previous behaviour instead of mislabeling every row.
 function deriveAccessStatus(c: BeProjectContact): AccessStatus {
+  // Integration users never register; their access is a service token, not this row.
+  if (c.isCsIntegrationUser) {
+    return { label: "Integration user", color: "default" };
+  }
   if (c.grantsCaseAccess !== undefined) {
     if (c.grantsCaseAccess) {
       return { label: "Has access", color: "success" };
+    }
+    // A linked row that has simply not registered yet is pending, not a fault.
+    if (c.customerContactPresent && (c.registrationState ?? "").toLowerCase() !== "registered") {
+      return {
+        label: "Not registered",
+        color: "warning",
+        reason:
+          "Access starts once this person completes sign-in. If they already have, the invited address may differ from their contact's own.",
+      };
     }
     // Two distinct faults behind one verdict, and which one it is changes
     // what you do about it: no contact record means the invite never
@@ -217,6 +235,7 @@ export default function ProjectContactsTab({
                 // this row has no linked contact record.
                 const name = c.name || c.email || "No linked contact record";
                 const access = deriveAccessStatus(c);
+                const roleChips = projectContactRoleChips(c);
                 return (
                   // Contacts have no stable identifier when unlinked (no `id`);
                   // email is the closest thing to a natural key, and index
@@ -227,24 +246,30 @@ export default function ProjectContactsTab({
                     </TableCell>
                     <TableCell sx={{ wordBreak: "break-all" }}>{c.email || "—"}</TableCell>
                     <TableCell>
-                      {c.roles && c.roles.length > 0
-                        ? c.roles.map((r) => (
+                      {roleChips.length > 0 ? (
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                          {roleChips.map((chip) => (
                             <Chip
-                              key={r}
+                              key={chip.label}
                               size="small"
-                              label={r}
+                              icon={chip.Icon ? <chip.Icon size={12} /> : undefined}
+                              label={chip.label}
                               variant="outlined"
-                              sx={{ mr: 0.5, mb: 0.5 }}
+                              color={chip.chipColor}
+                              sx={projectContactRoleChipSx(chip.chipColor)}
                             />
-                          ))
-                        : "—"}
+                          ))}
+                        </Box>
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
                     <TableCell>
-                      {c.registrationState ? (
+                      {c.isCsIntegrationUser || c.registrationState ? (
                         <Chip
                           size="small"
-                          label={c.registrationState}
-                          color={registrationChipColor(c.registrationState)}
+                          label={c.isCsIntegrationUser ? "REGISTERED" : c.registrationState}
+                          color={registrationChipColor(c.isCsIntegrationUser ? "REGISTERED" : c.registrationState)}
                           variant="outlined"
                         />
                       ) : (

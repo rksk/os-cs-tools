@@ -32,9 +32,10 @@
 // UsageMetricsPage needed zero changes to its calling code — only its
 // import line — while the actual HTTP work underneath is this app's real
 // authenticated useBackendApi(), not a bespoke fetch. Every usage-metrics
-// backend endpoint is raw JSON passthrough (see internal/servicenow/
-// usage_metrics.go), so an untyped `unknown` payload/response is a faithful
-// match for what this domain actually is, not a shortcut.
+// backend endpoint is raw JSON passthrough (see the backend's
+// internal/handler/usage_metrics_postgres.go), so an untyped `unknown`
+// payload/response is a faithful match for what this domain actually is,
+// not a shortcut.
 import { useCallback, useRef, useState } from "react";
 import { useBackendApi, BackendApiError } from "@api/backend/client";
 

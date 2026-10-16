@@ -203,5 +203,5 @@ func (c *GoogleChatClient) SendSLABreachAlert(ctx context.Context, audience, clo
 			},
 		},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, caseNumber, "", msg)
 }

@@ -121,6 +121,11 @@ export function usePatchChangeRequest(
         queryClient.invalidateQueries({
           queryKey: [ApiQueryKeys.CHANGE_REQUEST_DETAILS, changeRequestId],
         }),
+        // An answer is recorded on the customer's approval stage: the workflow
+        // reads the approvals as its evidence, so they are re-read with the detail.
+        queryClient.invalidateQueries({
+          queryKey: [ApiQueryKeys.CHANGE_REQUEST_APPROVALS, changeRequestId],
+        }),
         queryClient.invalidateQueries({
           queryKey: [ApiQueryKeys.CHANGE_REQUESTS],
         }),

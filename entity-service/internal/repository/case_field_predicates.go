@@ -119,8 +119,8 @@ var caseLikeStateLookupTables = map[string]string{
 // caseLikeStateColumn's COALESCE always implicitly covers (any of the five).
 var caseLikeStateLookupAllTypes = []string{"case", "engagement", "service_request", "security_report_analysis", "announcement"}
 
-// caseLikeStateLookupClause renders a "wi.id = ANY(ARRAY(...))" (or
-// "wi.id <> ALL(ARRAY(...))" when negate) predicate equivalent to filtering
+// caseLikeStateLookupClause renders a "wi.id = ANY(ARRAY(...))" (or, when
+// negate, a "NOT EXISTS (... WHERE excluded.id = wi.id)") predicate equivalent to filtering
 // caseLikeStateColumn against the bound parameter at placeholder (e.g.
 // "$3::text[]"), as a UNION ALL of per-type id lookups scoped to types --
 // every case-like type when types is empty (the DefaultTypes case, or an
@@ -141,10 +141,20 @@ var caseLikeStateLookupAllTypes = []string{"case", "engagement", "service_reques
 // while a bare IN/NOT IN subquery here is prone to being planned as a join
 // against the subquery's result set instead -- which, combined with this
 // schema's row-level-security predicates layered onto every table, measured
-// meaningfully slower than the ARRAY form for the same result. ids are
-// always non-NULL (each branch selects a primary key), so "<> ALL" is an
-// exact negation of "= ANY" here, with no three-valued-logic subtlety to
-// account for.
+// meaningfully slower than the ARRAY form for the same result.
+//
+// The negated form (the ExcludeStates / notIn filter) is deliberately NOT the
+// ARRAY form. "wi.id <> ALL(ARRAY(...))" cannot be served by an index or a
+// hash: PostgreSQL compares every candidate row with every element of the
+// array in turn, so its cost is rows x excluded ids. For "state notIn closed"
+// the array holds every closed case-like id -- ~115,000 on production-volume
+// data -- and the search took tens of seconds (past the 10 s request timeout,
+// so the case list came back empty). NOT EXISTS over the same UNION ALL is
+// planned as a hash anti-join and checks each row once: measured on
+// production-size data at 27-70 ms against 5.5-32.5 s, with identical
+// results. ids are always non-NULL (each branch selects a primary key), so
+// the anti-join is an exact negation of "= ANY" here, with no
+// three-valued-logic subtlety to account for.
 func caseLikeStateLookupClause(types []string, placeholder string, negate bool) string {
 	scope := types
 	if len(scope) == 0 {
@@ -166,7 +176,7 @@ func caseLikeStateLookupClause(types []string, placeholder string, negate bool) 
 	}
 	union := strings.Join(branches, " UNION ALL ")
 	if negate {
-		return fmt.Sprintf("wi.id <> ALL(ARRAY(%s))", union)
+		return fmt.Sprintf("NOT EXISTS (SELECT 1 FROM (%s) excluded WHERE excluded.id = wi.id)", union)
 	}
 	return fmt.Sprintf("wi.id = ANY(ARRAY(%s))", union)
 }

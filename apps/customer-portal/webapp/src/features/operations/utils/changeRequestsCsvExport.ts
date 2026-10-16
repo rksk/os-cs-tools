@@ -118,15 +118,16 @@ export function downloadChangeRequestsCsv(
  * @param items - Change requests to export.
  * @param projectId - Project id for filename.
  */
-// Same 9-column layout as case table on A4 landscape (269mm usable).
+// The 9-column layout of the case table on A4 landscape (269mm usable), with 6mm moved
+// from Short Description to Assigned to so a WSO2 engineer's name and "ⓦ" fit more often.
 const CHANGE_REQUEST_PDF_COLUMN_STYLES = {
   0: { cellWidth: 22 },
   1: { cellWidth: 28 },
   2: { cellWidth: 22 },
-  3: { cellWidth: 72 },
+  3: { cellWidth: 66 },
   4: { cellWidth: 20 },
   5: { cellWidth: 30 },
-  6: { cellWidth: 30 },
+  6: { cellWidth: 36 },
   7: { cellWidth: 23 },
   8: { cellWidth: 22 },
 } as const;

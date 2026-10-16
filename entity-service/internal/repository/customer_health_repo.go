@@ -388,8 +388,12 @@ func (r *customerHealthRepo) MarkProjectHealthy(ctx context.Context, projectID, 
 	}
 
 	return inTxReturning(ctx, r.db, func(tx pgx.Tx) (domain.ProjectHealthStatus, error) {
+		// Locked for the same reason OpenProjectRisk locks it: this method
+		// also decides "does this project already have an open risk" and
+		// must serialize against a concurrent OpenProjectRisk/MarkProjectHealthy
+		// call for the same project.
 		var accountID string
-		err := tx.QueryRow(ctx, `SELECT account_id FROM project WHERE id = $1`, projectID).Scan(&accountID)
+		err := tx.QueryRow(ctx, `SELECT account_id FROM project WHERE id = $1 FOR UPDATE`, projectID).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ProjectHealthStatus{}, &apierror.NotFoundError{Msg: "project not found"}
 		}
@@ -404,6 +408,30 @@ func (r *customerHealthRepo) MarkProjectHealthy(ctx context.Context, projectID, 
 			projectID, accountID, actorEmail,
 		); err != nil {
 			return domain.ProjectHealthStatus{}, fmt.Errorf("upsert project_health_status: %w", err)
+		}
+
+		// Marking a project healthy must resolve any risk that is still
+		// genuinely OPEN on it -- without this, a project reachable via a
+		// path that doesn't go through CloseProjectRisk first (e.g. "Mark
+		// Healthy" offered directly from the "to be reviewed" display) ends
+		// up HEALTHY with an OPEN project_risk row left behind underneath
+		// it. GetAccountProjectHealthStatuses only looks up a project's open
+		// risk while its health_status is AT_RISK, so that orphaned OPEN row
+		// becomes permanently invisible to every read (and to the UI's
+		// "Close Risk" action, which only renders while an open risk is
+		// actually shown) -- yet OpenProjectRisk's own check still finds it,
+		// so every future "Mark At Risk" on the same project fails forever
+		// with "project already has an open risk". Closing it here, in the
+		// same transaction as the healthy status write, keeps the two in
+		// agreement in every case, not just the one the frontend's own
+		// Close Risk flow already handles.
+		if _, err := tx.Exec(ctx, `
+			UPDATE project_risk
+			SET status = 'CLOSED', closed_comment = $1, closed_by_email = $2, closed_on = NOW()
+			WHERE project_id = $3 AND status = 'OPEN'`,
+			closedComment, actorEmail, projectID,
+		); err != nil {
+			return domain.ProjectHealthStatus{}, fmt.Errorf("close open project_risk on mark healthy: %w", err)
 		}
 
 		if _, err := tx.Exec(ctx, `
@@ -591,36 +619,53 @@ func (r *customerHealthRepo) GetBatchAccountHealthSummaries(ctx context.Context,
 	return result, nil
 }
 
+// GetAccountsByHealthStatus returns the ids of accounts whose OVERALL status
+// -- computed the identical way GetAccountHealthSummary/
+// GetBatchAccountHealthSummaries compute it for one account (see
+// overallStatus's own doc comment: any project AT_RISK wins, else all
+// HEALTHY, else TO_BE_REVIEWED) -- equals status. An account with no
+// project_health_status row at all (never initialized -- see
+// InitProjectHealthTracking) is not considered by any status and so never
+// appears in any of the three lists, matching every other read here.
+//
+// Previously queried project_risk directly for "AT_RISK" (`status = 'OPEN'`)
+// instead of this same account-level aggregate, and had no case for
+// "TO_BE_REVIEWED" at all (silently returned no accounts) -- a real,
+// reported bug: filtering the Customer Health dashboard by risk also
+// returned healthy/to-be-reviewed accounts, because an account whose
+// project_risk row was OPEN for one project could still show a different,
+// disagreeing status for a DIFFERENT project (or stale data from before a
+// write went through OpenProjectRisk/CloseProjectRisk/MarkProjectHealthy,
+// which are what actually keep project_risk and project_health_status in
+// step) -- the filter and the displayed status it filtered by simply weren't
+// reading the same thing. Querying project_health_status with the same
+// aggregation GetBatchAccountHealthSummaries already uses for display makes
+// the two agree by construction, and "to_be_reviewed" now works the same way
+// "healthy" and "at_risk" always did.
 func (r *customerHealthRepo) GetAccountsByHealthStatus(ctx context.Context, status domain.ProjectHealthStatusValue) ([]string, error) {
-	var query string
-	switch status {
-	case domain.ProjectHealthStatusAtRisk:
-		query = "SELECT DISTINCT account_id FROM project_risk WHERE status = 'OPEN'"
-	case domain.ProjectHealthStatusHealthy:
-		query = `SELECT DISTINCT account_id FROM project_health_status
-			WHERE account_id NOT IN (
-				SELECT DISTINCT account_id FROM project_health_status WHERE status != 'HEALTHY'
-			)`
-	default:
-		return []string{}, nil
-	}
-
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, "SELECT account_id, status FROM project_health_status")
 	if err != nil {
-		return nil, fmt.Errorf("query accounts by health status: %w", err)
+		return nil, fmt.Errorf("query project_health_status: %w", err)
 	}
 	defer rows.Close()
 
-	ids := []string{}
+	statusesByAccount := make(map[string][]string)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan account id: %w", err)
+		var accountID, projectStatus string
+		if err := rows.Scan(&accountID, &projectStatus); err != nil {
+			return nil, fmt.Errorf("scan project_health_status row: %w", err)
 		}
-		ids = append(ids, id)
+		statusesByAccount[accountID] = append(statusesByAccount[accountID], projectStatus)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate account id rows: %w", err)
+		return nil, fmt.Errorf("iterate project_health_status rows: %w", err)
+	}
+
+	ids := []string{}
+	for accountID, statuses := range statusesByAccount {
+		if overallStatus(statuses) == status {
+			ids = append(ids, accountID)
+		}
 	}
 	return ids, nil
 }

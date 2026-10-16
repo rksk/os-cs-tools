@@ -340,7 +340,7 @@ func TestCaseService_CreateCaseComment_CustomerReplyMoveIsMirroredAndAppliesSLAE
 		createBareCaseComment: func(context.Context, string, domain.CommentType, string) (domain.CaseCommentDetail, error) {
 			return domain.CaseCommentDetail{}, nil
 		},
-		patchCaseFieldsFn: func(_ context.Context, _ string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, _ *bool, resolution *caseResolutionFields) (domain.UpdatedCase, error) {
+		patchCaseFieldsFn: func(_ context.Context, _ string, state *domain.CaseState, severity *domain.CaseSeverity, workState *domain.CaseWorkState, _ *bool, resolution *caseResolutionFields, _ bool) (domain.UpdatedCase, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if severity != nil || workState != nil || resolution != nil {

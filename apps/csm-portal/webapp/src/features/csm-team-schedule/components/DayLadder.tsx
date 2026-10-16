@@ -22,6 +22,7 @@ import type { ScheduleAbsence, ScheduleAbsenceKind, ScheduleAssignment, Schedule
 import {
   dayLabel,
   groupBy,
+  HALF_DAY_LEAVE_CODES,
   initialsOf,
   partsInZone,
   placeOnDay,
@@ -86,6 +87,10 @@ export interface LadderLane {
    * scanning; off a labelled row it is immediate.
    */
   layout?: "flat" | "zone";
+  /** The zone's tiers are one crew for every team (SaaS TZ3, the night
+   *  cover): its escalation card is titled as such, and each person on it
+   *  says which team they are on, since the crew mixes them. */
+  shared?: boolean;
 }
 
 interface DayLadderProps {
@@ -147,6 +152,14 @@ interface Block {
   /** The sections are the escalation ladder, L1 to L3: every tier is shown,
    *  empty ones included, each ruled off from the next. */
   tiered?: boolean;
+  /** Each person carries their team's name: the card is one crew drawn from
+   *  several teams (the night cover), and the avatar colour alone does not
+   *  say which. */
+  teamTags?: boolean;
+  /** List the people under a heading per team, as the Leave card does: a
+   *  zone's regular hours mix teams, and the avatar colour alone does not say
+   *  where one ends and the next begins. */
+  byTeam?: boolean;
 }
 
 /** The escalation tiers, in the order the rota talks about them. */
@@ -424,6 +437,7 @@ export default function DayLadder({
         ...c,
         title: `Others in ${lane.name}`,
         hideTags: true,
+        byTeam: true,
       }));
       // A zone whose regular hours are the same stretch as its escalation
       // window -- TZ3, 21:00-06:00, with no middle of the day to cover -- is
@@ -431,7 +445,9 @@ export default function DayLadder({
       // regular-hours people become a last section of the escalation card.
       // TZ1 and TZ2 work regular hours wider than their escalation block, so
       // theirs stay cards of their own.
-      const escalation = escalationCards(lane.name, tiered);
+      const escalation = escalationCards(lane.name, tiered).map((c) =>
+        lane.shared ? { ...c, title: "Night cover", teamTags: true } : c,
+      );
       const apart = others.filter((o) => {
         const same = escalation.find((e) => e.startMin === o.startMin && e.endMin === o.endMin);
         if (!same) return true;
@@ -667,6 +683,7 @@ function LadderBlock({
   tz: string;
   teamDefaultShift?: Readonly<Record<string, string>>;
 }): JSX.Element {
+  const teamNameOf = useTeamName();
   const token = block.chipToken ?? block.shift?.colourToken ?? "";
   const first = block.rows[0];
   // Who works the hours, then who is only on call for them. Among those who
@@ -758,7 +775,7 @@ function LadderBlock({
               {section.list.map((a) => (
                 // The tier is the row's heading, so repeating it against every
                 // name costs width that the name itself needs.
-                <NameRow key={a.id} assignment={a} hideTag />
+                <NameRow key={a.id} assignment={a} hideTag showTeam={block.teamTags} />
               ))}
               {section.list.length === 0 ? <span className="gap">Nobody rostered</span> : null}
             </div>
@@ -774,6 +791,25 @@ function LadderBlock({
             {crowded ? (
               <div className="zwork">
                 <TeamSplit rows={working} />
+              </div>
+            ) : shown.length > 0 && block.byTeam ? (
+              <div className="zwork">
+                {/* A heading per team, then its names, the way the Leave card
+                    lists who is away. */}
+                {[...groupBy(shown, (a) => a.teamKey).entries()].map(([team, teamRows]) => (
+                  <div className="zteam" key={team}>
+                    <div className="offgh">
+                      {teamNameOf(team)}
+                      <b>{teamRows.length}</b>
+                    </div>
+                    <div className="zsec zflow">
+                      {teamRows.map((a) => (
+                        <NameRow key={a.id} assignment={a} hideTag={block.hideTags} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {hidden > 0 ? <span className="lmore">+{hidden} more</span> : null}
               </div>
             ) : shown.length > 0 ? (
               <div className="zwork">
@@ -889,11 +925,15 @@ function TeamSplit({ rows }: { rows: ScheduleAssignment[] }): JSX.Element {
 function NameRow({
   assignment,
   hideTag,
+  showTeam,
 }: {
   assignment: ScheduleAssignment;
   /** Inside a team pane the team is already the heading, so repeating it on
    *  every row would be noise. */
   hideTag?: boolean;
+  /** Spell the team out after the name: on a card that mixes teams (the
+   *  night cover) it is the thing the reader is looking for. */
+  showTeam?: boolean;
 }): JSX.Element {
   const teamColourOf = useTeamColour();
   const teamNameOf = useTeamName();
@@ -910,6 +950,7 @@ function NameRow({
       </span>
       <span className="who">{assignment.engineer.name}</span>
       {assignment.engineer.isLead ? <i className="tag lead-t">Lead</i> : null}
+      {showTeam ? <i className="tag team-t">{teamNameOf(assignment.teamKey)}</i> : null}
       {hideTag || !tag ? null : (
         <i className={`tier-t${assignment.isOnCall ? " oc-t" : ""}`}>{tag}</i>
       )}
@@ -943,6 +984,12 @@ function OffRotaStack({
   // about the gap it leaves, a card per kind split one question ("who is
   // away?") across several, and the kind -- maternity, sick -- is the
   // person's own business on a view the whole team reads.
+  //
+  // A half day is the exception: still off the rota for the day, but which
+  // half they are away is what a lead needs to reach them, and it says
+  // nothing private. Its chip (HD-AM / HD-PM) sits beside the name.
+  const halfDayOf = (kindCode: string): ScheduleAbsenceKind | undefined =>
+    HALF_DAY_LEAVE_CODES.has(kindCode) ? kinds.find((k) => k.code === kindCode) : undefined;
   const BUCKET_ORDER: Record<string, number> = { LEAVE: 0, ALLOCATION: 1, EXCLUDED: 2 };
   const leaveCodes = new Set(kinds.filter((k) => k.bucket === "LEAVE").map((k) => k.code));
   const leaveRows = absences.filter((a) => leaveCodes.has(a.kindCode));
@@ -988,14 +1035,22 @@ function OffRotaStack({
                     <b>{teamRows.length}</b>
                   </div>
                   <div className="offp">
-                    {teamRows.map((r) => (
-                      <span className="lnm" key={r.id} title={r.engineer.name}>
-                        <span className="av" style={{ background: teamColourOf(r.teamKey) }}>
-                          {initialsOf(r.engineer.name)}
+                    {teamRows.map((r) => {
+                      const half = halfDayOf(r.kindCode);
+                      return (
+                        <span
+                          className="lnm"
+                          key={r.id}
+                          title={half ? `${r.engineer.name} · ${half.label}` : r.engineer.name}
+                        >
+                          <span className="av" style={{ background: teamColourOf(r.teamKey) }}>
+                            {initialsOf(r.engineer.name)}
+                          </span>
+                          <span className="who">{r.engineer.name}</span>
+                          {half ? <span className={`chip sm hdflag ${half.colourToken}`}>{half.shortCode}</span> : null}
                         </span>
-                        <span className="who">{r.engineer.name}</span>
-                      </span>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))

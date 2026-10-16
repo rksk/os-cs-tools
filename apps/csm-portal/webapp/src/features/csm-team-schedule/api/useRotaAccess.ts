@@ -1,0 +1,82 @@
+/**
+ * Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { useBackendApi } from "@api/backend/client";
+import type { RotaAccess, RotaFamily } from "../types";
+
+const ROTA_ACCESS_KEY = ["team-schedule", "rota-access"] as const;
+
+/** Somebody who may change nothing: no tab. */
+export const NO_ROTA_ACCESS: RotaAccess = {
+  canManage: { rotaAdmins: false, markerFamilies: [] },
+  rotaAdmins: [],
+  markers: [],
+};
+
+/** Whether the reader may change anything on the Rota access tab. */
+export function canManageRotaAccess(access: RotaAccess | undefined): boolean {
+  return Boolean(access && (access.canManage.rotaAdmins || access.canManage.markerFamilies.length > 0));
+}
+
+/**
+ * Who holds a rota admin role or marks a team's rota, and what the reader may
+ * change. The page asks it to decide whether to show the tab: the server
+ * answers an empty tab, not a refusal, for somebody who may change nothing.
+ */
+export function useRotaAccess(): UseQueryResult<RotaAccess, Error> {
+  const api = useBackendApi();
+  return useQuery<RotaAccess, Error>({
+    queryKey: ROTA_ACCESS_KEY,
+    queryFn: async () => (await api.get<RotaAccess>("/team-schedule/rota-access")) ?? NO_ROTA_ACCESS,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** One grant or removal: a family's rota admin, or a team's rota marker. */
+export type RotaAccessChange =
+  | { kind: "admin"; family: RotaFamily; userId: string; grant: boolean }
+  | { kind: "marker"; teamKey: string; userId: string; grant: boolean };
+
+function changePath(c: RotaAccessChange): string {
+  const scope = c.kind === "admin" ? `admins/${c.family}` : `markers/${encodeURIComponent(c.teamKey)}`;
+  return `/team-schedule/rota-access/${scope}/${encodeURIComponent(c.userId)}`;
+}
+
+/**
+ * Grant or remove rota access. Afterwards the tab is read again, and so is
+ * which teams the reader may edit -- a reader who changed their own access
+ * should see the roster agree.
+ */
+export function useChangeRotaAccess(): UseMutationResult<unknown, Error, RotaAccessChange> {
+  const api = useBackendApi();
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, RotaAccessChange>({
+    mutationFn: (c) => (c.grant ? api.put<Record<string, never>, unknown>(changePath(c), {}) : api.del(changePath(c))),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ROTA_ACCESS_KEY });
+      void qc.invalidateQueries({ queryKey: ["team-schedule", "my-lead-teams"] });
+    },
+  });
+}

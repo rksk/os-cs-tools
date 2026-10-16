@@ -337,6 +337,119 @@ func blockAttrs(z *xhtml.Tokenizer, hasAttr bool) string {
 	return align
 }
 
+// emailStyleProperties is the allow-list for an announcement's inline styles:
+// presentation only, nothing that positions, hides or loads anything.
+var emailStyleProperties = map[string]bool{
+	"color": true, "background": true, "background-color": true,
+	"border": true, "border-top": true, "border-right": true, "border-bottom": true, "border-left": true,
+	"border-color": true, "border-style": true, "border-width": true, "border-radius": true,
+	"padding": true, "padding-top": true, "padding-right": true, "padding-bottom": true, "padding-left": true,
+	"margin": true, "margin-top": true, "margin-right": true, "margin-bottom": true, "margin-left": true,
+	"font-weight": true, "font-style": true, "font-size": true, "line-height": true,
+	"text-align": true, "text-decoration": true, "box-shadow": true,
+	"width": true, "max-width": true,
+}
+
+// emailStyleValue is what a style value may be made of: colours, lengths,
+// keywords and function arguments (rgba(...), linear-gradient(...)). No quotes,
+// semicolons, colons, backslashes, braces, angle brackets or "@", so a value
+// can neither leave its declaration nor its attribute.
+var emailStyleValue = regexp.MustCompile(`^[#A-Za-z0-9\s.,%()+\-/!]{1,200}$`)
+
+// emailStyleDenied are substrings that make a value unsafe even though it
+// passes emailStyleValue: anything that fetches a resource or runs script.
+var emailStyleDenied = []string{"url(", "expression", "javascript", "image-set", "var(", "attr(", "behavior", "-moz-binding"}
+
+// safeInlineStyle reduces a style attribute to the declarations in
+// emailStyleProperties whose values pass emailStyleValue, rebuilt as
+// "name:value;" pairs. Anything else is dropped, never repaired.
+func safeInlineStyle(raw string) string {
+	var out strings.Builder
+	for _, decl := range strings.Split(raw, ";") {
+		name, value, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		value = strings.TrimSpace(value)
+		if !emailStyleProperties[name] || !emailStyleValue.MatchString(value) {
+			continue
+		}
+		lower := strings.ToLower(value)
+		denied := false
+		for _, bad := range emailStyleDenied {
+			if strings.Contains(lower, bad) {
+				denied = true
+				break
+			}
+		}
+		if denied {
+			continue
+		}
+		out.WriteString(name + ":" + value + ";")
+	}
+	return out.String()
+}
+
+// hasPresentationStyles reports whether s has a div, p, span or a whose style
+// attribute keeps, after safeInlineStyle, anything beyond text-align (which the
+// rich editor itself produces and the plain rules already handle).
+func hasPresentationStyles(s string) bool {
+	if !strings.Contains(s, "style") {
+		return false
+	}
+	z := xhtml.NewTokenizer(strings.NewReader(s))
+	for {
+		switch z.Next() {
+		case xhtml.ErrorToken:
+			return false
+		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
+			name, hasAttr := z.TagName()
+			switch string(name) {
+			case "div", "p", "span", "a":
+			default:
+				drainAttrs(z, hasAttr)
+				continue
+			}
+			for hasAttr {
+				var key, val []byte
+				key, val, hasAttr = z.TagAttr()
+				if string(key) != "style" {
+					continue
+				}
+				for _, decl := range strings.Split(safeInlineStyle(string(val)), ";") {
+					if prop, _, ok := strings.Cut(decl, ":"); ok && prop != "text-align" {
+						return true
+					}
+				}
+			}
+		}
+	}
+}
+
+// inlineStyleAttr consumes the current tag's attributes and returns its
+// safeInlineStyle (every other attribute is dropped).
+func inlineStyleAttr(z *xhtml.Tokenizer, hasAttr bool) string {
+	style := ""
+	for hasAttr {
+		var key, val []byte
+		key, val, hasAttr = z.TagAttr()
+		if string(key) == "style" {
+			style = safeInlineStyle(string(val))
+		}
+	}
+	return style
+}
+
+// styleAttrHTML is the ` style="..."` attribute for an already-sanitised style,
+// or nothing when there is none.
+func styleAttrHTML(style string) string {
+	if style == "" {
+		return ""
+	}
+	return ` style="` + escapeHTML(style) + `"`
+}
+
 // voidElements are the HTML elements that never have a close tag. The
 // tokenizer reports them as plain start tags, so without an explicit case a
 // <col>/<hr>/... would be pushed on sanitizeRichText's stack and never
@@ -455,6 +568,25 @@ func trimBoundaryBreaks(s string) string {
 }
 
 func sanitizeRichText(s string, budget *inlineImageBudget) (string, []InlineImage) {
+	return sanitizeRichTextMode(s, budget, false)
+}
+
+// sanitizeAnnouncementRichText is sanitizeRichText for an announcement's body,
+// which is authored as styled HTML (a bordered, shaded advisory box, coloured
+// links, spaced paragraphs) rather than typed into the comment editor. It adds
+// to the allow-list above, and only for announcements:
+//   - p, div, span and a keep a style attribute reduced to safeInlineStyle's
+//     allow-list of presentation properties (no url(), no positioning)
+//   - p and div become real blocks (<p> with a bottom margin, <div>) instead
+//     of closing as "<br>", so the box and the spacing between paragraphs show
+//
+// Everything else, including every security rule above (link schemes, inline
+// images, unknown tags reduced to their text), is unchanged.
+func sanitizeAnnouncementRichText(s string, budget *inlineImageBudget) (string, []InlineImage) {
+	return sanitizeRichTextMode(s, budget, true)
+}
+
+func sanitizeRichTextMode(s string, budget *inlineImageBudget, keepStyles bool) (string, []InlineImage) {
 	z := xhtml.NewTokenizer(strings.NewReader(s))
 	var b bytes.Buffer
 	var stack []openTag
@@ -549,7 +681,22 @@ func sanitizeRichText(s string, budget *inlineImageBudget) (string, []InlineImag
 
 			switch tag {
 			case "p", "div":
-				if align := blockAttrs(z, hasAttr); align != "" {
+				// A table cell keeps the plain rule: its own paragraph breaks are
+				// trimmed so a row does not grow an empty line (see closeTopTag).
+				inCell := false
+				for _, open := range stack {
+					inCell = inCell || open.cell
+				}
+				if keepStyles && !inCell {
+					style := inlineStyleAttr(z, hasAttr)
+					if tag == "p" {
+						b.WriteString(`<p style="margin:0 0 12px;` + style + `">`)
+						stack = append(stack, openTag{name: tag, out: "</p>"})
+					} else {
+						b.WriteString(`<div` + styleAttrHTML(style) + `>`)
+						stack = append(stack, openTag{name: tag, out: "</div>"})
+					}
+				} else if align := blockAttrs(z, hasAttr); align != "" {
 					// An aligned paragraph needs a real block to carry the
 					// alignment; its trailing <br> inside the block adds no
 					// extra line, so spacing matches an unaligned one.
@@ -610,17 +757,35 @@ func sanitizeRichText(s string, budget *inlineImageBudget) (string, []InlineImag
 				}
 				b.WriteString(open)
 				stack = append(stack, openTag{name: tag, out: "</" + tag + ">", cell: true, cellStart: b.Len()})
+			case "span":
+				style := ""
+				if keepStyles {
+					style = inlineStyleAttr(z, hasAttr)
+				} else {
+					drainAttrs(z, hasAttr)
+				}
+				if style != "" {
+					b.WriteString(`<span` + styleAttrHTML(style) + `>`)
+					stack = append(stack, openTag{name: tag, out: "</span>"})
+				} else {
+					stack = append(stack, openTag{name: tag})
+				}
 			case "a":
-				var href string
+				var href, style string
 				for hasAttr {
 					var key, val []byte
 					key, val, hasAttr = z.TagAttr()
-					if string(key) == "href" {
+					switch string(key) {
+					case "href":
 						href = string(val)
+					case "style":
+						if keepStyles {
+							style = safeInlineStyle(string(val))
+						}
 					}
 				}
 				if isSafeLinkHref(href) {
-					b.WriteString(`<a href="` + escapeHTML(href) + `">`)
+					b.WriteString(`<a href="` + escapeHTML(href) + `"` + styleAttrHTML(style) + `>`)
 					stack = append(stack, openTag{name: tag, out: "</a>"})
 				} else {
 					stack = append(stack, openTag{name: tag})
@@ -833,7 +998,14 @@ func RenderCaseCreatedEmail(data CaseCreatedEmailData) (string, []InlineImage) {
 	// inlineImageBudget's own doc comment for why a fresh one per call
 	// would let each field independently max out.
 	budget := &inlineImageBudget{}
-	description, descImages := sanitizeRichText(data.Description, budget)
+	// An announcement whose body carries real styling (a box, colours, spacing)
+	// keeps it; every other email, and an announcement typed in the rich editor
+	// (no styling beyond alignment), goes through the plain rules unchanged.
+	sanitizeDescription := sanitizeRichText
+	if strings.EqualFold(strings.TrimSpace(data.CaseType), "Announcement") && hasPresentationStyles(data.Description) {
+		sanitizeDescription = sanitizeAnnouncementRichText
+	}
+	description, descImages := sanitizeDescription(data.Description, budget)
 	impact, impactImages := sanitizeRichText(data.IncidentImpactDescription, budget)
 	replacer := strings.NewReplacer(
 		"<!-- [INTENDED_FOR] -->", escapeHTML(data.IntendedFor),

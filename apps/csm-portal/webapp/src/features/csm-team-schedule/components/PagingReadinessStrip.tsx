@@ -78,14 +78,14 @@ export default function PagingReadinessStrip({
 
   if (isLoading) {
     return (
-      <section className="cp-ready" aria-label={`${name} paging readiness`}>
+      <section className="cp-ready" aria-label={`${name} alert readiness`}>
         <p className="cp-ready-head">Checking the {name} alert chain…</p>
       </section>
     );
   }
   if (isError || !chain) {
     return (
-      <section className="cp-ready" aria-label={`${name} paging readiness`}>
+      <section className="cp-ready" aria-label={`${name} alert readiness`}>
         <p className="cp-ready-head">
           {isError
             ? `Could not check whether the ${name} alert chain is ready.`
@@ -143,7 +143,7 @@ export default function PagingReadinessStrip({
   };
 
   return (
-    <section className={`cp-ready ${chain.ready ? "ok" : "gap"}`} aria-label={`${name} paging readiness`}>
+    <section className={`cp-ready ${chain.ready ? "ok" : "gap"}`} aria-label={`${name} alert readiness`}>
       <p className="cp-ready-head">
         <b>{name}</b> — {head}
       </p>

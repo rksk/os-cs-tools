@@ -227,6 +227,35 @@ describe("widget preview URL — filter op round-trip", () => {
     expect(href).not.toContain("~");
   });
 
+  it("adds up repeated notIn entries on one field instead of keeping only the last", () => {
+    // "No patch tickets" and "no dip tickets" as two entries mean "neither".
+    const parsed = roundTrip([
+      { field: "tag", op: "notIn", values: ["patch"] },
+      { field: "tag", op: "notIn", values: ["s_dip", "patch"] },
+    ]);
+    const entries = (parsed.filters as { filters: unknown[] }).filters;
+    expect(entries).toEqual([{ field: "tag", op: "notIn", values: ["patch", "s_dip"] }]);
+  });
+
+  it("adds up repeated notIn entries for a non-case resourceType's own filters array too", () => {
+    const href = buildWidgetPreviewHref({
+      previewSlug: "incidents",
+      widgetId: "w1",
+      displayName: "W",
+      filters: {
+        filters: [
+          { field: "state", op: "notIn", values: ["CLOSED"] },
+          { field: "state", op: "notIn", values: ["RESOLVED"] },
+        ],
+      },
+      resourceType: "incident",
+    });
+    const parsed = parseWidgetPreviewFilters(new URLSearchParams(href.split("?")[1] ?? ""));
+    expect((parsed.filters as { filters: unknown[] }).filters).toEqual([
+      { field: "state", op: "notIn", values: ["CLOSED", "RESOLVED"] },
+    ]);
+  });
+
   it("round-trips a mixed filter set faithfully", () => {
     const input = [
       { field: "state", op: "in", values: ["open", "reopened"] },
@@ -374,6 +403,25 @@ describe("describeWidgetFilters", () => {
 
   it("returns an empty list for empty/absent filters", () => {
     expect(describeWidgetFilters({})).toEqual([]);
+  });
+
+  it("lists a handful of values and summarises a long list by its count", () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `id-${i}`);
+
+    expect(
+      describeWidgetFilters({
+        filters: [
+          { field: "state", op: "in", values: ["a", "b", "c", "d", "e", "f"] },
+          { field: "businessServiceId", op: "in", values: ids },
+        ],
+      }),
+    ).toEqual([
+      { field: "state", op: undefined, value: "a, b, c, d, e, f" },
+      { field: "businessServiceId", op: undefined, value: "50 values" },
+    ]);
+    expect(describeWidgetFilters({ serviceIds: ids })).toEqual([
+      { field: "serviceIds", value: "50 values" },
+    ]);
   });
 });
 

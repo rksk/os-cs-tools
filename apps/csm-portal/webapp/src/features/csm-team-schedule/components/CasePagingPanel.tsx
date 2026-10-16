@@ -27,6 +27,7 @@ import type {
   PagingReadinessChain,
   PagingReadinessGap,
 } from "../types";
+import { mayBeResponder, responderNeedsProfilePhoneMessage } from "../utils/pagingPhone";
 import { teamDisplayName } from "../utils/teamDisplayName";
 import PagingReadinessStrip, { type PhoneGapAction } from "./PagingReadinessStrip";
 import PhoneChip, { type PagingPhoneControls } from "./PhoneChip";
@@ -380,6 +381,14 @@ export default function CasePagingPanel({
                               allowed: mayResponders(t.key),
                               onPick: (next) => {
                                 const holder = t.members.find((m) => m.responderRank === r);
+                                // A responder must be reachable: someone with
+                                // no number on their profile is refused here,
+                                // before asking (the backend refuses it too).
+                                const picked = next ? t.members.find((m) => m.membershipId === next) : undefined;
+                                if (picked && !mayBeResponder(picked)) {
+                                  showError(`That change to the alert chain was not saved. ${responderNeedsProfilePhoneMessage(nameOf(picked) ?? "This person")}.`);
+                                  return;
+                                }
                                 void apply(
                                   next
                                     ? [{ membershipId: next, responderRank: r }]
@@ -504,8 +513,8 @@ export default function CasePagingPanel({
                 {abtTeams.length > 0 ? (
                   <td colSpan={abtTeams.length} className="cp-pool">
                     <span className="cp-name">Team leads pool</span>
-                    <div className="cp-note">The ABT Team leads above, longest since paged first</div>
-                    <div className="cp-note">How many it pages is set in the paging configuration, not here.</div>
+                    <div className="cp-note">The ABT Team leads above, longest since called first</div>
+                    <div className="cp-note">How many it calls is set in the alert configuration, not here.</div>
                   </td>
                 ) : null}
                 {nightTeams.map((t) => {

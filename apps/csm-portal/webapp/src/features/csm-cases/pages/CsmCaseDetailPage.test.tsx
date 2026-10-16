@@ -16,7 +16,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { JSX } from "react";
+import { useEffect, type JSX } from "react";
 import {
   MemoryRouter,
   Route,
@@ -335,16 +335,24 @@ vi.mock("@features/csm-cases/api/useGetCsmCaseSlas", () => ({
 vi.mock("@features/csm-cases/api/useCreateCaseTask", () => ({
   useCreateCaseTask: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+// The Git-issue success handler adds each tag with `mutateAsync`, so the stub
+// exposes one shared mock the tests below can inspect.
+const addTagMutateAsyncMock = vi.fn();
 vi.mock("@features/csm-cases/api/useCaseTags", () => ({
-  useAddCaseTag: () => ({ mutate: vi.fn(), isPending: false }),
+  useAddCaseTag: () => ({
+    mutate: vi.fn(),
+    mutateAsync: addTagMutateAsyncMock,
+    isPending: false,
+  }),
   useRemoveCaseTag: () => ({
     mutate: vi.fn(),
     isPending: false,
     variables: undefined,
   }),
 }));
+const postGithubIssueMutateMock = vi.fn();
 vi.mock("@features/csm-cases/api/useCsmCaseGithubIssue", () => ({
-  usePostCaseGithubIssue: () => ({ mutate: vi.fn(), isPending: false }),
+  usePostCaseGithubIssue: () => ({ mutate: postGithubIssueMutateMock, isPending: false }),
 }));
 vi.mock("@features/csm-cases/api/useGetCsmCaseEscalations", () => ({
   useGetCsmCaseEscalations: () => ({
@@ -428,6 +436,15 @@ vi.mock("@features/csm-cases/components/CaseActionBar", () => ({
       </button>
       <button type="button" onClick={() => onAction({ secondary: "set_fix_eta" })}>
         stub open set fix eta
+      </button>
+      <button type="button" onClick={() => onAction({ secondary: "raise_git_issue" })}>
+        stub open raise git issue
+      </button>
+      <button
+        type="button"
+        onClick={() => onAction("assign_to_me", "work_in_progress")}
+      >
+        stub assign to me
       </button>
       <button type="button" onClick={() => onAction("request_info", "awaiting_info")}>
         stub request info
@@ -581,8 +598,17 @@ vi.mock("@features/csm-cases/components/LinkedChangeRequestsWidget", () => ({
     <div data-testid="linked-change-requests-widget-probe" />
   ),
 }));
+// Captures the props the page hands the dialog so a test can submit it the way
+// the real dialog does (the dialog's own behaviour is covered in
+// CreateGithubIssueDialog.test.tsx).
+let githubDialogProps: { onSubmit: (payload: Record<string, unknown>) => void } | undefined;
 vi.mock("@features/csm-cases/components/CreateGithubIssueDialog", () => ({
-  CreateGithubIssueDialog: () => null,
+  CreateGithubIssueDialog: (props: {
+    onSubmit: (payload: Record<string, unknown>) => void;
+  }) => {
+    githubDialogProps = props;
+    return <div data-testid="create-github-issue-dialog-probe" />;
+  },
 }));
 // Probe, not `null`: several tests below assert on the comments the page
 // hands this feed (including the synthetic description entry — see
@@ -590,11 +616,16 @@ vi.mock("@features/csm-cases/components/CreateGithubIssueDialog", () => ({
 // author name / body / role-chip-suppression to actually render. The feed's
 // own layout/filtering/sorting is covered in CaseActivitiesFeed.test.tsx.
 vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
-  default: ({
+  default: function CaseActivitiesFeedProbe({
     comments,
     onEditComment,
     onDeleteComment,
+    entryWindow,
   }: {
+    entryWindow?: {
+      limit: number;
+      onStatusChange?: (s: { total: number; shown: number }) => void;
+    };
     comments: Array<{
       id: string;
       authorName: string;
@@ -604,9 +635,18 @@ vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
     }>;
     onEditComment?: unknown;
     onDeleteComment?: unknown;
-  }) => (
+  }) {
+    // Stands in for the real feed's status report: pretend the case has 120
+    // entries so the page's "Load all" button has something to hide/show.
+    const shown = Math.min(entryWindow?.limit ?? 120, 120);
+    const onStatusChange = entryWindow?.onStatusChange;
+    useEffect(() => {
+      onStatusChange?.({ total: 120, shown });
+    }, [onStatusChange, shown]);
+    return (
     <div
       data-testid="case-activities-feed-probe"
+      data-limit={String(entryWindow?.limit)}
       data-can-edit={String(!!onEditComment)}
       data-can-delete={String(!!onDeleteComment)}
     >
@@ -620,7 +660,8 @@ vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
         </div>
       ))}
     </div>
-  ),
+    );
+  },
 }));
 vi.mock("@features/csm-cases/components/CaseMetaBand", () => ({
   default: () => null,
@@ -1820,6 +1861,28 @@ describe("CsmCaseDetailPage — role-based controls", () => {
     }
   });
 
+  it("windows the activity timeline to 50 entries, and 'Load all' (left of Refresh) lifts the window then hides", () => {
+    renderPage();
+    const feed = screen.getByTestId("case-activities-feed-probe");
+    expect(feed).toHaveAttribute("data-limit", "50");
+
+    const loadAll = screen.getByRole("button", { name: "Load all activity timeline entries" });
+    const refresh = screen.getByRole("button", { name: "Refresh activity timeline" });
+    // Immediately to the left of Refresh.
+    expect(
+      loadAll.compareDocumentPosition(refresh) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(loadAll);
+    expect(screen.getByTestId("case-activities-feed-probe")).toHaveAttribute(
+      "data-limit",
+      "Infinity",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Load all activity timeline entries" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("a viewer's own note offers no edit or delete (both are write-only on the backend)", () => {
     for (const [role, expected] of [["viewer", "false"], ["cs_engineer", "true"]] as const) {
       currentUserRoles.value = [role];
@@ -2145,6 +2208,98 @@ describe("CsmCaseDetailPage — Linked change requests widget only shows on serv
     expect(
       screen.getByTestId("linked-change-requests-widget-probe"),
     ).toBeInTheDocument();
+  });
+});
+
+// "Assign to me" on a stale view: another engineer already moved the case to
+// Work in progress. The assignment PATCH would land even though the follow-up
+// state move is rejected, so the page must re-read the case and refuse before
+// sending any write.
+describe("CsmCaseDetailPage — Assign to me guards against a stale view", () => {
+  beforeEach(() => {
+    patchCaseMutateMock.mockClear();
+    showErrorMock.mockClear();
+  });
+
+  function mockStaleView(fresh: unknown): ReturnType<typeof vi.fn> {
+    const refetch = vi.fn().mockResolvedValue(fresh);
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      ...(defaultCaseDetailImpl(id) as object),
+      refetch,
+    }));
+    return refetch;
+  }
+
+  it("sends no PATCH and names the engineer when the fresh case is already in progress with someone else", async () => {
+    const refetch = mockStaleView({
+      isError: false,
+      data: {
+        ...buildCase("case-1", { state: "work_in_progress" }),
+        assignee: "John Smith",
+        assigneeName: "John Smith",
+        assigneeIsMe: false,
+      },
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /stub assign to me/i }));
+
+    await waitFor(() =>
+      expect(showErrorMock).toHaveBeenCalledWith(
+        "This case is already in progress with John Smith. Refresh to see the latest state.",
+      ),
+    );
+    expect(refetch).toHaveBeenCalled();
+    expect(patchCaseMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to 'another engineer' when the assignee has no name", async () => {
+    mockStaleView({
+      isError: false,
+      data: buildCase("case-1", { state: "work_in_progress" }),
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /stub assign to me/i }));
+
+    await waitFor(() =>
+      expect(showErrorMock).toHaveBeenCalledWith(
+        "This case is already in progress with another engineer. Refresh to see the latest state.",
+      ),
+    );
+    expect(patchCaseMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("sends no PATCH when the fresh read fails, rather than writing blind", async () => {
+    mockStaleView({
+      isError: true,
+      data: buildCase("case-1", { state: "open" }),
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /stub assign to me/i }));
+
+    await waitFor(() =>
+      expect(showErrorMock).toHaveBeenCalledWith(
+        "Couldn't check the latest state of this case. Please try again.",
+      ),
+    );
+    expect(patchCaseMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("still assigns the case when the fresh read shows it is not in progress", async () => {
+    mockStaleView({ isError: false, data: buildCase("case-1", { state: "open" }) });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /stub assign to me/i }));
+
+    await waitFor(() =>
+      expect(patchCaseMutateMock).toHaveBeenCalledWith(
+        { assigneeEmail: "jane.doe@example.com" },
+        expect.anything(),
+      ),
+    );
+    expect(showErrorMock).not.toHaveBeenCalled();
   });
 });
 
@@ -2592,5 +2747,184 @@ describe("CsmCaseDetailPage — fix-ETA stale-callback guard", () => {
       { internal: boolean },
     ];
     expect(commentInput.internal).toBe(false);
+  });
+});
+
+// Filing a Git issue from the case tags the case afterwards. The page used to
+// build that list inline with a mistyped first tag, and no test ever drove the
+// success handler, so these go through the real page: open the dialog the way
+// the action menu does, submit it, and resolve the Git issue request.
+describe("CsmCaseDetailPage — case tags added once a Git issue is filed", () => {
+  type GithubIssueCallOptions = {
+    onSuccess: (res: unknown) => void;
+    onError: (err: unknown) => void;
+  };
+
+  beforeEach(() => {
+    postGithubIssueMutateMock.mockReset();
+    addTagMutateAsyncMock.mockReset();
+    addTagMutateAsyncMock.mockResolvedValue(undefined);
+    showErrorMock.mockClear();
+    githubDialogProps = undefined;
+  });
+
+  /** Opens the dialog, submits `payload`, and returns what the page sent to the Git issue request. */
+  function submitGithubIssue(payload: Record<string, unknown>): {
+    variables: Record<string, unknown>;
+    options: GithubIssueCallOptions;
+  } {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /stub open raise git issue/i }));
+    expect(screen.getByTestId("create-github-issue-dialog-probe")).toBeInTheDocument();
+    act(() => {
+      githubDialogProps?.onSubmit(payload);
+    });
+    expect(postGithubIssueMutateMock).toHaveBeenCalledTimes(1);
+    const [variables, options] = postGithubIssueMutateMock.mock.calls[0] as [
+      Record<string, unknown>,
+      GithubIssueCallOptions,
+    ];
+    return { variables, options };
+  }
+
+  const issueCreated = {
+    message: "created",
+    issue: { url: "https://github.com/example/example/issues/1", number: 1, repo: "example" },
+  };
+
+  const addedTags = (): unknown[] => addTagMutateAsyncMock.mock.calls.map(([label]) => label);
+
+  it("sends the submitted payload for this case, and adds no tag until the issue exists", () => {
+    const { variables } = submitGithubIssue({
+      reason: "default",
+      title: "A title",
+      description: "A description",
+    });
+
+    expect(variables).toEqual({
+      caseId: expect.any(String),
+      reason: "default",
+      title: "A title",
+      description: "A description",
+    });
+    expect(addTagMutateAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("tags the case s_dip, and nothing else, for a plain Git issue", async () => {
+    const { options } = submitGithubIssue({ reason: "default", title: "t", description: "d" });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["s_dip"]);
+    expect(addedTags()).not.toContain("s_dp");
+    expect(showErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("tags the case patch, not s_dip, for a patch Git issue", async () => {
+    const { options } = submitGithubIssue({
+      reason: "default",
+      issueTypeLabel: "Type/Patch",
+      title: "t",
+      description: "d",
+    });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["patch"]);
+    expect(showErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("tags the case s_dip, not patch, for a discussion Git issue", async () => {
+    const { options } = submitGithubIssue({
+      reason: "default",
+      issueTypeLabel: "Type/Discussion",
+      title: "t",
+      description: "d",
+    });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["s_dip"]);
+  });
+
+  it("adds s_rg and migration after patch for a patch regression filed as a migration issue", async () => {
+    const { options } = submitGithubIssue({
+      reason: "migration",
+      regression: true,
+      issueTypeLabel: "Type/Patch",
+      title: "t",
+      description: "d",
+    });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["patch", "s_rg", "migration"]);
+  });
+
+  it("also adds s_rg for a regression and migration for a migration issue, after s_dip", async () => {
+    const { options } = submitGithubIssue({
+      reason: "migration",
+      regression: true,
+      title: "t",
+      description: "d",
+    });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["s_dip", "s_rg", "migration"]);
+  });
+
+  it("adds no tag when the Git issue could not be created", async () => {
+    for (const err of [new Error("upstream down"), new BackendApiError(422, "Product is not routable")]) {
+      postGithubIssueMutateMock.mockReset();
+      const { options } = submitGithubIssue({ reason: "default", title: "t", description: "d" });
+
+      await act(async () => {
+        options.onError(err);
+        await Promise.resolve();
+      });
+
+      expect(addTagMutateAsyncMock).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
+  it("keeps adding the other tags, and names the one that failed, when one tag cannot be added", async () => {
+    addTagMutateAsyncMock.mockImplementation(async (label: string) => {
+      if (label === "s_rg") throw new Error("tag service unavailable");
+    });
+    const { options } = submitGithubIssue({
+      reason: "migration",
+      regression: true,
+      title: "t",
+      description: "d",
+    });
+
+    await act(async () => {
+      options.onSuccess(issueCreated);
+      await Promise.resolve();
+    });
+
+    expect(addedTags()).toEqual(["s_dip", "s_rg", "migration"]);
+    expect(showErrorMock).toHaveBeenCalledTimes(1);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      'The GitHub issue was created, but the case tag "s_rg" could not be added.',
+      expect.any(Error),
+    );
   });
 });

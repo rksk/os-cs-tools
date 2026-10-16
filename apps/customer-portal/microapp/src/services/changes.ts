@@ -23,11 +23,13 @@ import type {
   ChangeRequestDto,
   ChangeRequest,
   ChangeRequestsStatsDto,
+  ChangeRequestApprovalsDto,
 } from "@src/types";
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { isProposedTimeAccepted } from "@src/utils/changeRequestProgress";
 
 import {
+  CHANGE_REQUEST_APPROVALS_ENDPOINT,
   CHANGE_REQUEST_DETAILS_ENDPOINT,
   CHANGE_REQUEST_STATS_ENDPOINT,
   PROJECT_CHANGE_REQUESTS_ENDPOINT,
@@ -55,6 +57,12 @@ const getChangeRequest = async (id: string): Promise<ChangeRequest> => {
 
 const getChangeRequestsStats = async (id: string): Promise<ChangeRequestsStatsDto> => {
   return (await apiClient.get<ChangeRequestsStatsDto>(CHANGE_REQUEST_STATS_ENDPOINT(id))).data;
+};
+
+/** The change request's approval stages: the progress timeline's evidence of which steps happened. */
+const getChangeRequestApprovals = async (id: string): Promise<ChangeRequestApprovalsDto> => {
+  const response = (await apiClient.get<ChangeRequestApprovalsDto>(CHANGE_REQUEST_APPROVALS_ENDPOINT(id))).data;
+  return { approvals: Array.isArray(response?.approvals) ? response.approvals : [] };
 };
 
 /* Mappers */
@@ -95,6 +103,8 @@ function toChangeRequest(dto: ChangeRequestDto): ChangeRequest {
     hasCustomerApproved: dto.hasCustomerApproved,
     isProposedTimeAccepted: isProposedTimeAccepted(dto.customerProposal?.answer, dto.state?.id),
     hasCustomerReviewed: dto.hasCustomerReviewed,
+    customerApprovalRequired: dto.customerApprovalRequired,
+    customerReviewRequired: dto.customerReviewRequired,
     assignedTeam: dto.assignedTeam?.label,
     serviceOutage: dto.serviceOutage ?? undefined,
     rollbackPlan: dto.rollbackPlan ?? undefined,
@@ -107,6 +117,9 @@ function toChangeRequest(dto: ChangeRequestDto): ChangeRequest {
 /* Query Options */
 export const changeRequests = {
   get: (id: string) => queryOptions({ queryKey: ["change-request", id], queryFn: () => getChangeRequest(id) }),
+
+  approvals: (id: string) =>
+    queryOptions({ queryKey: ["change-request", id, "approvals"], queryFn: () => getChangeRequestApprovals(id) }),
 
   all: (id: string, body: GetChangeRequestsRquestDto = {}) =>
     queryOptions({

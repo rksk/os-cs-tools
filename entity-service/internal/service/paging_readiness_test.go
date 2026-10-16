@@ -196,7 +196,7 @@ func TestComputePagingReadiness_Envelope(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(chains, []string{"CRE", "SRE_SAAS", "SRE_IAAS", "SME"}) ||
-		!reflect.DeepEqual(labels, []string{"CRE chain", "SaaS SRE chain", "IaaS SRE chain", "SME page"}) {
+		!reflect.DeepEqual(labels, []string{"CRE chain", "SaaS SRE chain", "IaaS SRE chain", "SME chain"}) {
 		t.Errorf("chains %v labels %v", chains, labels)
 	}
 }

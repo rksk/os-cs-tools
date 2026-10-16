@@ -227,3 +227,27 @@ func TestSearchProjects_ValidatesV10Filters(t *testing.T) {
 		})
 	}
 }
+
+// TestSearchProjects_OnboardingOwnerReachesResponse proves the owner survives
+// the domain.Project -> domain.ProjectView mapping and that a project with no
+// owner stays nil without affecting the total.
+func TestSearchProjects_OnboardingOwnerReachesResponse(t *testing.T) {
+	email := "jane.doe@example.com"
+	owner := &domain.PersonRef{ID: "00000000-0000-0000-0000-000000000001", Name: "Jane Doe", Email: &email}
+	repo := &recordingProjectRepo{toReturn: []domain.Project{{ID: "p1", OnboardingOwner: owner}, {ID: "p2"}}}
+	svc := NewProjectService(repo, alwaysUnrestrictedAccess{})
+
+	resp, err := svc.SearchProjects(t.Context(), domain.SearchProjectsRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Total != 2 || len(resp.Projects) != 2 {
+		t.Fatalf("total/len = %d/%d, want 2/2", resp.Total, len(resp.Projects))
+	}
+	if resp.Projects[0].OnboardingOwner == nil || resp.Projects[0].OnboardingOwner.Name != "Jane Doe" {
+		t.Errorf("Projects[0].OnboardingOwner = %+v, want Jane Doe", resp.Projects[0].OnboardingOwner)
+	}
+	if resp.Projects[1].OnboardingOwner != nil {
+		t.Errorf("Projects[1].OnboardingOwner = %+v, want nil", resp.Projects[1].OnboardingOwner)
+	}
+}

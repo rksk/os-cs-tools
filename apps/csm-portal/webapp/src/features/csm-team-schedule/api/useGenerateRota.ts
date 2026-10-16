@@ -29,9 +29,6 @@ export interface GenerateRotaPayload {
   regenerate?: boolean;
   /** YYYY-MM-DD, the first day written. */
   from?: string;
-  /** Team key -> the people chosen to work that team's TZ3 for the month.
-   *  A team left out keeps the usual nights. */
-  nightCrew?: Record<string, string[]>;
 }
 
 export interface GeneratedRotaTurn {
@@ -80,6 +77,7 @@ export function useGenerateRota(): UseMutationResult<GenerateRotaResult, Error, 
       if (result.dryRun) return;
       // The written month, and its lieu leave, are on the roster now.
       void qc.invalidateQueries({ queryKey: ["team-schedule", "assignments"] });
+      // Lieu leave inside a SaaS Night cover move cuts the move: absences too.
       void qc.invalidateQueries({ queryKey: ["team-schedule", "absences"] });
     },
   });

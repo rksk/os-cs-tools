@@ -140,7 +140,11 @@ type CommentAddedPayload struct {
 
 	CaseTitle   string `json:"caseTitle"`
 	CaseComment string `json:"caseComment"`
-	CommentID   string `json:"commentId"`
+	// CaseCommentTruncated -- see CaseCreatedPayload.DescriptionTruncated's
+	// own doc comment; identical reasoning and fix, applied to a comment's
+	// own body instead of a case description.
+	CaseCommentTruncated bool   `json:"caseCommentTruncated,omitempty"`
+	CommentID            string `json:"commentId"`
 	// IsInternalNote is true when this comment is a work note
 	// (domain.CommentTypeWorkNote) — never customer-visible, and Recipients
 	// is already filtered to wso2.com addresses only for this case (see
@@ -197,6 +201,18 @@ type CommentAddedPayload struct {
 	// at all, which csm-notification-service's own slaEngine needs to tell
 	// apart from a real negative.
 	IsSupportEngineerResponse bool `json:"isSupportEngineerResponse"`
+	// CaseType/EngagementType let csm-notification-service route a
+	// frustration-detection Chat alert to the Migration audience instead of
+	// the usual team/Incident Monitor routing, when the comment landed on a
+	// migration engagement -- the one case this routes by engagement type
+	// rather than by team. CaseType mirrors CaseCreatedPayload.CaseType's own
+	// convention (strings.ToUpper(derefString(cv.Type)), e.g. "ENGAGEMENT");
+	// EngagementType is cv.EngagementType's own lowercase value (e.g.
+	// "migration"), unlike CaseType -- kept as-is since it already matches
+	// domain.EngagementTypeMigration's own spelling. Both empty for every
+	// non-engagement case-like type.
+	CaseType       string `json:"caseType,omitempty"`
+	EngagementType string `json:"engagementType,omitempty"`
 }
 
 // KBArticlePublishedPayload is the Payload shape for
@@ -267,6 +283,11 @@ type CaseAcknowledgedPayload struct {
 	// Team — see CaseCreatedPayload's own doc comment.
 	Team             string `json:"team,omitempty"`
 	AcknowledgerName string `json:"acknowledgerName"`
+	// CaseType — see CaseCreatedPayload's own doc comment (the same
+	// strings.ToUpper(req.Type) convention). security_report_analysis never
+	// carries a severity, so csm-notification-service uses this to render a
+	// dedicated ack card with no severity line instead of "Unknown".
+	CaseType string `json:"caseType,omitempty"`
 }
 
 // WorkaroundProvidedPayload is the Payload shape for
@@ -357,7 +378,23 @@ type CaseCreatedPayload struct {
 	Team        string   `json:"team,omitempty"`
 	CreatedAt   string   `json:"createdAt"`
 	Description string   `json:"description"`
-	Recipients  []string `json:"recipients"`
+	// DescriptionTruncated is true when Description had its embedded
+	// base64-encoded inline image(s) stripped out (replaced with a plain
+	// text placeholder) before this event was published -- a raw case
+	// description containing a pasted screenshot can carry several MB of
+	// base64 image data, which once blew past Event Hub's own per-message
+	// size limit and silently failed this entire publish (see this
+	// service's own stripInlineBase64Images for the fix). csm-notification-
+	// service uses this flag to re-fetch the full, untouched description via
+	// GET /cases/{id} -- outside Kafka's size limit entirely -- when
+	// building the notification EMAIL, so the email still shows the
+	// original image(s); the Google Chat card, which never rendered
+	// embedded images from this field to begin with, simply uses
+	// Description as sent. omitempty: false is the normal, unremarkable
+	// case (nothing was stripped) and must read the same as an older
+	// publisher that never sent this field at all.
+	DescriptionTruncated bool     `json:"descriptionTruncated,omitempty"`
+	Recipients           []string `json:"recipients"`
 }
 
 // IncidentCreatedPayload is the Payload shape for TypeIncidentCreated —

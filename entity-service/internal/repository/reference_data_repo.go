@@ -65,6 +65,23 @@ type ProjectTypeRow struct {
 	IsPdpSubscription bool
 }
 
+// cloudSupportProjectTypeName is the one project type whose service-request
+// entitlement is decided by the project's own is_pdp_subscription flag rather
+// than the static project_type columns.
+const cloudSupportProjectTypeName = "Cloud Support"
+
+// srAccessForProject returns the service-request entitlement (write and read
+// share one value) for a project: the project_type's static value, except for
+// Cloud Support, where it is the project's own is_pdp_subscription flag (NULL
+// read as false). This mirrors the backing data source's rule; the static
+// project_type rows stay FALSE for Cloud Support.
+func srAccessForProject(typeName string, static bool, isPdpSubscription *bool) bool {
+	if typeName != cloudSupportProjectTypeName {
+		return static
+	}
+	return isPdpSubscription != nil && *isPdpSubscription
+}
+
 // ReferenceDataRepository backs the choice-list/reference-data reads shared
 // by the project-metadata (GET /projects/{id}/metadata) and system-metadata
 // (GET /metadata) endpoints: project_type rows and Postgres enum labels.
@@ -357,8 +374,8 @@ func (r *referenceDataRepo) GetProjectByID(ctx context.Context, projectID string
 		ID:   *ptID,
 		Name: *ptName,
 
-		HasServiceRequestWriteAccess:   deref(hasSRWrite),
-		HasServiceRequestReadAccess:    deref(hasSRRead),
+		HasServiceRequestWriteAccess:   srAccessForProject(*ptName, deref(hasSRWrite), isPdpSubscription),
+		HasServiceRequestReadAccess:    srAccessForProject(*ptName, deref(hasSRRead), isPdpSubscription),
 		HasChangeRequestReadAccess:     deref(hasCR),
 		HasSraWriteAccess:              deref(hasSraWrite),
 		HasSraReadAccess:               deref(hasSraRead),

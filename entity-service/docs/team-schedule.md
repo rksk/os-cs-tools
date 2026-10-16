@@ -82,6 +82,15 @@ runs as on a weekday: `SRE_TZ3` is `day_scope = 'ANY'`, and TZ3 is its own
 weekend zone. An older database's weekend TZ2 window (`SRE_WE_TZ2`, standing in
 for TZ3) is folded into `SRE_TZ3` by 0154, turns included.
 
+**TZ3 is the SaaS night cover, one crew for every team.** Each night has one
+TZ3 L1, L2 and L3 for the whole `SRE_SAAS` rota, whichever of Apollo or Artemis
+each person is on. The pager calls the incident's own team's holder of a tier
+when there is one and anyone on the rota otherwise, so with one holder per tier
+an Apollo and an Artemis incident at night both reach the same L1 → L2 → L3.
+"Generate month" builds the night that way, weekends included; TZ1, TZ2 and the
+weekend TZ1+2 stay per team. The people who work the nights for months at a time
+are moved onto the **SaaS Night cover** team (see below).
+
 **CRE windows:** 6–9am (and its on-call), regular hours LK and IND, 6–9pm,
 Americas cover, weekend rotation 06:00–21:00, and Americas weekend (and its
 on-call).
@@ -96,7 +105,7 @@ Regular hours are drawn **SUP** (support in normal hours).
 | Bucket | Kinds |
 |---|---|
 | `LEAVE` | Annual (AL), Lieu (LL), Maternity (ML), Paternity (PL), Sick (SL) |
-| `ALLOCATION` | Allo-INT, Allo-EXT, Brazil rotation (BR) on both rotas; RnD on SRE only; Migration (Mig) on CRE only |
+| `ALLOCATION` | Allo-INT, Allo-EXT, Brazil rotation (BR) on both rotas; RnD and SaaS Night cover (NC) on SRE only; Migration (Mig) on CRE only |
 | `EXCLUDED` | Excluded from rota |
 
 `team_schedule_absence_kind.family` is the rota a kind is offered on, and NULL
@@ -264,8 +273,10 @@ and the other group's Today only. The page learns the group from the teams
 they may edit, since the sign-in token does not carry these roles.
 
 **Granting is a deployment step, not a migration**: who runs each rota differs
-per environment. There is no role UI yet, so a grant is a row in `user_role`,
-given to someone who already holds `internal` or `admin`:
+per environment. A CSM admin grants and removes it on the Team Schedule's
+**Rota access** tab (0225, see "Rota access" below). Without the portal, a
+grant is a row in `user_role`, given to someone who already holds `internal`
+or `admin`:
 
 ```sql
 INSERT INTO user_role (id, created_on, updated_on, created_by, updated_by, user_id, role_id)
@@ -338,17 +349,22 @@ PaaS SRE is N/A there, so it has no rota until it has a schedule.
 | `SME_CLOUD_AGENT` | SME | `sme-cloud-agent` | `WCA_D` 06:00–18:00 · `WCA_N` 18:00–06:00 | weekly | 5 min |
 | `SME_CLOUD_CORE` | SME | `sme-cloud-core` | `WCC_D` / `WCC_N`, as Agent platform | weekly | 5 min |
 | `SME_MOESIF` | SME | `sme-moesif` | `MOE_D` 10:00–22:00 · `MOE_N` 22:00–10:00 | weekly | 30 min |
-| `SME_U2` | SME | `sme-u2` | `U2_D` / `U2_N`, as Moesif | weekly | 5 min |
-| `SME_B_CENTRAL` | SME | `sme-b-central` | `BCN_D` / `BCN_N`, as Moesif | weekly | 5 min |
+| `SME_U2` | SME | `sme-u2` | `U2_D` 06:00–18:00 · `U2_N` 18:00–06:00 (0236) | weekly | 5 min |
+| `SME_B_CENTRAL` | SME | `sme-b-central` | `BCN_D` / `BCN_N`, as U2 | weekly | 5 min |
 
 U2 and B-Central were added by migration 0217, data only, with the windows their rota sheet gives. Unlike the other SME rotations it also inserts their two team rows (keys `u2`, `b-central`), only when no team has that key, so every environment gets them from one script.
+
+Migration 0236 corrected both to Day 06:00–18:00 and Night 18:00–06:00 (from 0217's 10:00–22:00 / 22:00–10:00), for all time: those were never their hours. It changes the four windows in place (same codes, zones, labels and colours) and resolves every turn on them again, past turns included, in the same transaction -- the one case the used-shift guard (0153) allows a used window's hours to change, as 0154 did. The turns are first parked a minute apart far ahead, because the same engineers hold day and night and the row-by-row no-overlap check would otherwise trip mid-update. A turn whose new hours overlap the same engineer's turn on another rota keeps its old instants and is named in a NOTICE.
+
+Migration 0235 does the same for the other seven SME rotations' teams (keys `asgardeo`, `choreo-runtime`, `bijira`, `devant`, `cloud-agent`, `cloud-core`, `moesif`, with the names and types the local seed uses). They never arrive from the ServiceNow sync, so without them a deployed SME rota has nobody to roster and an escalation to Special Ops pages nobody (the SME page finds no team for SPECIALIST_HANDOFF_CONFIG's `smeTeam`). It also adds IaaS's team (key `iaas`, type `sre-iaas`, as production has it), which a database that did not get it from production lacks, leaving the IaaS rota with no team. A key already held by a team of another type is left alone and named in a NOTICE.
 
 **How it hangs together:**
 - **Teams join a rota by type.** A team is on the rota whose `team_type` matches
   `team.type`, read the same way the family always has been
-  (`sme…` → SME, `sre…` → SRE). No column is added to `team`, so the ServiceNow
-  sync stays the only writer of team rows: to put a team on a rota, give it the
-  rota's type. On a local stack, `scripts/csm-compose/seed-team-schedule-rotas.sql`
+  (`sme…` → SME, `sre…` → SRE). No column is added to `team`: to put a team on a
+  rota, give it the rota's type. The ServiceNow sync writes the team rows it
+  knows; the SME rotations' teams, which it does not, come from migrations
+  0217 and 0235 (which also adds IaaS's, where it is missing). On a local stack, `scripts/csm-compose/seed-team-schedule-rotas.sql`
   adds one team per new rota.
 - **Zones belong to rotas.** `team_schedule_zone.rota_id` (nullable) ties each
   zone to its rota. TZ1–TZ3 are backfilled to `SRE_SAAS`; a zone without a rota
@@ -363,16 +379,14 @@ U2 and B-Central were added by migration 0217, data only, with the windows their
   scopes every view to one rota and offers a rota picker only where a family
   has more than one rota with teams, so CRE and SaaS-only SRE read as before.
 
-**IaaS windows start inactive.** The portal before this change reads every
-zoned SRE window as part of SaaS's day, week and roster. `0200` therefore
-seeds `SRE_IAAS_DAY` and `SRE_IAAS_NIGHT` with `is_active = FALSE`, so an older
-webapp still running during the deploy never sees them. Once the rota-aware
-webapp is live, switch them on together with giving the IaaS teams their type:
-
-```sql
-UPDATE team_schedule_shift SET is_active = TRUE, updated_on = NOW()
- WHERE code IN ('SRE_IAAS_DAY', 'SRE_IAAS_NIGHT');
-```
+**IaaS windows started inactive; `0231` switches them on.** The portal before
+this change read every zoned SRE window as part of SaaS's day, week and
+roster. `0200` therefore seeded `SRE_IAAS_DAY` and `SRE_IAAS_NIGHT` with
+`is_active = FALSE`, so an older webapp still running during the deploy never
+saw them, and left switching them on as a manual step. That step was never
+run: the catalogue serves only active windows, so an IaaS lead's roster cell
+offered leave and allocations and nothing on the Rota side. `0231` now
+switches them on, and the local seed no longer does it on its own.
 
 SME's windows ship active: the older portal knows only CRE and SRE and passes
 them by.
@@ -384,6 +398,59 @@ them by.
   scoped by team type and key, so the new teams never reach it. An SRE or SME
   ladder is separate work.
 
+## The SaaS Night cover (0232)
+
+The SaaS night (TZ3, 21:00–06:00 LK) is worked by a few Apollo and Artemis
+engineers who go onto it for three to six months and then come back. 0232 makes
+that a team, the way the Americas team is one for CRE:
+
+- **The team**, `saas-night-cover` ("SaaS Night cover"), typed `sre-abt`, so it
+  is on the `SRE_SAAS` rota beside Apollo and Artemis. Nobody is a member: the
+  people on it stay members of their own team.
+- **The tag**, `SRE_NIGHT_COVER` "SaaS Night cover", SRE only, which moves
+  somebody onto the team for a span (`moves_to_team_key`, worked there). It
+  has no hours of its own (`shows_as_shift_code` is NULL): being on the team
+  is the whole of it, and L1, L2 and L3 stay turns on `SRE_TZ3`, still one
+  crew for the whole rota, and only those page. A lead marks it from the
+  person's own row (**Move to SaaS Night cover**, with 3 / 6 month shortcuts
+  for the end date) and ends it with **Back to Apollo**; the roster lists the
+  person under the Night cover while the move lasts, with only their turns on
+  the days, and under their own team after it.
+
+What a move does, beyond what a Brazil rotation does (both rotas' rules are in
+the schedule repository). A move between two teams of one rota is a move: the
+person is on the Night cover for those days and nowhere else.
+
+- **What they held on their own team over the move goes** -- day turns and
+  regular hours, whoever set them -- each removal recorded in the history
+  (`clearHomeTeamOver`). The slots it frees are left empty for a lead, and
+  Case Paging readiness lists them.
+- **Their TZ3 nights go with them**: a TZ3 turn on a night the move covers is
+  filed under the Night cover, and so is any turn set for them on those days
+  later, even from their own team's row (`fileTurnsWhereTheyAre`). If the move
+  is cut short, what is left on the days it no longer covers goes back to their
+  own team. Who is paged does not change -- the TZ3 crew is the rota's -- but
+  everything of theirs is drawn, and cleared, on the one row they are on, and
+  no view lists them on two teams.
+- **It is not time away from the rota.** The pager's on-duty read and Case
+  Paging's readiness treat a move to a team of the same rota as no absence at
+  all, so a TZ3 night that starts the evening before the move and runs into
+  it still pages them.
+- **Their own team's lead keeps rostering them** (the Night cover has no lead):
+  `TeamsShareRota` lets the home lead set turns on the Night cover's row, as
+  well as end the move. Another team's lead cannot. Remove on the move, or on
+  leave marked inside it, is the home lead's too (this also fixes Remove for
+  the Brazil rotation).
+
+**Generate month** takes the month's TZ3 crew from the Night cover when nobody
+is chosen: everybody a move covers on a day of the month, working TZ3 only
+while it lasts (a day of the month it does not cover is left for a lead). Their
+nights are filed under the Night cover, and they get no regular hours on those
+days. Lieu leave earned on the Night cover cuts the move for those days, as
+leave a lead marks does, and regenerating without that lieu joins the move up
+again. The portal's Generate month dialog no longer picks TZ3 people: it lists
+who is on the Night cover that month.
+
 ## Who may read and change each family
 
 There are three rota admins, one per family: `cre_rota_admin`, `sre_rota_admin`
@@ -393,17 +460,126 @@ and `sme_rota_admin`. No schema change: the family of a team is read from
 | Role (in CRE, SRE or SME) | Reads | Writes, updates, deletes |
 |---|---|---|
 | Engineer | every family | nothing |
+| Rota marker | every family | their own team's rotations, leave and allocations |
 | Team lead | every family | their own team |
 | Rota admin | every family | their own family's teams |
+| CRE head, CS head | every family | every CRE team, as a CRE rota admin |
 
+- **The CRE head and the CS head** (team position `cre_head` / `cs_head` on
+  any team, internal staff) count as CRE rota admins without holding the role:
+  every CRE team's rota, the CRE tags, CRE's rota markers on Rota access, and
+  on Case Paging the responders and Team leads of every CRE team. Who holds a
+  position -- the America lead, Americas Team leads, the CRE and CS heads --
+  keeps its own rules (a CRE rota admin or the portal admin), so a head cannot
+  appoint the head above them. Neither runs an SRE or SME rota by being a head.
 - **Reads are not limited by family**, for anyone: the catalogue, turns, leave,
   on-duty, edit markers and every Case Paging chain.
 - **Writes** go through `requireRotaWriter`: a lead edits their own team, a rota
-  admin the teams of their family.
+  admin the teams of their family, a rota marker their own team.
+- **A rota marker is not a lead.** The tags, Generate month, Case Paging and
+  paging numbers keep their own rules, which do not include a marker.
 - **Absence kinds** (`schedule_tag_family.go`): a kind a rota admin adds is
   stored for their family (`team_schedule_absence_kind.family`), and they may
   delete only their own family's custom kinds. A team lead who is no rota admin
   adds shared kinds, as before.
+
+## Rota access (0225)
+
+The Team Schedule's **Rota access** tab, next to Case Paging, is where rota
+admins and rota markers are granted and taken back.
+
+- **Rota admin** (`cre_rota_admin`, `sre_rota_admin`, `sme_rota_admin`, stored
+  in `user_role`): edits every team in one family. Granted and removed by a
+  **CSM admin** only.
+- **Rota marker** (`team_schedule_rota_marker`, one row per person and team):
+  marks one team's rotations, leave and allocations, and nothing else. Granted
+  and removed by a CSM admin for any team, or by a family's rota admin for that
+  family's teams. Only a member of the team can be named, and the grant stops
+  counting the moment they leave the team or stop being internal staff; the tab
+  then lists it as inactive so it can be removed.
+- **A CSM admin is the CSM Portal admin**: a caller whose token's `roles` claim
+  holds one of `AUTH_ADMIN_ROLES`, matched exactly. It is the same variable,
+  with the same value, that csm-portal-backend reads; entity-service reads it
+  too, so set it on both. Nothing about how the portal uses it changes, and the
+  portal still gates the rota admin routes with `PermAdmin`.
+- **Only active internal staff** can be granted either, as before for rota
+  admins: a grant to anyone else is refused rather than stored.
+- **Audited.** Every grant and removal is in `team_schedule_audit`, with the
+  caller as actor: the marker table through the usual trigger, and `user_role`
+  through a trigger that records only the three rota admin roles.
+- `GET /team-schedule/my-lead-teams` also returns `markerOnlyTeamKeys`, the
+  teams held only as marker, so the page offers Generate month, the tags and
+  Case Paging only where the reader leads the team or runs its family.
+
+## Case Alerts settings (0233)
+
+The chat rooms, the ServiceNow group routes and the rest of the paging
+ladders' settings can be kept here and changed on the Alert Settings tab, instead
+of a Choreo secret and csm-notification-service's YAML file mount. Only what
+decides whether paging runs and what it may cost -- the switches, the channel,
+the safety caps, `phones.source`, test calls and the SME page -- stays in the
+file (`scripts/csm-compose/paging-alert.minimal.yaml` is that small file).
+**Each family's settings are its own** (0237, 0238): CRE's chat room,
+redirects and ladder values; SRE's team rooms, redirects and ladder values;
+SME's team rooms and ladder values (timing, teams, on leave, closing message).
+With `PAGING_CONFIG_SOURCE` unset csm-notification-service uses everything
+saved, over the file's, at its next start; what is not saved keeps the file's,
+so nothing changes until somebody saves. `off` uses none of it. No setting is
+needed on either service. A saved SME room is used even when the file lists no
+SME rooms (`sme.teamChats`); every SME team without one keeps `sme.chat`.
+
+- **Rooms** (`paging_chat_room`), shown as *Team routing*: the CRE and SRE
+  shared rooms, an SRE team's own row (Apollo, Artemis, IaaS) and, since 0237,
+  an SME team's (no shared SME room, teamless or channel). A team row
+  may be marked *teamless* (it also gets the cards of an incident with no SRE
+  team), and may set how that team's alerts go out: chat, call, both or log.
+  A team never does more than its ladder -- the ladder's channel stays in the
+  alert service's file and is the ceiling -- and a row can hold a channel
+  without a URL of its own.
+- **Webhook URLs** (`paging_chat_secret.webhook_url`) are write-only and, since
+  0237, stored as saved: no key is needed. People see a hint (space id and the
+  token's last characters); the URL never reaches a browser, a log or the audit
+  history -- that table has no audit trigger. Anyone who can read the database
+  or a copy of it can read the URLs and post into those spaces; accepted, the
+  database being internal. A URL sealed before 0237 opens only where
+  `CASE_ALERTS_SECRET_KEY` is set, and saving it again stores it plainly.
+- **Routes** (`paging_group_route`): a ServiceNow group to a team, or (SRE) a
+  default group to a rota such as `SRE_SAAS`.
+- **Ladder values** (`paging_ladder_value`): one row per other key of the file's
+  `cre:` or `sre:` section -- the teams (`teams.abts`, `teams.americas`, ...),
+  the heads (name and email; the phone comes from their profile), which
+  incidents start a ladder (`trigger.*`), how it climbs (`alertDuty.*`,
+  `onLeave`, ...) and the SRE clock (`timing.*`), as JSON in the file's shape.
+  Each key has its limits (for example `timing.interval` 1m to 30m), checked on
+  save; a set of values is saved together or not at all. The list is
+  `caseAlertValueSpecs` in `internal/service/case_alert_ladder_values.go`, and
+  csm-notification-service's `caseAlertKeys` must match it.
+- **What is in use:** in shadow or db mode the alert service reports each
+  ladder value it runs with and whether it came from the file or from here. The
+  tab shows it next to what is saved, and *Copy what's in use* saves the file's
+  values here in one go -- the first step of moving to the small file. What
+  only the file sets (on/off, channel, safety caps, where numbers come from) is
+  reported too and shown read-only; allowed numbers as a count only.
+- **Who:** seeing a family's settings and changing them go together, and
+  another family's are never sent. CRE: the CRE rota admin and the CRE and CS
+  heads. SRE (SaaS and IaaS): the SRE rota admin. SME: the SME rota admin. A CSM
+  admin (`AUTH_ADMIN_ROLES`) or portal admin, or anybody with all three rota
+  admin roles: all three. Team leads see who gets alerts, not the settings.
+- **Test card:** entity-service posts a short card to the saved URL and records
+  delivered or failed; one per room every two minutes. entity-service needs to
+  reach `chat.googleapis.com` for this.
+- **csm-notification-service** reads `GET /team-schedule/case-alerts/settings/runtime`
+  (any internal service client; `CASE_ALERTS_RUNTIME_CLIENT_IDS`, when set,
+  narrows it; a person's token is refused) at start-up only, and reports what
+  it loaded on `PUT .../applied`.
+  `paging_config_revision` tells "saved" from "running".
+- **Audited:** room, route and ladder value changes go to `team_schedule_audit`
+  with the caller as actor.
+
+Settings on entity-service, all optional: `CASE_ALERTS_ENVIRONMENT` (a label
+such as `staging`), `CASE_ALERTS_RUNTIME_CLIENT_IDS` (narrows who may read the
+URLs), and `CASE_ALERTS_SECRET_KEY` / `_KEY_ID` (only to open a URL sealed
+before 0237).
 
 ## 5. Known gaps
 
@@ -421,7 +597,30 @@ and `sme_rota_admin`. No schema change: the family of a team is read from
 
 ## Change log
 
+- **0238 Case Alerts: SME ladder values.** `paging_ladder_value` takes ladder
+  `SME`. Additive and re-runnable; no row changes.
+- **0237 Case Alerts: SME team rooms, plain URLs.** `paging_chat_room` takes
+  ladder `SME` (team rooms only); `paging_chat_secret` gains `webhook_url`, and
+  its sealed columns become optional. Additive and re-runnable; no row changes.
+
+- **0233 Case Alerts settings.** New tables `paging_chat_room`,
+  `paging_chat_secret`, `paging_group_route`, `paging_ladder_value` and
+  `paging_config_revision` (one row), audit triggers on the room, route and
+  value tables, and a trigger that moves the revision on any change. Additive: nothing existing is changed or
+  removed, and csm-notification-service ignores them until
+  `PAGING_CONFIG_SOURCE` is set.
+- **0232 SaaS Night cover.** Data only: the team `saas-night-cover` (type
+  `sre-abt`) and the tag `SRE_NIGHT_COVER` that moves somebody onto it. Nobody is moved by the migration; leads move their night
+  people from the roster, and the TZ3 nights already set inside a move go with
+  it. Re-runnable.
+- **0225 rota access.** New table `team_schedule_rota_marker` (with an index on
+  `team_key`) and its audit trigger; a second audit trigger on `user_role` that
+  records only the rota admin roles. Additive: nothing existing is changed or
+  removed. entity-service now also reads `AUTH_ADMIN_ROLES` (same value as
+  csm-portal-backend's).
+
 - **0199–0200 rotas.** The SME family; `team_schedule_rota`; `zone.rota_id` (TZ1–TZ3 on `SRE_SAAS`); the zone-family check widened from SRE to SRE or SME; IaaS and seven SME rotas, each with a Day and a Night zone and window; the `sme_rota_admin` role. Nothing is removed, renamed or re-typed, but existing objects do change: 0199 adds a value to `team_schedule_shift_family_enum`; 0200 adds the nullable column `team_schedule_zone.rota_id` and sets it on the existing TZ1–TZ3 rows, and replaces the zone-family CHECK with a wider one (every existing row satisfies it). IaaS's two windows are seeded inactive until the new webapp is deployed.
+- **0223 shared windows.** `team_schedule_shift.shared_across_teams` (BOOLEAN, default FALSE), TRUE for `SRE_TZ3` only: its tiers are one crew for the whole SaaS rota. `POST /team-schedule/assignments/apply` refuses (409, naming the holder) an SRE tier somebody else already holds on that zone and day -- per team, or across the rota on a shared window. Additive only; no constraint is added, since data written before it may already hold two people on one tier.
 - **0152–0155** replace `000088`–`000107`, which were written in the old
   up/down format. They reproduce the schema and catalogue that chain ended in
   exactly (compared with `pg_dump` against a server built from the old chain).

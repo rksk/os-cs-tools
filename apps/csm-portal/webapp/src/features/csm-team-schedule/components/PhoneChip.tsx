@@ -20,7 +20,7 @@ import type { JSX } from "react";
 import type { PagingChainMember } from "../types";
 import { ADD_TO_PROFILE_HINT, phoneChipState } from "../utils/pagingPhone";
 
-/** What a reader may do about a person's paging number; the tab owns it. */
+/** What a reader may do about a person's alert number; the tab owns it. */
 export interface PagingPhoneControls {
   edit: (member: PagingChainMember) => void;
   remove: (member: PagingChainMember) => void;
@@ -41,11 +41,13 @@ function PhoneIcon(): JSX.Element {
 }
 
 /**
- * The number Case Alerts would call for one person. The words say the state
- * ("Profile ✓", "No number", ...); the colour only repeats them, and only the
- * masked number is ever shown. A number is added on the person's profile, not
- * here, so a missing one says where to add it. A paging-only number set
- * before that rule can still be test-called or removed by a reader who may.
+ * The number Case Alerts would call for one person, shown only when there is
+ * something to act on ("No number", an alert number that failed its test,
+ * ...): a number on the person's own profile is the normal case and shows
+ * nothing. The colour only repeats the words, and only the masked number is
+ * ever shown. A number is added on the person's profile, not here, so a
+ * missing one says where to add it. A paging-only number set before that rule
+ * can still be test-called or removed by a reader who may.
  */
 export default function PhoneChip({
   member,
@@ -53,21 +55,28 @@ export default function PhoneChip({
 }: {
   member: PagingChainMember;
   controls?: PagingPhoneControls;
-}): JSX.Element {
+}): JSX.Element | null {
   const st = phoneChipState(member);
   const name = member.name || member.email;
   const can = Boolean(controls) && member.canEditPhone === true;
   const calling = can && controls ? controls.calling(member) : false;
+  const onProfile = member.hasProfilePhone === true;
+
+  // A number on the profile needs nothing said about it; only an older
+  // paging-only number's actions are still offered beside it.
+  if (onProfile && !(can && member.pagingPhone)) return null;
 
   return (
     <span className="cp-phone">
-      <span className={`cp-ph ${st.tone}`} aria-live="polite">
-        <PhoneIcon />
-        <span>
-          {st.label}
-          {st.masked ? <span className="cp-mask"> · {st.masked}</span> : null}
+      {onProfile ? null : (
+        <span className={`cp-ph ${st.tone}`} aria-live="polite">
+          <PhoneIcon />
+          <span>
+            {st.label}
+            {st.masked ? <span className="cp-mask"> · {st.masked}</span> : null}
+          </span>
         </span>
-      </span>
+      )}
       {!member.pagingPhone && member.hasProfilePhone === false ? (
         <span className="cp-fixnote">{ADD_TO_PROFILE_HINT}</span>
       ) : null}
@@ -78,7 +87,7 @@ export default function PhoneChip({
               <button
                 type="button"
                 className="btn ghost sm"
-                aria-label={`Remove ${name}'s paging number`}
+                aria-label={`Remove ${name}'s alert number`}
                 onClick={() => controls.remove(member)}
               >
                 Remove
@@ -86,7 +95,7 @@ export default function PhoneChip({
               <button
                 type="button"
                 className="btn ghost sm"
-                aria-label={calling ? `${CALLING_LABEL} (${name})` : `Test call ${name}'s paging number`}
+                aria-label={calling ? `${CALLING_LABEL} (${name})` : `Test call ${name}'s alert number`}
                 aria-disabled={calling || undefined}
                 onClick={() => {
                   if (!calling) controls.test(member);

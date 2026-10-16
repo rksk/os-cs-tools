@@ -148,7 +148,7 @@ func pagingPhoneView(c repository.PagingContactRow, withNumber bool) *domain.Pag
 // (409), or one asked for less than pagingTestCooldown ago (429).
 func testCallRefusal(c *repository.PagingContactRow, now time.Time) error {
 	if c == nil {
-		return &apierror.ConflictError{Msg: "this person has no paging number to test"}
+		return &apierror.ConflictError{Msg: "this person has no alert number to test"}
 	}
 	if c.LastTestAt != nil && now.Sub(*c.LastTestAt) < pagingTestCooldown {
 		wait := pagingTestCooldown - now.Sub(*c.LastTestAt)
@@ -162,18 +162,18 @@ func testCallRefusal(c *repository.PagingContactRow, now time.Time) error {
 // right to edit that user's number. It returns the caller's email and the
 // user.
 func (s *pagingChainService) phoneEditor(ctx context.Context, userID string) (string, repository.PagingUser, error) {
-	if err := RequireInternalCaller(ctx, s.access, "paging numbers are only available to internal staff"); err != nil {
+	if err := RequireInternalCaller(ctx, s.access, "alert numbers are only available to internal staff"); err != nil {
 		return "", repository.PagingUser{}, err
 	}
 	email := auth.IdentityFromContext(ctx).UserEmail
 	if email == "" {
-		return "", repository.PagingUser{}, &apierror.ForbiddenError{Msg: "changing a paging number needs a user token, not a service credential"}
+		return "", repository.PagingUser{}, &apierror.ForbiddenError{Msg: "changing an alert number needs a user token, not a service credential"}
 	}
 	if err := validateUUIDs("userId", []string{userID}); err != nil {
 		return "", repository.PagingUser{}, err
 	}
 	if s.contacts == nil {
-		return "", repository.PagingUser{}, &apierror.ServiceUnavailableError{Msg: "paging numbers are not available on this deployment"}
+		return "", repository.PagingUser{}, &apierror.ServiceUnavailableError{Msg: "alert numbers are not available on this deployment"}
 	}
 	user, err := s.contacts.User(ctx, userID)
 	if err != nil {
@@ -188,7 +188,7 @@ func (s *pagingChainService) phoneEditor(ctx context.Context, userID string) (st
 		return "", repository.PagingUser{}, err
 	}
 	if !authorityOf(caller).canEditPhone(teams[userID]) {
-		return "", repository.PagingUser{}, &apierror.ForbiddenError{Msg: "only a lead of this person's team, a rota admin of its family, the CRE or CS head, or a portal admin can change their paging number"}
+		return "", repository.PagingUser{}, &apierror.ForbiddenError{Msg: "only a lead of this person's team, a rota admin of its family, the CRE or CS head, or a portal admin can change their alert number"}
 	}
 	return email, user, nil
 }
@@ -348,7 +348,7 @@ func (s *pagingChainService) RecordTestResult(ctx context.Context, req domain.Pa
 		return &apierror.ValidationError{Msg: "testedAt must be an RFC3339 date-time"}
 	}
 	if s.contacts == nil {
-		return &apierror.ServiceUnavailableError{Msg: "paging numbers are not available on this deployment"}
+		return &apierror.ServiceUnavailableError{Msg: "alert numbers are not available on this deployment"}
 	}
 	actor := "service"
 	if id.ClientID != "" {
@@ -359,7 +359,7 @@ func (s *pagingChainService) RecordTestResult(ctx context.Context, req domain.Pa
 		return err
 	}
 	if !found {
-		return &apierror.NotFoundError{Msg: "this person has no paging number"}
+		return &apierror.NotFoundError{Msg: "this person has no alert number"}
 	}
 	return nil
 }

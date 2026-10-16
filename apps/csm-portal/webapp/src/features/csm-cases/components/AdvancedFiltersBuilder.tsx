@@ -536,6 +536,25 @@ export default function AdvancedFiltersBuilder({
                   onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
                 />
               )}
+              {opMeta?.valueKind === "boolean" && (
+                <FormControl size="small" fullWidth>
+                  <InputLabel id={`advanced-filter-bool-${index}-label`}>Value</InputLabel>
+                  <Select
+                    labelId={`advanced-filter-bool-${index}-label`}
+                    label="Value"
+                    value={row.values[0] ?? ""}
+                    onChange={(e) =>
+                      onUpdateRow(row, {
+                        ...asRow(row),
+                        values: e.target.value ? [e.target.value] : [],
+                      })
+                    }
+                  >
+                    <MenuItem value="true">Yes</MenuItem>
+                    <MenuItem value="false">No</MenuItem>
+                  </Select>
+                </FormControl>
+              )}
               {opMeta?.valueKind === "text" && (
                 <TextField
                   size="small"

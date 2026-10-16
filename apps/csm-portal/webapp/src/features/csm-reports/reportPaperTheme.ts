@@ -16,11 +16,10 @@
 
 import { createTheme } from "@mui/material/styles";
 
-// The SLA and Timelogs report previews (#sla-report / #timelogs-report) are
-// printable documents captured by html2canvas for PDF export (see
-// handleDownloadPDF in each page) — the same reason the CS report's own
-// image-resize canvas fills with a literal white background. A print
-// preview stays light "paper" regardless of the app's own light/dark mode,
+// The Timelogs report preview (#timelogs-report) is a printable document
+// captured by html2canvas for PDF export (see downloadPDF in
+// TimelogsReportPage). A print preview stays light "paper" regardless of
+// the app's own light/dark mode,
 // the same way a PDF viewer or print dialog never goes dark just because
 // the host app did. Without this, SplShell's live dark-mode ThemeProvider
 // would make the report's own Paper/Table defaults follow the app's current

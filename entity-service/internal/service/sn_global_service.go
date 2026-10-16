@@ -225,8 +225,10 @@ func (s *snGlobalService) GetSystemMetadata(ctx context.Context) (domain.SystemM
 }
 
 func (s *snGlobalService) GlobalSearch(ctx context.Context, req domain.GlobalSearchRequest) (domain.GlobalSearchResponse, error) {
+	var query string
 	if req.Filters != nil {
-		if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		query = normalizeGlobalSearchQuery(req.Filters.SearchQuery)
+		if err := validateSearchQuery(query); err != nil {
 			return domain.GlobalSearchResponse{}, err
 		}
 		for _, t := range req.Filters.Tables {
@@ -253,7 +255,7 @@ func (s *snGlobalService) GlobalSearch(ctx context.Context, req domain.GlobalSea
 
 	payload := snGlobalSearchPayload{}
 	if req.Filters != nil {
-		payload.Filters = &snGlobalSearchFilters{SearchQuery: req.Filters.SearchQuery, Tables: req.Filters.Tables}
+		payload.Filters = &snGlobalSearchFilters{SearchQuery: query, Tables: req.Filters.Tables}
 	}
 	if req.SortBy != nil {
 		payload.SortBy = &snGlobalSearchSort{Field: req.SortBy.Field, Order: req.SortBy.Order}
@@ -284,8 +286,13 @@ func (s *snGlobalService) GlobalSearch(ctx context.Context, req domain.GlobalSea
 		cases = append(cases, c.toDomain())
 	}
 
+	respQuery := snResp.Query
+	if req.Filters != nil {
+		respQuery = query
+	}
+
 	return domain.GlobalSearchResponse{
-		Query:         snResp.Query,
+		Query:         respQuery,
 		ProjectsTotal: snResp.ProjectsTotal,
 		CasesTotal:    snResp.CasesTotal,
 		Projects:      projects,

@@ -51,3 +51,14 @@ func (h *RotaGenerateHandler) GenerateRotaMonth(w http.ResponseWriter, r *http.R
 	}
 	writeScheduleJSON(w, status, res)
 }
+
+// GetRotaNightCrew handles GET /team-schedule/rotas/{code}/night-crew?from=YYYY-MM&to=YYYY-MM.
+func (h *RotaGenerateHandler) GetRotaNightCrew(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	res, err := h.svc.NightCrew(r.Context(), r.PathValue("code"), q.Get("from"), q.Get("to"))
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	writeScheduleJSON(w, http.StatusOK, res)
+}

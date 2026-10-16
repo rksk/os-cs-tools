@@ -917,6 +917,22 @@ func (r *changeRequestRepo) GetChangeRequestByID(ctx context.Context, id string)
 	if cr.CustomerContacts, err = customerContactRefs(ctx, r.db, cr.Project.ID); err != nil {
 		return domain.ChangeRequest{}, fmt.Errorf("get change request by id: %w", err)
 	}
+	// Tags: the same work_item_tag read the case detail does (fetchCaseTags),
+	// for staff only -- they are internal bookkeeping, so a restricted (customer)
+	// caller's read leaves them null, the same line the visibility rule draws.
+	// Best-effort like the case read: a lookup failure is logged and leaves
+	// Tags null rather than failing the detail.
+	if restricted, _ := crViewer(ctx); !restricted {
+		tags, err := fetchCaseTags(ctx, r.db, id)
+		switch {
+		case err != nil:
+			slog.WarnContext(ctx, "get change request: tags lookup failed", "changeRequestId", id, "error", err)
+		case tags == nil:
+			cr.Tags = []domain.Tag{}
+		default:
+			cr.Tags = tags
+		}
+	}
 
 	// While the customer group's review request is pending (a live "Customer
 	// Review" stage), staff are not offered Rollback either: a failed review is

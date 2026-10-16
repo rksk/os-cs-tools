@@ -18,8 +18,11 @@ import { describe, expect, it } from "vitest";
 import {
   ADVANCED_FILTER_FIELDS,
   RELATIVE_DATE_PRESETS,
+  advancedFilterRowToFieldFilter,
   getAdvancedFilterFieldMeta,
   getAdvancedFilterOpMeta,
+  isCompleteAdvancedFilterRow,
+  resolveAdvancedFilterDateValues,
 } from "./advancedFilters";
 
 describe("ADVANCED_FILTER_FIELDS — full unification", () => {
@@ -139,6 +142,41 @@ describe("ADVANCED_FILTER_FIELDS — real suggestions instead of hand-typed valu
     expect(getAdvancedFilterOpMeta("taskSLABusinessElapsedPercent", "gte")?.valueKind).toBe(
       "number",
     );
+  });
+});
+
+describe("fields a dashboard click-through needs", () => {
+  it("`slaBreached` is one Yes/No choice sent as a single `eq` value", () => {
+    expect(getAdvancedFilterFieldMeta("slaBreached")?.label).toBe("SLA breached");
+    expect(getAdvancedFilterFieldMeta("slaBreached")?.ops).toEqual([
+      { op: "eq", label: "is", valueKind: "boolean" },
+    ]);
+
+    const row = { field: "slaBreached" as const, op: "eq" as const, values: ["true"] };
+    expect(isCompleteAdvancedFilterRow(row)).toBe(true);
+    expect(advancedFilterRowToFieldFilter(row)).toEqual({
+      field: "slaBreached",
+      op: "eq",
+      values: ["true"],
+    });
+    // Nothing chosen yet: never sent as an empty predicate.
+    expect(isCompleteAdvancedFilterRow({ ...row, values: [] })).toBe(false);
+  });
+
+  it("`resolvedOn` takes a lower and an upper date bound like the other date fields", () => {
+    expect(getAdvancedFilterOpMeta("resolvedOn", "gte")?.valueKind).toBe("dateOrPreset");
+    expect(getAdvancedFilterOpMeta("resolvedOn", "lte")?.valueKind).toBe("dateOrPreset");
+  });
+
+  it("a relative date on a `resolvedOn` row is resolved before the request, like `closedOn`", () => {
+    const now = new Date("2026-10-13T10:00:00Z");
+    const [row] = resolveAdvancedFilterDateValues(
+      [{ field: "resolvedOn", op: "gte", values: ["__today__"] }],
+      now,
+    );
+
+    expect(row.values[0]).not.toBe("__today__");
+    expect(new Date(row.values[0]).getTime()).not.toBeNaN();
   });
 });
 

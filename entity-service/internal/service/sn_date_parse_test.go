@@ -59,6 +59,25 @@ func TestParseSNDateTime_AlternateFormat(t *testing.T) {
 	}
 }
 
+// TestParseSNDateTime_SlashFormat pins the third locale variant ServiceNow
+// started sending for case_comment createdOn: slash-separated, day-first
+// "DD/MM/YYYY HH:MM:SS". Neither existing layout matches it (wrong separator
+// for both; wrong field order vs. the MM-DD-YYYY alternate). The exact
+// string shape is taken from a real sn_writeback_failures error line (dummy
+// timestamp): `parse createdOn "15/10/2026 13:48:20"`.
+func TestParseSNDateTime_SlashFormat(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseSNDateTime(context.Background(), "sn create bare case comment", "createdOn", "15/10/2026 13:48:20")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := time.Date(2026, 10, 15, 13, 48, 20, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 // TestParseSNDateTime_MalformedStillErrors pins that a genuinely malformed
 // value -- not just a format flip -- still returns an error rather than
 // being silently swallowed.

@@ -20,7 +20,6 @@ import ListPagination from "@components/list-view/ListPagination";
 import { Paperclip } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useMutationState } from "@tanstack/react-query";
-import { setPendingCaseDetailsTab } from "@features/settings/utils/settingsStorage";
 import {
   useGetCaseAttachments,
   flattenCaseAttachments,
@@ -44,7 +43,6 @@ import ApiErrorState from "@components/error/ApiErrorState";
 
 const ITEMS_PER_PAGE = 10;
 const SKELETON_MIN_DISPLAY_MS = 4000;
-const ATTACHMENTS_TAB_INDEX = "2";
 
 /**
  * Renders the Attachments tab: upload button, modal, and list from GET /cases/:id/attachments.
@@ -306,10 +304,6 @@ export default function CaseDetailsAttachmentsPanel({
       <UploadAttachmentModal
         open={uploadOpen}
         caseId={caseId}
-        onSuccess={() => {
-          setPendingCaseDetailsTab(ATTACHMENTS_TAB_INDEX);
-          window.location.reload();
-        }}
         onClose={() => setUploadOpen(false)}
       />
 

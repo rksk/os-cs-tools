@@ -41,6 +41,7 @@ import {
   endDateLabel,
   startDateLabel,
 } from "@features/csm-projects/utils/projectLifecycle";
+import { canRaiseServiceRequests } from "@features/csm-projects/utils/subscriptionType";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
@@ -151,7 +152,10 @@ export default function CsmProjectDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavTransition();
   const location = useLocation();
-  const { canWrite, isSplAudience, canViewWorkItemsStaffView } = usePortalAccess();
+  // isSplAudience is unused while the Time report button below is
+  // temporarily disabled — restore it to the destructure above when
+  // re-enabling it.
+  const { canWrite, canViewWorkItemsStaffView } = usePortalAccess();
   // Prefer wherever the caller came from (e.g. a case's Overview panel) over
   // the hardcoded projects list, so Back returns to that page instead of
   // skipping past it — same convention as CsmCaseDetailPage's own back path.
@@ -160,8 +164,8 @@ export default function CsmProjectDetailPage(): JSX.Element {
   const { data, isLoading, isError } = useGetProject(id);
   // Only used to gate the "Create service request" menu item below — fail
   // open (show the item) while metadata is loading or failed, since
-  // `subscriptionType === managed_cloud_subscription` already narrows to
-  // projects where SR is normally offered; an explicit `false` once loaded
+  // `canRaiseServiceRequests` (managed-cloud and Cloud Support) already
+  // narrows to projects where SR is normally offered; an explicit `false` once loaded
   // is what actually hides it. The create page itself is the authoritative,
   // fail-closed gate (see CreateServiceRequestPage.tsx's hasNoSrReadAccess).
   const projectMetadata = useProjectMetadata(id);
@@ -247,42 +251,26 @@ export default function CsmProjectDetailPage(): JSX.Element {
           />
         </Box>
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", flexShrink: 0 }}>
-          {/* Ex-Support Portal Lite reports, no modern equivalent -- kept
-              limited to the same audience they always had (a caller holding
-              the viewer role, regardless of what else they hold). See
-              isSplAudience's own doc comment. Outlined, not contained: the
-              single contained CTA on this page is Create, below. */}
-          {isSplAudience && (
-            <>
-              <Button
-                variant="outlined"
-                size="small"
-                className="csm-print-hide"
-                component={RouterLink}
-                to={`/customers/projects/${p.id}/sla-report/${p.id}`}
-              >
-                SLA Report
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                className="csm-print-hide"
-                component={RouterLink}
-                to={`/customers/projects/${p.id}/timelogs-report`}
-              >
-                Time Report
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                className="csm-print-hide"
-                component={RouterLink}
-                to={`/customers/projects/${p.id}/cs-report/${p.id}`}
-              >
-                CS Report
-              </Button>
-            </>
-          )}
+          {/* The Time report has no modern equivalent and is limited to the
+              viewer audience (a caller holding the viewer role, regardless of
+              what else they hold). See isSplAudience's own doc comment.
+              Outlined, not contained: the single contained CTA on this page
+              is Create, below.
+
+              Temporarily disabled: removed from view for the moment.
+              Re-enable by uncommenting this block and restoring
+              isSplAudience to the usePortalAccess() destructure above. */}
+          {/* {isSplAudience && (
+            <Button
+              variant="outlined"
+              size="small"
+              className="csm-print-hide"
+              component={RouterLink}
+              to={`/customers/projects/${p.id}/timelogs-report`}
+            >
+              Time Report
+            </Button>
+          )} */}
           {/* File any issue type already scoped to this project — every create
               form below locks the project field, so it can't be filed against
               the wrong one. */}
@@ -313,7 +301,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
               >
                 Create case
               </MenuItem>
-              {p.subscriptionType === "managed_cloud_subscription" && !hasNoSrReadAccess && (
+              {canRaiseServiceRequests(p.subscriptionType) && !hasNoSrReadAccess && (
                 <MenuItem
                   onClick={() => {
                     setCreateMenuAnchor(null);

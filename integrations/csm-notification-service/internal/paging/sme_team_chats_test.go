@@ -35,7 +35,6 @@ func smeTeamChatsEngine(shared *fakeChat, own map[string]*fakeChat, notes *fakeN
 	for team, c := range own {
 		e.smeTeamNotifiers[team] = []notifier{chatNotifier{chat: c, links: fakeLinks{}, audience: team}}
 	}
-	e.smeNoChatNotifiers = withoutChat(e.smeNotifiers)
 	return e
 }
 
@@ -58,20 +57,19 @@ func TestSMETeamChats_EachTeamPostsToItsOwnSpace(t *testing.T) {
 	}
 }
 
-// With teamChats set, a team it does not list gets no card, and the
-// incident's work note says why.
-func TestSMETeamChats_ATeamNotListedGetsNoCard(t *testing.T) {
+// With teamChats set, a team it does not list falls back to the shared SME
+// space: never no card at all.
+func TestSMETeamChats_ATeamNotListedUsesTheSharedSpace(t *testing.T) {
 	shared, choreo, notes := &fakeChat{}, &fakeChat{}, &fakeNotes{}
 	e := smeTeamChatsEngine(shared, map[string]*fakeChat{"choreo-sme": choreo}, notes)
 
 	raise(t, e, handoff("Apollo", "asgardeo", "asgardeo", testClock))
 
-	if len(shared.posted) != 0 || len(choreo.posted) != 0 {
-		t.Errorf("cards posted for an unlisted team: shared %d, choreo %d; want none", len(shared.posted), len(choreo.posted))
+	if len(shared.posted) != 1 || len(choreo.posted) != 0 {
+		t.Errorf("cards for an unlisted team: shared %d, choreo %d; want one in the shared space", len(shared.posted), len(choreo.posted))
 	}
-	got := notesWith(notes, "NO_CHAT_SPACE")
-	if len(got) != 1 || !strings.Contains(got[0], "asgardeo") {
-		t.Errorf("work notes = %v; want one NO_CHAT_SPACE note naming asgardeo", notes.notes)
+	if got := notesWith(notes, "NO_CHAT_SPACE"); len(got) != 0 {
+		t.Errorf("work notes = %v; want no NO_CHAT_SPACE", notes.notes)
 	}
 }
 

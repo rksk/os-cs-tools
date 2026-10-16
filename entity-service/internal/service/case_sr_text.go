@@ -65,6 +65,19 @@ func titleQuestionRank(label string) int {
 	}
 }
 
+// isDescriptionQuestionLabel reports whether a catalog question's label is
+// the one the customer portal's create-SR form renders as a rich-text editor
+// rather than a plain text field (apps/customer-portal/webapp's own
+// isDescriptionField, matched the identical way: trim, strip a leading "*",
+// trim, lower-case, compare to "description"). Its answer therefore arrives
+// here as HTML, not plain text, and must not be run through html.EscapeString
+// like every other answer -- doing so showed the raw <p>/<br> tags as literal
+// text in the composed description instead of rendering them (found live).
+func isDescriptionQuestionLabel(label string) bool {
+	clean := strings.ToLower(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(label), "*")))
+	return clean == "description"
+}
+
 // fillServiceRequestText gives a service request raised from the catalog form
 // a subject and a description when the caller sent none. The customer
 // portal's form sends only the catalog item and the answers to its questions,
@@ -150,6 +163,13 @@ func fillServiceRequestText(ctx context.Context, srCatalog srCatalogReader, req 
 		label := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(q.QuestionText), "*"))
 		if label == "" {
 			label = "Answer"
+		}
+		if isDescriptionQuestionLabel(q.QuestionText) {
+			// answer is already HTML from the rich-text editor (or, worst
+			// case, plain text with nothing to escape) -- embed it as-is
+			// rather than escaping it into literal, visible tag text.
+			paragraphs = append(paragraphs, "<p><strong>"+html.EscapeString(label)+"</strong>:</p>"+answer)
+			continue
 		}
 		paragraphs = append(paragraphs,
 			"<p><strong>"+html.EscapeString(label)+"</strong>: "+html.EscapeString(answer)+"</p>")

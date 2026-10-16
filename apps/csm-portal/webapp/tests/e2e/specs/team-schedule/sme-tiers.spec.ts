@@ -110,12 +110,12 @@ async function signIn(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Team Schedule" })).toBeVisible({ timeout: 20_000 });
 }
 
-/** The SME chain's gap messages on the Case Paging tab, every one of them. */
+/** The SME chain's gap messages on the Alert Settings tab, every one of them. */
 async function smeGaps(page: Page): Promise<string[]> {
-  await page.getByRole("tab", { name: /^Case Alerts/ }).click();
+  await page.getByRole("tab", { name: /^Alert Settings/ }).click();
   await page.getByRole("tab", { name: "SME", exact: true }).click();
   // The readiness strip loads after the tab: wait for the chain's heading.
-  await expect(page.getByText(/^SME page —/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/^SME chain —/)).toBeVisible({ timeout: 20_000 });
   const showAll = page.getByRole("button", { name: /^Show all \d+/ });
   if (await showAll.isVisible().catch(() => false)) {
     await showAll.click();

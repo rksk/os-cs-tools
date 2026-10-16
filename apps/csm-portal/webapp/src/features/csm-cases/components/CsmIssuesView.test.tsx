@@ -57,16 +57,18 @@ vi.mock("@api/useDirectoryUsers", () => ({
 const useGetCsmCasesMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCases", () => ({
   useGetCsmCases: (...args: unknown[]) => {
-    useGetCsmCasesMock(...args);
-    return {
-      data: { cases: [], total: 0, hasMore: false },
-      isLoading: false,
-      isFetching: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-      dataUpdatedAt: 0,
-    };
+    // A test can `mockReturnValue` a query result; otherwise the list is empty.
+    return (
+      useGetCsmCasesMock(...args) ?? {
+        data: { cases: [], total: 0, hasMore: false },
+        isLoading: false,
+        isFetching: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+        dataUpdatedAt: 0,
+      }
+    );
   },
 }));
 const casesFilterBarPropsSpy = vi.fn();
@@ -97,10 +99,39 @@ vi.mock("@components/RefreshButton", () => ({
 
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import { visibleCaseTypes } from "@features/csm-cases/utils/caseType";
+import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
+
+// Node 26 exposes `window.localStorage` as undefined unless the process was
+// started with `--localstorage-file`, which hides jsdom's own Storage. These
+// tests only need a per-test key/value store.
+function installLocalStorage(): void {
+  if (typeof window.localStorage?.clear === "function") return;
+  const store = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      key: (index: number) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+    },
+  });
+}
 
 beforeEach(() => {
+  installLocalStorage();
   window.localStorage.clear();
-  useGetCsmCasesMock.mockClear();
+  useGetCsmCasesMock.mockReset();
   casesFilterBarPropsSpy.mockClear();
   mockUserRoles = undefined;
 });
@@ -421,6 +452,145 @@ describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digi
         expect.anything(),
       ),
     );
+  });
+});
+
+describe("CsmIssuesView pagination (kept across opening a case)", () => {
+  function lastQuery(): unknown[] {
+    const calls = useGetCsmCasesMock.mock.calls;
+    return calls[calls.length - 1] as unknown[];
+  }
+
+  it("restores the page and page size from the URL when the list mounts again", () => {
+    // Enough rows that page 3 of 50 is still in range — an empty result
+    // clamps back to the first page, which is a different behavior.
+    useGetCsmCasesMock.mockReturnValue({
+      data: { cases: [], total: 200, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    });
+    render(
+      <MemoryRouter initialEntries={["/cases?page=3&perPage=50"]}>
+        <CsmIssuesView title="Cases" />
+      </MemoryRouter>,
+    );
+    const [, page, pageSize] = lastQuery();
+    expect(page).toBe(2);
+    expect(pageSize).toBe(50);
+  });
+
+  it("ignores a page size that is not one of the offered options", () => {
+    render(
+      <MemoryRouter initialEntries={["/cases?perPage=15&page=0"]}>
+        <CsmIssuesView title="Cases" />
+      </MemoryRouter>,
+    );
+    const [, page, pageSize] = lastQuery();
+    expect(page).toBe(0);
+    expect(pageSize).toBe(20);
+  });
+
+  it("uses the page size saved for this user when the URL does not name one", () => {
+    window.localStorage.setItem("csm:user-1:cases:rowsPerPage", "10");
+    render(
+      <MemoryRouter initialEntries={["/cases"]}>
+        <CsmIssuesView title="Cases" />
+      </MemoryRouter>,
+    );
+    const [, page, pageSize] = lastQuery();
+    expect(page).toBe(0);
+    expect(pageSize).toBe(10);
+  });
+
+  it("writes the chosen page into the URL and restores it after remounting", async () => {
+    useGetCsmCasesMock.mockReturnValue({
+      data: { cases: [], total: 120, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    });
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" /> }],
+      { initialEntries: ["/cases"] },
+    );
+    const { unmount } = render(<RouterProvider router={router} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go to next page" }));
+    await waitFor(() => {
+      expect(router.state.location.search).toContain("page=2");
+    });
+
+    unmount();
+    render(
+      <MemoryRouter initialEntries={[`/cases${router.state.location.search}`]}>
+        <CsmIssuesView title="Cases" />
+      </MemoryRouter>,
+    );
+    const [, page] = lastQuery();
+    expect(page).toBe(1);
+  });
+
+  it("returns to the first page when the filters change and keeps the chosen page size", async () => {
+    useGetCsmCasesMock.mockReturnValue({
+      data: { cases: [], total: 200, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    });
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" /> }],
+      { initialEntries: ["/cases?page=3&perPage=50"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    const { onChange } = casesFilterBarPropsSpy.mock.calls.at(-1)?.[0] as {
+      onChange: (next: typeof DEFAULT_CASES_FILTERS) => void;
+    };
+    act(() => {
+      onChange({ ...DEFAULT_CASES_FILTERS, search: "acme" });
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.search).toContain("search=acme");
+    });
+    expect(router.state.location.search).not.toContain("page=");
+    expect(router.state.location.search).toContain("perPage=50");
+    const [, page, pageSize] = lastQuery();
+    expect(page).toBe(0);
+    expect(pageSize).toBe(50);
+  });
+
+  it("rewrites the URL when the loaded result no longer contains the current page", async () => {
+    useGetCsmCasesMock.mockReturnValue({
+      data: { cases: [], total: 5, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    });
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" /> }],
+      { initialEntries: ["/cases?page=9"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(router.state.location.search).not.toContain("page=");
+    });
+    const [, page] = lastQuery();
+    expect(page).toBe(0);
   });
 });
 

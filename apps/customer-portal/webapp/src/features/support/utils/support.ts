@@ -1822,6 +1822,30 @@ export function isNoveraOrBotSender(
   return ty === "bot" || by === "novera" || by === "agent" || by === "";
 }
 
+/** Author label shown for a case comment/activity that has no author. */
+export const SYSTEM_AUTHOR_LABEL = "System";
+
+/**
+ * Display-only: gives a case comment with no author the "System" label so it
+ * never renders blank/"Unknown" or gets treated as a real user. Bot/Novera rows
+ * (see {@link isNoveraOrBotSender}) keep their own labelling and are untouched.
+ *
+ * @param comment - Comment or activity entry from the API.
+ * @returns {T} The same entry, or a copy with `createdBy` set to "System".
+ */
+export function withSystemAuthor<
+  T extends {
+    createdBy?: string | null;
+    createdByFullName?: string | null;
+    type?: string | null;
+  },
+>(comment: T): T {
+  if (comment.createdBy?.trim() || comment.createdByFullName?.trim()) {
+    return comment;
+  }
+  if ((comment.type ?? "").trim().toLowerCase() === "bot") return comment;
+  return { ...comment, createdBy: SYSTEM_AUTHOR_LABEL };
+}
 
 /** Shape accepted by {@link compareByCreatedOnThenId}. */
 export type CreatedOnSortable = {

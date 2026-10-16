@@ -1,0 +1,19 @@
+# The One WSO2 webapp calls this API from the browser through the Choreo
+# gateway, which checks the caller's token and passes it on as
+# x-jwt-assertion.
+#
+# The port must match PORT, which defaults to 9090. Leave PORT unset in
+# every Choreo deployment: nothing reconciles the two, and a mismatch makes
+# every request fail with "connection refused" at the gateway.
+schemaVersion: 1.2
+
+endpoints:
+  - name: til-backend-api
+    displayName: Today I Learned API
+    service:
+      basePath: /
+      port: 9090
+    type: REST
+    networkVisibilities:
+      - Public
+    schemaFilePath: openapi.yaml

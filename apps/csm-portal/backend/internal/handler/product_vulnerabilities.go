@@ -31,6 +31,7 @@ import (
 type entityProductVulnerabilityClient interface {
 	SearchProductVulnerabilities(ctx context.Context, body []byte) ([]byte, error)
 	GetProductVulnerability(ctx context.Context, id string) ([]byte, error)
+	GetVulnerabilityMeta(ctx context.Context) ([]byte, error)
 }
 
 // ProductVulnerabilityHandler handles HTTP requests for product vulnerability operations.
@@ -96,6 +97,24 @@ func (h *ProductVulnerabilityHandler) GetProductVulnerability(w http.ResponseWri
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProductVulnerability failed", "userID", user.UserID, "id", id, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve product vulnerability.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetVulnerabilityMeta handles GET /products/vulnerabilities/meta.
+func (h *ProductVulnerabilityHandler) GetVulnerabilityMeta(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	result, err := h.entity.GetVulnerabilityMeta(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetVulnerabilityMeta failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve vulnerability metadata.")
 		return
 	}
 

@@ -85,6 +85,30 @@ type UserCache interface {
 	SetMe(ctx context.Context, email string, me domain.GetUserMeResponse)
 }
 
+// CaseVolumeTrendCache is the read-through, per-day store behind caseService's
+// CaseVolumeTrend caching -- internal/cache.InMemoryCaseVolumeTrendCache, a
+// plain per-pod map, deliberately not Redis-backed (see routes.go's own wiring
+// comment: this endpoint's own cache entry is cheap enough to recompute, and
+// read-only/identical for every caller, that a shared store buys nothing worth
+// its own complexity here). routes.go always wires one, so this is never nil.
+// Deliberately NOT scoped by caller identity: this endpoint only ever reports
+// a portal-wide count (every real caller of it resolves to the same,
+// Unrestricted visibility -- it is reached solely through the CSM portal's
+// internal-staff dashboard), so the same count is correct for every caller and
+// a day's entry is shared globally, keyed only by filtersKey (which
+// request-level filters, if any, produced it) and the day itself. With
+// several pods each running their own copy, each pod simply computes and
+// caches independently -- harmless for this read-only data. A miss just
+// means the day is computed fresh from Postgres; nothing here is a
+// correctness boundary, only a cost-saving one.
+type CaseVolumeTrendCache interface {
+	GetMany(ctx context.Context, filtersKey string, days []string) map[string]domain.CaseVolumeDayCount
+	// Set caches dc for day under filtersKey, for ttl -- see case_service.go's
+	// own CaseVolumeTrend doc comment for why "today"'s own ttl is time left
+	// until UTC midnight, not a flat duration.
+	Set(ctx context.Context, filtersKey, day string, dc domain.CaseVolumeDayCount, ttl time.Duration)
+}
+
 // SavedFilterViewService is the caller's own named list-filter bookmarks
 // (CSM portal saved views). Postgres-only; the caller is always the
 // authenticated user resolved from x-user-id-token — never a client-supplied
@@ -121,6 +145,10 @@ type AccountService interface {
 	// GetAccountByID returns the account with the given UUID. A ValidationError is
 	// returned for a malformed UUID; a NotFoundError if no account matches.
 	GetAccountByID(ctx context.Context, id string) (domain.AccountDetail, error)
+	// GetAccountHealthDetail returns the per-project customer-health breakdown of
+	// the account with the given UUID. A ValidationError is returned for a
+	// malformed UUID; a NotFoundError if no account matches.
+	GetAccountHealthDetail(ctx context.Context, id string) (domain.AccountHealthDetail, error)
 	// UpdateAccountTeams sets the account's CRE and/or SRE team (Postgres data
 	// source only). A ValidationError is returned for a malformed UUID, if
 	// neither field is provided, or if a provided team ID does not reference
@@ -431,6 +459,9 @@ type SNAccountService interface {
 	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchAccountsResponse, error)
 	// GetAccountByID returns the full account detail for the given UUID.
 	GetAccountByID(ctx context.Context, id string) (domain.AccountDetail, error)
+	// GetAccountHealthDetail always fails with a ValidationError: the customer-health
+	// detail is computed from Postgres tables only.
+	GetAccountHealthDetail(ctx context.Context, id string) (domain.AccountHealthDetail, error)
 }
 
 // ProjectService defines the operations available on the project entity.
@@ -719,6 +750,13 @@ type CaseService interface {
 	// the remainder folded into AggregateResponse.OthersCount. A ValidationError
 	// is returned for invalid input.
 	AggregateCases(ctx context.Context, req domain.AggregateCasesRequest) (domain.AggregateResponse, error)
+	// CaseVolumeTrend returns the daily opened/closed case counts for a
+	// trailing window (req.Days, default 30), for a dashboard trend chart.
+	// Unlike AggregateCases' open-ended groupBy, this always returns exactly
+	// two fixed series ("Opened", "Closed") -- see
+	// domain.CaseVolumeTrendResponse's own doc comment. A ValidationError is
+	// returned for invalid input.
+	CaseVolumeTrend(ctx context.Context, req domain.CaseVolumeTrendRequest) (domain.CaseVolumeTrendResponse, error)
 	// CreateCaseComment creates a new comment on the case identified by req.CaseID.
 	// A ValidationError is returned for invalid input or constraint violations.
 	CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CreateCaseCommentResponse, error)

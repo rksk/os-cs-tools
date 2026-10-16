@@ -153,12 +153,8 @@ export const ALL_CALL_REQUEST_STATES: BeCallRequestStateKey[] = [
  *   (or writing) notes.
  * - `notes_pending`: agent can send call notes (concludes the request) or just
  *   mark it completed with no notes.
- * - `pending_on_customer`: the request is now waiting on the customer's
- *   answer -- which happens when the agent themselves proposed times (the
- *   customer is the one who must respond, not WSO2), not only when the
- *   customer raised it. The agent can `accept` once the customer has agreed
- *   on a time (goes through the same schedule dialog/payload as `schedule`,
- *   just reachable from this state too), or cancel on the customer's behalf.
+ * - `pending_on_customer`: the customer owns scheduling/rejecting; the agent
+ *   can only cancel on their behalf.
  * - Terminal states (`customer_rejected`, `wso2_rejected`, `canceled`,
  *   `concluded`): no actions.
  *
@@ -169,7 +165,6 @@ export const ALL_CALL_REQUEST_STATES: BeCallRequestStateKey[] = [
 export type CallRequestAgentAction =
   | "schedule"
   | "reschedule"
-  | "accept"
   | "reject"
   | "sendNotes"
   | "complete"
@@ -179,7 +174,7 @@ export const CALL_REQUEST_AGENT_ACTIONS: Record<
   BeCallRequestStateKey,
   CallRequestAgentAction[]
 > = {
-  pending_on_customer: ["accept", "cancel"],
+  pending_on_customer: ["cancel"],
   pending_on_wso2: ["schedule", "reject"],
   scheduled: ["reschedule", "complete", "cancel"],
   customer_rejected: [],

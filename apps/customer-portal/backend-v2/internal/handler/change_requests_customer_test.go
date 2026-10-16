@@ -48,6 +48,8 @@ type fakeEntityChangeRequestClient struct {
 	canAnswer *bool
 	// proposal is the customerProposal the fake's detail carries.
 	proposal *entity.ChangeRequestCustomerProposal
+	// approvalRequired / reviewRequired are the two requirement boxes the fake's detail carries.
+	approvalRequired, reviewRequired *bool
 }
 
 func (f *fakeEntityChangeRequestClient) GetChangeRequest(_ context.Context, id string) (entity.ChangeRequest, error) {
@@ -58,6 +60,8 @@ func (f *fakeEntityChangeRequestClient) GetChangeRequest(_ context.Context, id s
 	out.UpdatedOn = "2026-10-06T00:00:00Z"
 	out.CustomerCanAnswer = f.canAnswer
 	out.CustomerProposal = f.proposal
+	out.CustomerApprovalRequired = f.approvalRequired
+	out.CustomerReviewRequired = f.reviewRequired
 	return out, nil
 }
 
@@ -443,6 +447,52 @@ func TestGetChangeRequest_CarriesCustomerCanAnswer(t *testing.T) {
 			}
 			if !present || v != tc.want {
 				t.Fatalf("customerCanAnswer = %v (present %v), want %v", v, present, tc.want)
+			}
+		})
+	}
+}
+
+// GET /change-requests/{id} hands the portal the two requirement boxes (does the change need the
+// customer's approval / review) with a read entity-service computed for a customer on the
+// PostgreSQL data source -- the one that carries customerCanAnswer -- and leaves them out of any
+// other read, whatever the payload said: the previous system's data source sends them as false
+// without computing them, and the portal must never read that as "not required".
+func TestGetChangeRequest_CarriesTheRequirementBoxesOnlyWithACustomerRead(t *testing.T) {
+	yes, no := true, false
+	for name, tc := range map[string]struct {
+		canAnswer, approval, review *bool
+		want                        map[string]any // nil = both keys must be absent
+	}{
+		"customer read, approval required only": {&no, &yes, &no, map[string]any{"customerApprovalRequired": true, "customerReviewRequired": false}},
+		"customer read, both required":          {&yes, &yes, &yes, map[string]any{"customerApprovalRequired": true, "customerReviewRequired": true}},
+		"customer read, neither required":       {&no, &no, &no, map[string]any{"customerApprovalRequired": false, "customerReviewRequired": false}},
+		"not a customer read, boxes sent":       {nil, &yes, &yes, nil},
+		"not a customer read, boxes false":      {nil, &no, &no, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeEntityChangeRequestClient{canAnswer: tc.canAnswer, approvalRequired: tc.approval, reviewRequired: tc.review}
+			req := authedRequest(http.MethodGet, "/change-requests/"+testChangeRequestID, "")
+			req.SetPathValue("id", testChangeRequestID)
+			rec := httptest.NewRecorder()
+			NewChangeRequestHandler(fake).GetChangeRequest(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200. body: %s", rec.Code, rec.Body.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("body is not JSON: %v (%s)", err, rec.Body.String())
+			}
+			for _, key := range []string{"customerApprovalRequired", "customerReviewRequired"} {
+				v, present := got[key]
+				if tc.want == nil {
+					if present {
+						t.Fatalf("%s = %v, want it absent", key, v)
+					}
+					continue
+				}
+				if !present || v != tc.want[key] {
+					t.Fatalf("%s = %v (present %v), want %v", key, v, present, tc.want[key])
+				}
 			}
 		})
 	}

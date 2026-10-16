@@ -129,7 +129,9 @@ func resolutionCodeChoices(ctx context.Context, labels []string) []domain.Choice
 // identity (verified against validCaseCause), so the raw label doubles as
 // the id with no lookup table needed.
 //
-// A label with no entry in snCauseKey is skipped and logged: migration 0108
+// A label with no entry in snCauseKey is skipped and logged at DEBUG (this
+// runs on every metadata request and the gap is expected, so WARN would just
+// flood the logs): migration 0108
 // added case_cause_enum's USER_MISTAKE value with no matching ServiceNow
 // picklist entry, so offering it here would let a caller pick a cause the
 // dual-write mirror's own patchCaseFields then rejects with "cause contains
@@ -139,7 +141,7 @@ func causeChoices(ctx context.Context, labels []string) []domain.ChoiceListItem 
 	out := make([]domain.ChoiceListItem, 0, len(labels))
 	for _, l := range labels {
 		if _, ok := snCauseKey[domain.CaseCause(l)]; !ok {
-			slog.WarnContext(ctx, "project metadata: case_cause_enum label has no ServiceNow mapping", "label", l)
+			slog.DebugContext(ctx, "project metadata: case_cause_enum label has no ServiceNow mapping", "label", l)
 			continue
 		}
 		out = append(out, domain.ChoiceListItem{ID: l, Label: humanizeSnakeCase(strings.ToLower(l))})

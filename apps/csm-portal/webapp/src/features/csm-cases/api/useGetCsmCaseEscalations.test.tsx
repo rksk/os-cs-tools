@@ -110,4 +110,30 @@ describe("useGetCsmCaseEscalations", () => {
     renderHook(() => useGetCsmCaseEscalations(undefined), { wrapper });
     expect(getMock).not.toHaveBeenCalled();
   });
+
+  it("shows System as the creator when the entry has no createdBy", async () => {
+    getMock.mockResolvedValue({
+      escalations: [
+        {
+          id: "esc-2",
+          case: { id: "case-1", name: "CASE-1" },
+          currentLevel: { id: "2", label: "EL2" },
+          previousLevel: { id: "1", label: "EL1" },
+          createdBy: "",
+          createdOn: "2026-08-01T00:00:00Z",
+          updatedOn: "2026-08-01T00:00:00Z",
+        },
+      ],
+      total: 1,
+      currentNotifiedUsers: [],
+      teamLeads: [],
+    });
+
+    const { result } = renderHook(() => useGetCsmCaseEscalations("case-1"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.escalations[0].createdBy).toBe("System");
+  });
 });

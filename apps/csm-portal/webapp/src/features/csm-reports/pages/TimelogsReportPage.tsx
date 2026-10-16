@@ -18,13 +18,12 @@
 // (itself via one-wso2, from SupportPortalLite's TimelogsReport.tsx). UI/JSX
 // unchanged; data layer rewritten onto useBackendApi()/React Query — see
 // useGetTimelogsBreakdown.ts. No SplShell wrapper. Route:
-// spl/projects/:projectId/timelogs-report.
+// customers/projects/:projectId/timelogs-report.
 //
 // Deviation from source: MainView/ToggleReport were inline function
 // components (recreated every render) in the source file. This app's lint
 // config (react-hooks/static-components, React Compiler compatibility)
-// forbids that — hoisted both to module scope, same treatment
-// SlaReportPage's FormView/MainView already needed.
+// forbids that — hoisted both to module scope.
 import { useState, type JSX, type SyntheticEvent } from "react";
 import {
   Alert,

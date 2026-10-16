@@ -17,7 +17,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography, Box,
-  List, ListItem, ListItemText, Collapse, IconButton, Card, CardContent,
+  List, ListItem, ListItemIcon, ListItemText, Collapse, IconButton, Card, CardContent,
   Accordion, AccordionSummary, AccordionDetails, Chip, Skeleton,
 } from "@wso2/oxygen-ui";
 import { TriangleAlertIcon, ChevronDownIcon, ChevronUpIcon, CircleCheckIcon, CircleXIcon } from "@wso2/oxygen-ui-icons-react";
@@ -26,6 +26,77 @@ import { useAccountHealthDetail, useAccountHealthStatus, useInitHealthTracking, 
 import ReviewStatusCell from "./ReviewStatusCell";
 import ActionItemsSection from "./ActionItemsSection";
 import type { ProjectDetail, CaseGroup, CaseLink, EolProduct } from "../api/customerHealthTypes";
+
+// Tracks the pointer's last known screen position so forcePointerRehover
+// (below) can re-dispatch a mousemove there once a risk indicator's expand/
+// collapse finishes shifting the table's layout. Module-level and shared by
+// every RiskCell on the page -- cheap, and there's only ever one real mouse.
+let lastPointerClientX = 0;
+let lastPointerClientY = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "mousemove",
+    (e) => {
+      lastPointerClientX = e.clientX;
+      lastPointerClientY = e.clientY;
+    },
+    { passive: true },
+  );
+}
+
+/**
+ * A browser only recomputes `:hover` (and the resulting cursor) on an actual
+ * pointer-move event -- not when the DOM shifts underneath a stationary
+ * mouse. Expanding or collapsing a risk indicator's detail list changes the
+ * whole table row's height, which pushes every cell below it up or down, so
+ * whatever element ends up under the mouse keeps showing whatever
+ * hover/cursor state it had *before* the shift until the user nudges the
+ * mouse themselves -- reported live as the pointer/cursor looking "wrong"
+ * right after expanding or collapsing a row. Re-dispatching a synthetic
+ * mousemove at the pointer's last known position, once the Collapse
+ * transition has actually finished (its own onEntered/onExited, not a
+ * fixed timeout racing the animation), forces the browser to recompute
+ * hover state against the new layout with no visible pointer movement.
+ */
+function forcePointerRehover() {
+  if (typeof window === "undefined") return;
+  const target = document.elementFromPoint(lastPointerClientX, lastPointerClientY) ?? window;
+  target.dispatchEvent(
+    new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+      clientX: lastPointerClientX,
+      clientY: lastPointerClientY,
+    }),
+  );
+}
+
+/**
+ * `item.eolDate` arrives as a full ISO instant (`2026-03-25T00:00:00Z`,
+ * always midnight — EOL is tracked to the day, never the hour) that, shown
+ * verbatim inside a chip, was the single biggest contributor to the
+ * expanded-row width overflow this file otherwise fixes with
+ * {@link PROJECT_COLUMN_WIDTH}: the chip alone is wider than the whole
+ * column. A plain calendar date carries exactly the same information in a
+ * fraction of the width. Falls back to the raw string on anything that
+ * doesn't parse, rather than hiding a genuinely malformed date.
+ */
+function formatEolDate(raw: string): string {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+// A project column's fixed width — applied to both the header cell and every
+// body cell in that column (RiskCell's own TableCell below), so the column
+// never grows past it. Without a matching cap on the body cells, expanding a
+// row with wide detail content (an EOL product's name next to its long
+// "EOL: <timestamp>" chip, with nothing else bounding their combined width)
+// reported live as stretching the whole column -- and so the whole table --
+// well past this width, shoving every other column sideways just because one
+// row happened to be open. Detail content now wraps inside this width
+// instead.
+const PROJECT_COLUMN_WIDTH = 250;
 
 interface RiskCellProps {
   project: ProjectDetail;
@@ -104,7 +175,7 @@ function RiskCell({ project, indicator, detailData, renderDetailItem }: RiskCell
   }
 
   return (
-    <TableCell>
+    <TableCell sx={{ minWidth: PROJECT_COLUMN_WIDTH, maxWidth: PROJECT_COLUMN_WIDTH }}>
       <Box display="flex" alignItems="center">
         {statusIcon}
         <Typography variant="body2" sx={{ ml: 1 }}>{statusText}</Typography>
@@ -115,7 +186,7 @@ function RiskCell({ project, indicator, detailData, renderDetailItem }: RiskCell
         )}
       </Box>
       {showToggle && (
-        <Collapse in={open} timeout="auto" unmountOnExit>
+        <Collapse in={open} timeout="auto" unmountOnExit onEntered={forcePointerRehover} onExited={forcePointerRehover}>
           <List dense disablePadding sx={{ pl: 2 }}>
             {detailData!.map((item, index) => renderDetailItem(item as never, index))}
           </List>
@@ -181,9 +252,9 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
 
   // FIXED (was `error.status === 500`, matching the OLD Ballerina backend's
   // behavior of 500-ing on an unknown account — the new Go backend
-  // (GetAccountDetail/servicenow.GetCustomerHealthDetail) deliberately
-  // returns 404 instead, see servicenow.ErrAccountNotFound in
-  // internal/servicenow/customer_health.go). Checking 404 via
+  // (GetAccountDetail/GetCustomerHealthDetail) deliberately returns 404
+  // instead, see viewer.ErrAccountNotFound in the backend's
+  // internal/viewer/viewer.go). Checking 404 via
   // isNotFoundError (BackendApiError.status === 404).
   if (isError && isNotFoundError(error)) {
     return <Typography sx={{ mt: 3, textAlign: "center" }}>Couldn't find that account.</Typography>;
@@ -285,7 +356,7 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
                       Risk Indicator
                     </TableCell>
                     {accountData.customerProjects.map((project) => (
-                      <TableCell key={project.sysId} sx={{ fontWeight: "bold", minWidth: 250 }}>{project.name}</TableCell>
+                      <TableCell key={project.sysId} sx={{ fontWeight: "bold", minWidth: PROJECT_COLUMN_WIDTH, maxWidth: PROJECT_COLUMN_WIDTH }}>{project.name}</TableCell>
                     ))}
                   </TableRow>
                 </TableHead>
@@ -315,9 +386,7 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
                         indicator="hasAbandonedCases"
                         detailData={project.detailedAbandonedCases}
                         renderDetailItem={(item: CaseLink, index) => (
-                          <ListItem key={index} dense sx={{ pl: 4 }}>
-                            <ListItemText primary={item.number} />
-                          </ListItem>
+                          <CaseNumberListItem key={index} label={item.number} />
                         )}
                       />
                     ))}
@@ -331,20 +400,38 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
                         indicator="isUsingEolProduct"
                         detailData={project.softwareModel}
                         renderDetailItem={(item: EolProduct, index) => (
-                          <ListItem key={index} dense sx={{ pl: 4, display: "block" }}>
-                            <Typography variant="body2"><strong>Product:</strong> {item.name}</Typography>
-                            <Typography variant="body2"><strong>EOL Date:</strong> {item.eolDate}</Typography>
+                          <Box
+                            key={index}
+                            sx={{
+                              mx: 2, mb: 1, p: 1,
+                              border: 1, borderColor: "divider", borderLeft: 3, borderLeftColor: "error.main",
+                              borderRadius: 1, backgroundColor: "action.hover",
+                              maxWidth: "100%", overflow: "hidden",
+                            }}
+                          >
+                            <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                              <Typography variant="body2" fontWeight={600} sx={{ wordBreak: "break-word" }}>
+                                {item.name}
+                              </Typography>
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                label={`EOL: ${formatEolDate(item.eolDate)}`}
+                                sx={{ alignSelf: "flex-start", maxWidth: "100%" }}
+                              />
+                            </Box>
                             {item.deployments && item.deployments.length > 0 && (
-                              <>
-                                <Typography variant="body2"><strong>Deployments:</strong></Typography>
-                                <List dense disablePadding sx={{ pl: 2 }}>
+                              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, mt: 1 }}>
+                                <Typography variant="caption" color="text.secondary">Deployments:</Typography>
+                                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
                                   {item.deployments.map((dep) => (
-                                    <ListItem key={dep.sysId} dense><ListItemText primary={dep.name} /></ListItem>
+                                    <Chip key={dep.sysId} size="small" variant="outlined" label={dep.name} />
                                   ))}
-                                </List>
-                              </>
+                                </Box>
+                              </Box>
                             )}
-                          </ListItem>
+                          </Box>
                         )}
                       />
                     ))}
@@ -358,9 +445,7 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
                         indicator="hasMigrationDelays"
                         detailData={project.detailedMigrationDelays}
                         renderDetailItem={(item: CaseLink, index) => (
-                          <ListItem key={index} dense sx={{ pl: 4 }}>
-                            <ListItemText primary={item.number} />
-                          </ListItem>
+                          <CaseNumberListItem key={index} label={item.number} />
                         )}
                       />
                     ))}
@@ -374,9 +459,7 @@ export default function CustomerHealthDetailTable({ accountId, onAccountNameLoad
                         indicator="hasEscalatedCases"
                         detailData={project.detailedEscalatedCases}
                         renderDetailItem={(item: CaseLink, index) => (
-                          <ListItem key={index} dense sx={{ pl: 4 }}>
-                            <ListItemText primary={item.escalationNumber} />
-                          </ListItem>
+                          <CaseNumberListItem key={index} label={item.escalationNumber} />
                         )}
                       />
                     ))}
@@ -416,5 +499,25 @@ function StatusIndicator({ isRisk }: { isRisk: boolean }) {
     <Box sx={{ color: isRisk ? "error.main" : "success.main", display: "inline-flex" }}>
       {isRisk ? <CircleXIcon size={22} /> : <CircleCheckIcon size={22} />}
     </Box>
+  );
+}
+
+/**
+ * One case/escalation number in an expanded risk indicator's detail list,
+ * marked with a plain bullet dot instead of a bare, unmarked line of text --
+ * reported live as hard to read once a row lists more than one case, with
+ * nothing visually separating one entry from the next.
+ */
+function CaseNumberListItem({ label }: { label?: string }) {
+  return (
+    <ListItem dense disableGutters sx={{ pl: 4 }}>
+      <ListItemIcon sx={{ minWidth: 20, justifyContent: "center" }}>
+        <Box
+          data-testid="risk-detail-bullet"
+          sx={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "text.disabled" }}
+        />
+      </ListItemIcon>
+      <ListItemText primary={label} />
+    </ListItem>
   );
 }

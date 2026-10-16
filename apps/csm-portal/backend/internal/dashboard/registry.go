@@ -774,8 +774,13 @@ var validWidgetResourceTypes = map[ResourceType]bool{
 }
 
 var validWidgetShapes = map[Shape]bool{
-	ShapeCount: true, ShapeList: true, ShapePie: true, ShapeBar: true,
+	ShapeCount: true, ShapeList: true, ShapePie: true, ShapeBar: true, ShapeLine: true,
 }
+
+// maxWidgetLineDays mirrors POST /cases/volume-trend's own upper bound
+// (entity-service's maxCaseVolumeTrendDays) -- kept in sync by hand, same as
+// validGroupByBuckets below for its own endpoint's enum.
+const maxWidgetLineDays = 90
 
 // validGroupByBuckets are the legal values of GroupByConfig.Bucket -- the
 // same enum POST /cases/feedback/aggregate documents on the entity-service
@@ -822,8 +827,8 @@ func validateWidgets(d Dashboard, source string) error {
 			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"resourceType\" %q", source, d.ID, w.ID, w.ResourceType)
 		}
 		if !validWidgetShapes[w.Shape] {
-			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"shape\" %q; expected one of %q, %q, %q, %q",
-				source, d.ID, w.ID, w.Shape, ShapeCount, ShapeList, ShapePie, ShapeBar)
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"shape\" %q; expected one of %q, %q, %q, %q, %q",
+				source, d.ID, w.ID, w.Shape, ShapeCount, ShapeList, ShapePie, ShapeBar, ShapeLine)
 		}
 		if w.GridWidth < 1 || w.GridWidth > 12 {
 			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"gridWidth\" is %d; it is a column count out of 12 and must be between 1 and 12",
@@ -850,6 +855,46 @@ func validateWidgets(d Dashboard, source string) error {
 			case hasBucket && !validGroupByBuckets[w.GroupBy.Bucket]:
 				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"groupBy.bucket\" %q; expected one of \"day\", \"week\", \"month\" (time buckets), \"rating\", \"reasons_very_dissatisfied\", \"reasons_dissatisfied\", \"reasons_neutral\", \"reasons_satisfied\", \"reasons_very_satisfied\" (categorical buckets)",
 					source, d.ID, w.ID, w.GroupBy.Bucket)
+			}
+			if w.GroupBy.LinkResourceType != "" {
+				if !validWidgetResourceTypes[w.GroupBy.LinkResourceType] {
+					return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"groupBy.linkResourceType\" %q",
+						source, d.ID, w.ID, w.GroupBy.LinkResourceType)
+				}
+				if hasBucket {
+					return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.linkResourceType\" is only meaningful with \"groupBy.field\", not \"groupBy.bucket\"",
+						source, d.ID, w.ID)
+				}
+				// The bucket's own key is only a real id of linkResourceType
+				// when the field being grouped on IS that resource (e.g.
+				// Field "account" groups cases by their account id, which is
+				// exactly what Account's own detail page is keyed by). A
+				// mismatched pairing (e.g. Field "state" + LinkResourceType
+				// "account") would hand the frontend a state value like
+				// "open" as if it were an account id, building a broken
+				// link (/customers/accounts/open). This is deliberately a
+				// strict equality check, not an allowlist of known-safe
+				// pairs: every field this schema's groupBy supports today
+				// names the very resource it would link to when the two are
+				// meant to pair at all (see ResourceAccount's own Field
+				// "account" case), so requiring them to match is both the
+				// narrowest rule that admits the one real use case and the
+				// one least likely to admit a future mismatched pairing by
+				// accident.
+				if string(w.GroupBy.LinkResourceType) != w.GroupBy.Field {
+					return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.linkResourceType\" %q only supports \"groupBy.field\" %q, got %q",
+						source, d.ID, w.ID, w.GroupBy.LinkResourceType, w.GroupBy.LinkResourceType, w.GroupBy.Field)
+				}
+			}
+		}
+		if w.Shape == ShapeLine {
+			if w.ResourceType != ResourceCase {
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: shape %q only supports resourceType %q, got %q",
+					source, d.ID, w.ID, ShapeLine, ResourceCase, w.ResourceType)
+			}
+			if w.Days < 0 || w.Days > maxWidgetLineDays {
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"days\" is %d; it must be between 1 and %d (or omitted for the default)",
+					source, d.ID, w.ID, w.Days, maxWidgetLineDays)
 			}
 		}
 	}

@@ -151,6 +151,23 @@ builds on it and updates it after a successful PATCH.
 covers both orders. As with `alreadyClosed`, don't fix this with a live
 re-fetch: the backend isn't read-after-write consistent.
 
+## End-date suspension writes "Closed", invoice suspension "Suspended"
+
+`suspend` (`sweep.go`) writes `endDateClosureState: "Closed"`; `suspendInvoice`
+writes `invoiceDueDateClosureState: "Suspended"`. This is legacy's split.
+ServiceNow's "Update WSO2 Closure State" business rule sets the overall state
+to Suspended when the end-date state is **Closed** or the invoice (or
+compliance) state is **Suspended**; an end-date "Suspended" did not count
+there. Salesforce's `Closure_State_End_Date_Based__c` picklist has `CLOSED`
+and no `SUSPENDED`. CSM's own roll-up (`wso2ClosureStateRule` in
+entity-service) accepts both, so the overall `closureState` is "Suspended"
+either way.
+
+Earlier builds wrote "Suspended" to the end-date field, so staging projects
+suspended before this change hold that value. The guard treats any value
+other than "Open" as already suspended, so both are skipped. Don't narrow it
+to one exact value.
+
 ## isPartner does not gate the invoice cascade on its own
 
 `buildInvoiceCascade` (`invoice_orchestrate.go`) does **not** check

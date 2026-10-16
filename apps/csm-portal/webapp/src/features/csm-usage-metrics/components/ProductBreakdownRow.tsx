@@ -55,6 +55,15 @@ function yTickFormatter(v: number): string {
 
 function ProductTrendChart({ trend }: { trend: TrendDef }) {
   const theme = useTheme();
+  // recharts/SVG props take a literal color string, not an sx-resolved one, so
+  // `theme.palette.*` (frozen at the theme's default color scheme under Oxygen
+  // UI's CssVars setup -- see this app's own CLAUDE.md, "Theming: never branch
+  // on palette.mode") silently renders the wrong scheme's colors here: axis
+  // labels and the grid went near-invisible in dark mode, drawn in the *light*
+  // scheme's dark-on-white grays against a dark background. `theme.vars.palette.*`
+  // is the live `var(--oxygen-palette-*)` reference that actually follows the
+  // active `[data-color-scheme]`, which is what every color literal below needs.
+  const vars = theme.vars?.palette ?? theme.palette;
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 0, height: "100%" }}>
       <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2 }}>
@@ -63,16 +72,16 @@ function ProductTrendChart({ trend }: { trend: TrendDef }) {
       <Box sx={{ height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={trend.data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke={theme.palette.divider} vertical={false} />
+            <CartesianGrid stroke={vars.divider} vertical={false} />
             <XAxis
               dataKey="name"
-              tick={{ fill: theme.palette.text.secondary, fontSize: 11 }}
+              tick={{ fill: vars.text.secondary, fontSize: 11 }}
               axisLine={false}
               tickLine={false}
               minTickGap={24}
             />
             <YAxis
-              tick={{ fill: theme.palette.text.secondary, fontSize: 11 }}
+              tick={{ fill: vars.text.secondary, fontSize: 11 }}
               axisLine={false}
               tickLine={false}
               tickFormatter={yTickFormatter}
@@ -80,9 +89,9 @@ function ProductTrendChart({ trend }: { trend: TrendDef }) {
             <RTooltip
               formatter={(v) => fmtNumber(Number(v))}
               contentStyle={{
-                backgroundColor: theme.palette.background.paper,
-                borderColor: theme.palette.divider,
-                color: theme.palette.text.primary,
+                backgroundColor: vars.background.paper,
+                borderColor: vars.divider,
+                color: vars.text.primary,
               }}
             />
             <Line type="monotone" dataKey="value" stroke={trend.stroke} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
@@ -170,6 +179,9 @@ export function ProductBreakdownRow({
 }: ProductBreakdownRowProps) {
   const a = USAGE_ACCENT_FIXED;
   const theme = useTheme();
+  // See ProductTrendChart's own comment: a literal color prop (ServerIcon's
+  // `color`) needs the live `theme.vars.palette.*` value, not `theme.palette.*`.
+  const paletteVars = theme.vars?.palette ?? theme.palette;
 
   const trends = useMemo((): TrendDef[] => {
     const result: TrendDef[] = [];
@@ -357,12 +369,13 @@ export function ProductBreakdownRow({
                         alignItems: { xs: "stretch", lg: "center" },
                         justifyContent: "space-between",
                         gap: 2,
-                        border: `1px solid ${theme.palette.divider}`,
-                        bgcolor: theme.palette.action.hover,
+                        border: 1,
+                        borderColor: "divider",
+                        bgcolor: "action.hover",
                       }}
                     >
                       <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: { lg: 200 } }}>
-                        <ServerIcon color={theme.palette.text.disabled} size={18} />
+                        <ServerIcon color={paletteVars.text.disabled} size={18} />
                         <Typography variant="body2" fontWeight={600} fontFamily="monospace" noWrap title={inst.instanceId}>
                           {inst.keyDisplay}
                         </Typography>

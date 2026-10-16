@@ -277,6 +277,34 @@ describe("featureState preview overrides", () => {
     expect(featureState("dashboard", admin, { dashboard: false })).toBe("enabled");
   });
 
+  it("promotes a hidden section when only one of its tabs is previewed, so the tab stays reachable", () => {
+    setOverrides({ operations: "hidden" });
+    // Only the tab's own override is on — the admin never previewed the
+    // section itself — but the section still has to become reachable, or
+    // the tab (correctly "enabled" per featureState) would be unreachable:
+    // visibleNavSections/navigableNavNodes filter a hidden section out
+    // before ever looking at its children.
+    const overrides = { "operations.incidents": true };
+    expect(featureState("operations", admin, overrides)).toBe("enabled");
+    expect(featureState("operations.incidents", admin, overrides)).toBe("enabled");
+    // A sibling tab with no preview of its own stays exactly as hidden.
+    expect(featureState("operations.problems", admin, overrides)).toBe("hidden");
+
+    const sectionIds = visibleNavSections(admin, overrides).map((s) => s.id);
+    expect(sectionIds).toContain("operations");
+
+    const operations = navNodeById("operations")!;
+    const visibleTabs = visibleNavChildren(operations, admin, overrides).map(
+      (c) => c.id,
+    );
+    expect(visibleTabs).toContain("operations.incidents");
+    expect(visibleTabs).not.toContain("operations.problems");
+
+    const navigable = navigableNavNodes(admin, overrides).map((n) => n.id);
+    expect(navigable).toContain("operations.incidents");
+    expect(navigable).not.toContain("operations.problems");
+  });
+
   it("leaves every other caller (no third argument) completely unaffected", () => {
     setOverrides({ updates: "hidden", engagements: "wip" });
     expect(featureState("updates", admin)).toBe("hidden");
@@ -304,5 +332,35 @@ describe("listPreviewableFeatures", () => {
 
   it("returns an empty array when nothing is hidden or WIP", () => {
     expect(listPreviewableFeatures()).toEqual([]);
+  });
+
+  it("excludes a tab that is only hidden/WIP because its section is — never named in the config itself", () => {
+    setOverrides({ operations: "hidden" });
+    const ids = listPreviewableFeatures().map((n) => n.id);
+    expect(ids).toContain("operations");
+    // operations.incidents/problems inherit "hidden" from their section (rule
+    // 1), but the deployment config never named them, so they're not offered
+    // as their own toggle row — only the section the deployment actually
+    // restricted is.
+    expect(ids).not.toContain("operations.incidents");
+    expect(ids).not.toContain("operations.problems");
+  });
+
+  it("excludes a config entry whose resolved state is already enabled (e.g. a WIP section promoted by a usable tab)", () => {
+    setOverrides({ operations: "wip", "operations.incidents": "enabled" });
+    const ids = listPreviewableFeatures().map((n) => n.id);
+    // The section is explicitly named, but it resolves to "enabled" (a WIP
+    // section promoted by its own enabled tab) — nothing to preview there.
+    // operations.incidents is also explicitly named, but its own resolved
+    // state is "enabled" too, so it's excluded the same way.
+    expect(ids).not.toContain("operations");
+    expect(ids).not.toContain("operations.incidents");
+  });
+
+  it("includes a tab the config names directly, even while its section is also restricted", () => {
+    setOverrides({ operations: "wip", "operations.incidents": "hidden" });
+    const ids = listPreviewableFeatures().map((n) => n.id);
+    expect(ids).toContain("operations");
+    expect(ids).toContain("operations.incidents");
   });
 });

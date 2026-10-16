@@ -17,7 +17,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiQueryKeys, BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
-import { userReferenceFromBe } from "@api/backend/mappers";
+import { SYSTEM_AUTHOR_NAME, userReferenceFromBe } from "@api/backend/mappers";
 import type {
   BeCaseActivitiesSearchPayload,
   BeCaseActivitiesSearchResponse,
@@ -40,7 +40,7 @@ function activityAuthorName(entry: BeCaseActivityEntry): string {
     .join(" ")
     .trim();
   if (composed) return composed;
-  return entry.createdBy?.email?.trim() || "Unknown";
+  return entry.createdBy?.email?.trim() || SYSTEM_AUTHOR_NAME;
 }
 
 /** Map one backend `field_change` activity entry onto a {@link CaseAuditEntry}. */

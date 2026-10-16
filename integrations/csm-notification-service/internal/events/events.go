@@ -225,9 +225,24 @@ type CaseCreatedPayload struct {
 	// Team is the case's account's CRE team display name (e.g. "Castor") —
 	// displayed in Chat cards; purely a display value, no routing role
 	// (unlike Product).
-	Team                      string   `json:"team,omitempty"`
-	CreatedAt                 string   `json:"createdAt"`
-	Description               string   `json:"description"`
+	Team        string `json:"team,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	Description string `json:"description"`
+	// DescriptionTruncated is true when entity-service stripped embedded
+	// base64-encoded inline image(s) out of Description (replacing each with
+	// a plain text placeholder) before publishing, to stay under Event Hub's
+	// own per-message size limit — a case description with a pasted
+	// screenshot can otherwise carry several MB of base64 image data and
+	// silently fail the whole publish. dispatch.handleCaseCreated checks
+	// this flag and, when true, re-fetches the full, untouched description
+	// via entity-service's GET /cases/{id} (outside Kafka's size limit
+	// entirely) before building the notification EMAIL, so the email still
+	// shows the original image(s); the Chat card never read embedded images
+	// from this field anyway and uses Description as sent regardless.
+	// omitempty: false/absent both mean "nothing was stripped," the normal
+	// case, and must read identically for a publisher that hasn't been
+	// updated to send this field yet.
+	DescriptionTruncated      bool     `json:"descriptionTruncated,omitempty"`
 	IncidentImpactDescription string   `json:"incidentImpactDescription,omitempty"`
 	Recipients                []string `json:"recipients"`
 	// ProjectOnboardingStatus/IsEvaluationAccount are deprecated and unused
@@ -263,7 +278,12 @@ type CommentAddedPayload struct {
 	WSO2CaseID  string `json:"wso2CaseId,omitempty"`
 	CaseTitle   string `json:"caseTitle"`
 	CaseComment string `json:"caseComment"`
-	CommentID   string `json:"commentId"`
+	// CaseCommentTruncated — see CaseCreatedPayload.DescriptionTruncated's
+	// own doc comment; identical reasoning and fix, for a comment's body
+	// instead of a case description. dispatch.handleCommentAdded re-fetches
+	// via entity-service's GET /comments/{id} when this is set.
+	CaseCommentTruncated bool   `json:"caseCommentTruncated,omitempty"`
+	CommentID            string `json:"commentId"`
 	// IsInternalNote is true when this comment is an internal note — never
 	// customer-visible, and the publisher is expected to have already
 	// restricted Recipients accordingly (see entity-service's own
@@ -305,6 +325,15 @@ type CommentAddedPayload struct {
 	// with no lookup here at all. See entity-service's own
 	// CommentAddedPayload.IsSupportEngineerResponse doc comment.
 	IsSupportEngineerResponse bool `json:"isSupportEngineerResponse,omitempty"`
+	// CaseType/EngagementType let dispatch.checkFrustration route a
+	// frustration-detection Chat alert to the Migration audience instead of
+	// the usual team/Incident Monitor routing, when the comment landed on a
+	// migration engagement. CaseType is entity-service's uppercase
+	// strings.ToUpper(cv.Type) (e.g. "ENGAGEMENT"); EngagementType is
+	// entity-service's own lowercase value (e.g. "migration"). Both empty
+	// for every non-engagement case-like type.
+	CaseType       string `json:"caseType,omitempty"`
+	EngagementType string `json:"engagementType,omitempty"`
 }
 
 // StatusChangedPayload is TypeStatusChanged's payload. See
@@ -362,6 +391,21 @@ type CaseAcknowledgedPayload struct {
 	// decode-compatibility pair exists.
 	ProjectOnboardingStatus string `json:"projectOnboardingStatus,omitempty"`
 	IsEvaluationAccount     bool   `json:"isEvaluationAccount,omitempty"`
+	// CaseType — see CaseCreatedPayload's own doc comment (the same
+	// strings.ToUpper(req.Type) convention entity-service uses). A
+	// security_report_analysis case never carries a severity, so
+	// handleCaseAcknowledged uses this to pick the dedicated ack card that
+	// omits the severity line, instead of rendering "Unknown".
+	//
+	// This field is new, and decodeStrict rejects any field not declared on
+	// this struct -- deploy this service's build that declares it BEFORE
+	// deploying the entity-service build that starts sending it, same
+	// deployment-order requirement as every other strictly-decoded new field
+	// added to a payload here (e.g. incident.assigned's assignedOn). An
+	// overlapping rollout where entity-service ships first would have every
+	// case.acknowledged event fail this field's unknown-field check, retry,
+	// dead-letter and eventually drop.
+	CaseType string `json:"caseType,omitempty"`
 }
 
 // WorkaroundProvidedPayload is TypeWorkaroundProvided's payload — mirrors

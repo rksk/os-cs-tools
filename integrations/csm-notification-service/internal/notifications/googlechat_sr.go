@@ -130,7 +130,7 @@ func (c *GoogleChatClient) SendSRCreatedAlert(ctx context.Context, audience stri
 		CardsV2: []chatCardWrapper{{CardID: "sr-created-alert", Card: chatCard{Header: header, Sections: sections}}},
 		Thread:  &chatThread{ThreadKey: srThreadKey(a.CaseID, a.Number)},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, a.Number, a.CaseID, msg)
 }
 
 // SendSRAcknowledgedAlert posts ServiceNow's SR acknowledgement card, as a
@@ -169,7 +169,7 @@ func (c *GoogleChatClient) SendSRAcknowledgedAlert(ctx context.Context, audience
 		}}},
 		Thread: &chatThread{ThreadKey: srThreadKey(a.CaseID, a.Number)},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, a.Number, a.CaseID, msg)
 }
 
 // SendSRCustomerCommentAlert posts a customer's comment on a devops-sm SR to
@@ -204,7 +204,7 @@ func (c *GoogleChatClient) SendSRCustomerCommentAlert(ctx context.Context, audie
 		}}},
 		Thread: &chatThread{ThreadKey: srThreadKey(a.CaseID, a.Number)},
 	}
-	return c.sendCardToAudience(ctx, audience, msg)
+	return c.sendCardToAudience(ctx, audience, a.Number, a.CaseID, msg)
 }
 
 // srBlockTags are the tags that end a run of text: each becomes a space, so

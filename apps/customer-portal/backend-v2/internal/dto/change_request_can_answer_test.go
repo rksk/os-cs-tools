@@ -114,7 +114,8 @@ func TestMapChangeRequestDetails_ExposesOnlyTheCustomerFields(t *testing.T) {
 		"customerContacts": [{"id": "u1", "name": "Alice", "email": "alice@example.com"}],
 		"approvals": [{"stage": "CAB Approval", "approvers": [{"id": "u2", "name": "Cab Member", "status": "APPROVED", "canDecide": false}]}],
 		"customerApprovalRequired": true, "customerReviewRequired": false,
-		"requestedBy": {"id": "u3", "name": "Requester"}
+		"requestedBy": {"id": "u3", "name": "Requester"},
+		"tags": [{"id": "t1", "label": "internal-only", "color": null}]
 	}`
 	var cr entity.ChangeRequest
 	if err := json.Unmarshal([]byte(fromEntityService), &cr); err != nil {
@@ -132,6 +133,7 @@ func TestMapChangeRequestDetails_ExposesOnlyTheCustomerFields(t *testing.T) {
 	sort.Strings(keys)
 	want := []string{
 		"approvedBy", "approvedOn", "case", "createdBy", "createdOn", "customerCanAnswer", "communicationPlan",
+		"customerApprovalRequired", "customerReviewRequired",
 		"description", "endDate", "hasCustomerApproved", "hasCustomerReviewed", "id", "impact", "impactDescription",
 		"justification", "number", "project", "rollbackPlan", "serviceOutage", "startDate", "state", "testPlan",
 		"title", "type", "updatedOn",
@@ -140,9 +142,79 @@ func TestMapChangeRequestDetails_ExposesOnlyTheCustomerFields(t *testing.T) {
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("the customer detail's keys changed:\n  got:  %v\n  want: %v", keys, want)
 	}
-	for _, internal := range []string{"customerContacts", "approvals", "approvers", "legalNextStates", "requestedBy", "customerApprovalRequired", "customerReviewRequired", "canDecide"} {
+	// tags are staff bookkeeping (the CSM portal's), never a customer's to see:
+	// the entity type has no field for them, so the key cannot reach the customer.
+	// customerApprovalRequired / customerReviewRequired are no longer in this list:
+	// they reach a customer's read, but only when entity-service computed it for a
+	// customer (see the requirement-box tests below).
+	for _, internal := range []string{"customerContacts", "approvals", "approvers", "legalNextStates", "requestedBy", "canDecide", "tags"} {
 		if _, present := got[internal]; present {
 			t.Errorf("the customer detail exposes %q", internal)
 		}
+	}
+}
+
+// The two requirement boxes (does the change need the customer's approval /
+// review) reach the customer only with a read entity-service computed for a
+// customer on the PostgreSQL data source -- the read that carries
+// customerCanAnswer -- and then exactly as sent, true or false. Without that
+// signal they stay out even when the payload carries them: the previous
+// system's data source sends them as false without computing them, and an
+// unknown requirement must never arrive as "not required".
+func TestMapChangeRequestDetails_PassesTheRequirementBoxesOnlyWithACustomerRead(t *testing.T) {
+	yes, no := true, false
+	for name, tc := range map[string]struct {
+		canAnswer        *bool
+		approval, review *bool
+		wantPresent      bool
+	}{
+		"customer read, both ticked":          {&yes, &yes, &yes, true},
+		"customer read, neither ticked":       {&no, &no, &no, true},
+		"customer read, approval only":        {&no, &yes, &no, true},
+		"not a customer read, boxes sent":     {nil, &yes, &no, false},
+		"not a customer read, boxes as false": {nil, &no, &no, false},
+		"not a customer read, boxes absent":   {nil, nil, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := detailsJSON(t, entity.ChangeRequest{
+				CustomerCanAnswer:        tc.canAnswer,
+				CustomerApprovalRequired: tc.approval,
+				CustomerReviewRequired:   tc.review,
+			})
+			for key, sent := range map[string]*bool{"customerApprovalRequired": tc.approval, "customerReviewRequired": tc.review} {
+				v, present := got[key]
+				if !tc.wantPresent {
+					if present {
+						t.Errorf("%s = %v, want it absent", key, v)
+					}
+					continue
+				}
+				if sent == nil {
+					// A customer read always carries both (entity-service's type has
+					// them as plain booleans); a nil here only means the fake sent none.
+					if present {
+						t.Errorf("%s = %v, want it absent when entity-service sent none", key, v)
+					}
+					continue
+				}
+				if !present || v != *sent {
+					t.Errorf("%s = %v (present %v), want %v", key, v, present, *sent)
+				}
+			}
+		})
+	}
+}
+
+// The boxes are decoded from entity-service's detail as it sends them (plain
+// booleans) and reach the customer under the same names and values.
+func TestMapChangeRequestDetails_DecodesTheRequirementBoxesFromTheEntityDetail(t *testing.T) {
+	var cr entity.ChangeRequest
+	if err := json.Unmarshal([]byte(`{"id":"cr-1","state":"closed","customerCanAnswer":false,
+		"customerApprovalRequired":true,"customerReviewRequired":false}`), &cr); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := detailsJSON(t, cr)
+	if got["customerApprovalRequired"] != true || got["customerReviewRequired"] != false {
+		t.Fatalf("boxes = %v / %v, want true / false", got["customerApprovalRequired"], got["customerReviewRequired"])
 	}
 }

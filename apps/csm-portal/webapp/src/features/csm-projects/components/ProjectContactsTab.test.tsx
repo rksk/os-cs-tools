@@ -142,6 +142,16 @@ const INVITED_GRANTED_CONTACT: BeProjectContact = {
   grantsCaseAccess: true,
 };
 
+const INTEGRATION_CONTACT: BeProjectContact = {
+  id: "30000000-0000-0000-0000-000000000000",
+  name: "Integration User",
+  email: "integration@example.com",
+  registrationState: "invited",
+  isCsIntegrationUser: true,
+  customerContactPresent: true,
+  grantsCaseAccess: false,
+};
+
 const JANE_EMAIL_FAILED: BeProjectOnboardingMembership = {
   membershipSfId: "a0X000000000001AAA",
   contactSfId: null,
@@ -197,6 +207,32 @@ describe("ProjectContactsTab", () => {
     expect(screen.getByText(/No contacts found for this project/i)).toBeInTheDocument();
   });
 
+  it("shows Admin only when this project's roles include ADMIN", () => {
+    postMock.mockResolvedValue({ users: [] });
+    mockQueryResult({
+      data: [
+        {
+          ...LINKED_CONTACT,
+          name: "Account Admin",
+          roles: ["PORTAL_USER", "SECURITY_CONTACT"],
+          accountRoles: ["customer", "customer_admin", "external"],
+        },
+        {
+          ...LINKED_CONTACT,
+          id: "00000000-0000-0000-0000-000000000001",
+          name: "Project Admin",
+          email: "project.admin@example.com",
+          roles: ["ADMIN"],
+        },
+      ],
+    });
+    renderTab();
+    expect(screen.queryByText("Customer Admin", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Admin", { selector: ".MuiChip-label" })).toHaveLength(1);
+    expect(screen.getAllByText("Portal User", { selector: ".MuiChip-label" })).toHaveLength(2);
+    expect(screen.getByText("Security User", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
   it("renders a linked contact as a clickable profile link", () => {
     postMock.mockResolvedValue({ users: [] });
     mockQueryResult({ data: [LINKED_CONTACT] });
@@ -204,7 +240,7 @@ describe("ProjectContactsTab", () => {
     const link = screen.getByRole("link", { name: "Jane Doe" });
     expect(link).toHaveAttribute("href", `/people/${LINKED_CONTACT.id}`);
     expect(screen.getByText("registered")).toBeInTheDocument();
-    expect(screen.getByText("viewer", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText("Portal User", { selector: ".MuiChip-label" })).toBeInTheDocument();
   });
 
   it("renders an orphaned contact (no id) without a link, flagged, and without crashing", () => {
@@ -278,6 +314,23 @@ describe("ProjectContactsTab", () => {
       screen.getByText(/invited under a different address than its linked contact's own/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/no linked contact record/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a linked but not yet registered row as Not registered, not as an address mismatch", () => {
+    postMock.mockResolvedValue({ users: [] });
+    mockQueryResult({ data: [{ ...INVITED_GRANTED_CONTACT, grantsCaseAccess: false }] });
+    renderTab();
+    expect(screen.getByText("Not registered", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.queryByText(/invited under a different address/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an integration user as REGISTERED with no access fault", () => {
+    postMock.mockResolvedValue({ users: [] });
+    mockQueryResult({ data: [INTEGRATION_CONTACT] });
+    renderTab();
+    expect(screen.getByText("Integration user", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText("REGISTERED", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.queryByText("No access", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
   });
 
   // A failed invite has no name (that is only ever known from the contact

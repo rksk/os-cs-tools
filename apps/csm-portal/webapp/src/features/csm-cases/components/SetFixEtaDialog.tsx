@@ -18,20 +18,44 @@ import {
   AdapterDateFns,
   Box,
   Button,
+  CircularProgress,
   DatePickers,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
+  InputLabel,
+  MenuItem,
+  Select,
   Switch,
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
 import { useState, type JSX } from "react";
 import { formatDateOnly, isPastDateOnly, parseDateOnly } from "@utils/dateTime";
+import { useSearchProducts } from "@features/csm-projects/api/useSearchProducts";
 
 const { DesktopDatePicker: DatePicker, LocalizationProvider } = DatePickers;
+
+/**
+ * True only for an absolute http(s) URL that points at a GitHub issue or pull
+ * request (`github.com/<owner>/<repo>/issues|pull/<number>`) — digiops-cs#3449
+ * asked specifically for GitHub-URL validation on this field, not a plain
+ * "looks like a URL" check (see `@utils/isHttpUrl` for that narrower, purely
+ * security-motivated one used elsewhere).
+ */
+function isGithubIssueUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    if (url.hostname.toLowerCase() !== "github.com") return false;
+    return /^\/[^/]+\/[^/]+\/(issues|pull)\/\d+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
 
 /** Combined `PATCH /cases/{id}` payload this dialog can produce in one save. */
 export interface FixEtaSavePayload {
@@ -73,6 +97,13 @@ interface FixEtaDatePickerProps {
   value: string;
   disabled: boolean;
   onChange: (valueDateOnly: string) => void;
+  /**
+   * A blocking validation message for this specific field (a past date, or an
+   * ordering conflict with one of the other two estimates) — takes priority
+   * over the field's own past-date check, since an ordering error is more
+   * specific/actionable than a generic "this is in the past" when both apply.
+   */
+  errorText?: string;
 }
 
 /**
@@ -84,12 +115,15 @@ function FixEtaDatePicker({
   value,
   disabled,
   onChange,
+  errorText,
 }: FixEtaDatePickerProps): JSX.Element {
   const parsed = parseDateOnly(value);
-  // Non-blocking: a past estimate is unusual but not forbidden (e.g. logging
-  // an estimate that was already missed), so this only warns, unlike the
-  // hard-block some other pickers apply to a past value.
+  // A past estimate is now a hard block, not just a warning (digiops-cs#3449:
+  // "ETA fields can set past days" was reported as a bug) -- fix-ETA dates are
+  // forward-looking commitments, so a date already in the past can never be a
+  // genuine estimate being made today.
   const isPast = isPastDateOnly(parsed);
+  const helperText = errorText ?? (isPast ? "This date is in the past." : undefined);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
@@ -108,7 +142,8 @@ function FixEtaDatePicker({
           textField: {
             fullWidth: true,
             size: "small",
-            helperText: isPast ? "This date is in the past." : undefined,
+            error: !!errorText || isPast,
+            helperText,
           },
         }}
       />
@@ -147,12 +182,52 @@ export default function SetFixEtaDialog({
     currentWorstCaseFixEta ?? "",
   );
   const [shareWithCustomer, setShareWithCustomer] = useState(false);
-  const [product, setProduct] = useState("");
+  const [productId, setProductId] = useState("");
   const [publicTicket, setPublicTicket] = useState("");
+  const { data: products, isLoading: productsLoading } = useSearchProducts();
 
   const hasAnyEta = !!(bestCaseFixEta || mostLikelyFixEta || worstCaseFixEta);
-  const hasProduct = product.trim().length > 0;
+  // Derived from a real catalogue match with a real name, not just a
+  // non-empty productId -- if the selected product disappears from the
+  // fetched list (a refetch mid-dialog) or carries no name (BeProduct.name
+  // is optional), productId would otherwise still read as "set" and either
+  // the raw UUID or an empty string could leak into the customer-visible
+  // comment via a stale fallback.
+  const selectedProduct = products?.find((p) => p.id === productId);
+  const hasProduct = !!selectedProduct?.name;
   const hasPublicTicket = publicTicket.trim().length > 0;
+  const trimmedPublicTicket = publicTicket.trim();
+  const isPublicTicketValidUrl =
+    !hasPublicTicket || isGithubIssueUrl(trimmedPublicTicket);
+
+  // Past-date and ordering checks run regardless of whether sharing is on --
+  // an internal-only estimate with a date already in the past, or with the
+  // three out of best <= most likely <= worst case order, is just as wrong
+  // when nobody is sharing it with the customer (digiops-cs#3449).
+  const bestParsed = parseDateOnly(bestCaseFixEta);
+  const mostLikelyParsed = parseDateOnly(mostLikelyFixEta);
+  const worstParsed = parseDateOnly(worstCaseFixEta);
+  const bestIsPast = isPastDateOnly(bestParsed);
+  const mostLikelyIsPast = isPastDateOnly(mostLikelyParsed);
+  const worstIsPast = isPastDateOnly(worstParsed);
+  const hasPastDate = bestIsPast || mostLikelyIsPast || worstIsPast;
+
+  const bestAfterMostLikely =
+    !!bestParsed && !!mostLikelyParsed && bestParsed.getTime() > mostLikelyParsed.getTime();
+  const mostLikelyAfterWorst =
+    !!mostLikelyParsed && !!worstParsed && mostLikelyParsed.getTime() > worstParsed.getTime();
+  const bestAfterWorst =
+    !!bestParsed && !!worstParsed && bestParsed.getTime() > worstParsed.getTime();
+  const hasOrderingError = bestAfterMostLikely || mostLikelyAfterWorst || bestAfterWorst;
+
+  const bestCaseErrorText = bestAfterMostLikely
+    ? "Best case must not be later than Most likely."
+    : bestAfterWorst
+      ? "Best case must not be later than Worst case."
+      : undefined;
+  const mostLikelyErrorText = mostLikelyAfterWorst
+    ? "Most likely must not be later than Worst case."
+    : undefined;
 
   // Checked first: sharing posts a real customer-visible comment, gated by
   // the same work_in_progress + ongoing + assignee rule as the case's own
@@ -171,22 +246,37 @@ export default function SetFixEtaDialog({
           ? "Product is required to share with the customer."
           : !hasPublicTicket
             ? "Public ticket is required to share with the customer."
-            : undefined
-    : undefined;
+            : !isPublicTicketValidUrl
+              ? "Public ticket must be a GitHub issue or pull request URL."
+              : undefined
+    : !hasPublicTicket || isPublicTicketValidUrl
+      ? undefined
+      : "Public ticket must be a GitHub issue or pull request URL.";
+
+  const dateValidationError = hasPastDate
+    ? "Fix ETA dates can't be in the past."
+    : hasOrderingError
+      ? "Best case must be no later than Most likely, which must be no later than Worst case."
+      : undefined;
 
   const canSubmit =
-    (hasAnyEta || shareWithCustomer) && !shareValidationError;
+    (hasAnyEta || shareWithCustomer) &&
+    !shareValidationError &&
+    !dateValidationError;
 
   const handleSave = (): void => {
     if (!canSubmit) return;
+    // canSubmit already requires hasProduct (a real selectedProduct match)
+    // whenever shareWithCustomer is on, so selectedProduct is never
+    // undefined here -- no raw productId fallback, ever.
     onSave({
       ...(bestCaseFixEta && { bestCaseFixEta }),
       ...(mostLikelyFixEta && { mostLikelyFixEta }),
       ...(worstCaseFixEta && { worstCaseFixEta }),
       ...(shareWithCustomer && {
         addPublicComment: true,
-        product: product.trim(),
-        publicTicket: publicTicket.trim(),
+        product: selectedProduct?.name ?? "",
+        publicTicket: trimmedPublicTicket,
       }),
     });
   };
@@ -206,18 +296,25 @@ export default function SetFixEtaDialog({
             value={bestCaseFixEta}
             disabled={isSaving}
             onChange={setBestCaseFixEta}
+            errorText={
+              bestIsPast ? "This date is in the past." : bestCaseErrorText
+            }
           />
           <FixEtaDatePicker
             label="Most likely"
             value={mostLikelyFixEta}
             disabled={isSaving}
             onChange={setMostLikelyFixEta}
+            errorText={
+              mostLikelyIsPast ? "This date is in the past." : mostLikelyErrorText
+            }
           />
           <FixEtaDatePicker
             label="Worst case"
             value={worstCaseFixEta}
             disabled={isSaving}
             onChange={setWorstCaseFixEta}
+            errorText={worstIsPast ? "This date is in the past." : undefined}
           />
 
           <FormControlLabel
@@ -242,15 +339,30 @@ export default function SetFixEtaDialog({
                 Posts a customer-visible comment on this case summarizing the
                 estimate(s) above.
               </Typography>
-              <TextField
-                label="Product"
-                size="small"
-                fullWidth
-                required
-                value={product}
-                onChange={(e) => setProduct(e.target.value)}
-                disabled={isSaving}
-              />
+              <FormControl size="small" fullWidth required>
+                <InputLabel id="set-fix-eta-product-label" shrink={productId !== ""}>
+                  Product
+                </InputLabel>
+                <Select
+                  labelId="set-fix-eta-product-label"
+                  label="Product"
+                  value={productId}
+                  onChange={(e) => setProductId(e.target.value as string)}
+                  notched={productId !== ""}
+                  disabled={isSaving}
+                  startAdornment={
+                    productsLoading ? (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    ) : null
+                  }
+                >
+                  {(products ?? []).map((p) => (
+                    <MenuItem key={p.id} value={p.id}>
+                      {p.name ?? p.id}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               <TextField
                 label="Public ticket"
                 placeholder="e.g. a public GitHub issue URL"
@@ -260,6 +372,12 @@ export default function SetFixEtaDialog({
                 value={publicTicket}
                 onChange={(e) => setPublicTicket(e.target.value)}
                 disabled={isSaving}
+                error={hasPublicTicket && !isPublicTicketValidUrl}
+                helperText={
+                  hasPublicTicket && !isPublicTicketValidUrl
+                    ? "Must be a GitHub issue or pull request URL."
+                    : undefined
+                }
               />
             </>
           )}

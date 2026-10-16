@@ -137,6 +137,39 @@ export type VulnerabilityDetailsContentProps = {
   isLoading: boolean;
   isError: boolean;
   onBack: () => void;
+  /** Every record that shares this vulnerability's CVE (one per product / version / component). */
+  affectedProducts?: ProductVulnerability[];
+  isAffectedProductsLoading?: boolean;
+  isAffectedProductsError?: boolean;
+  onAffectedProductClick?: (vulnerability: ProductVulnerability) => void;
+};
+
+/** Every record of one vulnerability for the same product and product version. */
+export type AffectedProductGroup = {
+  /** Stable identity of the product + product version (normalised). */
+  key: string;
+  productName: string;
+  productVersion: string;
+  /** Distinct update levels of the group's records (normally just one). */
+  updateLevels: string[];
+  /** One record per affected component, in the order they were supplied. */
+  records: ProductVulnerability[];
+};
+
+export type VulnerabilityAffectedProductsProps = {
+  affectedProducts: ProductVulnerability[];
+  currentId?: string;
+  isLoading?: boolean;
+  isError?: boolean;
+  onRowClick?: (vulnerability: ProductVulnerability) => void;
+  /**
+   * The user's expand/collapse choices by group key. Pass it together with
+   * `onToggleGroup` to keep the choices in a parent that outlives this component
+   * (the details page unmounts the section while the next record loads); leave
+   * both out and the component keeps them itself.
+   */
+  toggledGroups?: Record<string, boolean>;
+  onToggleGroup?: (groupKey: string, expanded: boolean) => void;
 };
 
 // Response type for product vulnerabilities metadata.

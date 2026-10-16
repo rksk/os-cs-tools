@@ -76,7 +76,10 @@ vi.mock("@context/error-banner/ErrorBannerContext", () => ({
 // conventions). Mocking `CurrentUserContext` directly short-circuits that
 // chain before it ever reaches `apiConfig`, same approach as
 // CsmIncidentDetailPage.test.tsx.
-let mockCurrentUser: { id: string; email: string } = {
+// `roles` feeds `usePortalAccess()` (unmocked, it derives access from the
+// current user's roles): absent means no write access, the way a viewer reads
+// the page; the tags describe below sets `cs_engineer` for the editable case.
+let mockCurrentUser: { id: string; email: string; roles?: string[] } = {
   id: "00000000-0000-0000-0000-00000000000c",
   email: "jane.doe@example.com",
 };
@@ -182,8 +185,40 @@ vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
 vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
   default: () => null,
 }));
-vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
-  AttachmentsWidget: () => null,
+// The real widgets module, with only the attachments widget stubbed out: the
+// tags describe below exercises the case page's own `TagsWidget` as this page
+// mounts it.
+vi.mock("@features/csm-cases/components/CaseDetailWidgets", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@features/csm-cases/components/CaseDetailWidgets")>();
+  return { ...actual, AttachmentsWidget: () => null };
+});
+// The case page's tag hooks, as this page calls them: the id and the detail
+// query key they are given are captured, the mutations themselves are mocks.
+const addTagMutateMock = vi.fn();
+const removeTagMutateMock = vi.fn();
+const useAddCaseTagMock = vi.fn();
+const useRemoveCaseTagMock = vi.fn();
+let removeTagPendingId: string | undefined;
+vi.mock("@features/csm-cases/api/useCaseTags", () => ({
+  useAddCaseTag: (id: string | undefined, key: unknown) => {
+    useAddCaseTagMock(id, key);
+    return { mutate: addTagMutateMock, isPending: false };
+  },
+  useRemoveCaseTag: (id: string | undefined, key: unknown) => {
+    useRemoveCaseTagMock(id, key);
+    return { mutate: removeTagMutateMock, isPending: removeTagPendingId !== undefined, variables: removeTagPendingId };
+  },
+}));
+// `AddTagDialog`'s type-ahead (`POST /tags/search`): a fixed vocabulary.
+vi.mock("@features/csm-cases/api/useSearchTags", () => ({
+  useSearchTags: () => ({
+    data: [
+      { id: "t-2", label: "maintenance-window" },
+      { id: "t-3", label: "apim-upgrade" },
+    ],
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 // Imported after the mocks above so the module picks them up.
@@ -214,6 +249,11 @@ function mockQueryResult(
 
 beforeEach(() => {
   mockCurrentUser = { id: "00000000-0000-0000-0000-00000000000c", email: "jane.doe@example.com" };
+  addTagMutateMock.mockReset();
+  removeTagMutateMock.mockReset();
+  useAddCaseTagMock.mockReset();
+  useRemoveCaseTagMock.mockReset();
+  removeTagPendingId = undefined;
   decideApprovalMutateMock.mockReset();
   navigateMock.mockClear();
   patchMutateMock.mockClear();
@@ -314,6 +354,84 @@ describe("CsmChangeRequestDetailPage", () => {
     mockQueryResult({ data: { ...BASE_CR, state: "implement" } });
     renderPage();
     expect(screen.getByRole("list", { name: /change request lifecycle/i })).toBeInTheDocument();
+  });
+});
+
+describe("CsmChangeRequestDetailPage — tags (the case page's widget, hooks and dialog)", () => {
+  const TAGGED = {
+    ...BASE_CR,
+    tags: [
+      { id: "t-1", label: "apim-upgrade", color: null },
+      { id: "t-4", label: "zebra-rollout" },
+    ],
+  };
+  const tagsCard = (): HTMLElement => screen.getByText("Tags", { selector: "h6, span, p, div" }).closest(".MuiCard-root") as HTMLElement;
+  const chipOf = (label: string): HTMLElement => screen.getByText(label).closest(".MuiChip-root") as HTMLElement;
+
+  it("shows the change request's tags as chips, and the hooks are bound to this change request's own detail query", () => {
+    mockQueryResult({ data: TAGGED });
+    renderPage();
+
+    const card = tagsCard();
+    expect(within(card).getByText("apim-upgrade")).toBeInTheDocument();
+    expect(within(card).getByText("zebra-rollout")).toBeInTheDocument();
+    // The same hooks the case page uses, pointed at this change request and
+    // at ITS detail query (not the case detail's), so the chips follow a write.
+    expect(useAddCaseTagMock).toHaveBeenCalledWith("chg-1", ["change-request-details", "chg-1"]);
+    expect(useRemoveCaseTagMock).toHaveBeenCalledWith("chg-1", ["change-request-details", "chg-1"]);
+  });
+
+  it("says so when there are none, and is not rendered at all when the backend carried no tags array", () => {
+    mockQueryResult({ data: { ...BASE_CR, tags: [] } });
+    const { unmount } = renderPage();
+    expect(within(tagsCard()).getByText("No tags applied.")).toBeInTheDocument();
+    unmount();
+
+    mockQueryResult({ data: { ...BASE_CR, tags: null } });
+    renderPage();
+    expect(screen.queryByText("No tags applied.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^tag$/i })).not.toBeInTheDocument();
+  });
+
+  it("is read-only without write access: no Tag button, no delete affordance on a chip", () => {
+    mockQueryResult({ data: TAGGED });
+    renderPage();
+
+    expect(within(tagsCard()).queryByRole("button", { name: /^tag$/i })).not.toBeInTheDocument();
+    expect(chipOf("apim-upgrade").querySelector(".MuiChip-deleteIcon")).toBeNull();
+  });
+
+  it("adds a tag through the case page's Add tag dialog for a user with write access", () => {
+    mockCurrentUser = { ...mockCurrentUser, roles: ["cs_engineer"] };
+    mockQueryResult({ data: TAGGED });
+    renderPage();
+
+    fireEvent.click(within(tagsCard()).getByRole("button", { name: /^tag$/i }));
+    const dialog = screen.getByRole("dialog", { name: /add tag/i });
+    fireEvent.change(within(dialog).getByLabelText(/^tag$/i), { target: { value: "maint" } });
+    fireEvent.click(screen.getByText("maintenance-window"));
+    fireEvent.click(within(dialog).getByRole("button", { name: /add tag/i }));
+
+    expect(addTagMutateMock).toHaveBeenCalledTimes(1);
+    expect(addTagMutateMock.mock.calls[0][0]).toBe("maintenance-window");
+  });
+
+  it("removes a tag from its chip for a user with write access, and disables the chip while that removal is in flight", () => {
+    mockCurrentUser = { ...mockCurrentUser, roles: ["cs_engineer"] };
+    mockQueryResult({ data: TAGGED });
+    const { unmount } = renderPage();
+
+    const deleteIcon = chipOf("zebra-rollout").querySelector(".MuiChip-deleteIcon");
+    expect(deleteIcon).toBeTruthy();
+    fireEvent.click(deleteIcon as Element);
+    expect(removeTagMutateMock).toHaveBeenCalledTimes(1);
+    expect(removeTagMutateMock.mock.calls[0][0]).toBe("t-4");
+    unmount();
+
+    removeTagPendingId = "t-4";
+    renderPage();
+    expect(chipOf("zebra-rollout")).toHaveClass("Mui-disabled");
+    expect(chipOf("apim-upgrade")).not.toHaveClass("Mui-disabled");
   });
 });
 

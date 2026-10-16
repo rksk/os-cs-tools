@@ -437,6 +437,13 @@ type CaseRepository interface {
 	// account), largest bucket first. Rows with no value for the field are
 	// not counted. The caller applies any top-N cap.
 	AggregateCases(ctx context.Context, req domain.SearchCasesRequest, groupBy string, scope SearchScope) ([]domain.AggregateBucket, error)
+	// CaseVolumeTrend computes the opened and closed counts for each of the
+	// given UTC calendar days (YYYY-MM-DD), over cases matching req's
+	// filters. A day with no matching cases is present in the result with
+	// both counts 0 -- computed, not merely absent -- so the caller (which
+	// may be filling in cache misses for only some days of a window) can
+	// always distinguish "zero" from "not asked for".
+	CaseVolumeTrend(ctx context.Context, req domain.SearchCasesRequest, days []string, scope SearchScope) (map[string]domain.CaseVolumeDayCount, error)
 	// CreateCaseComment inserts a new comment row for the given case.
 	// createdOn is nil for an ordinary comment (created_on = NOW()); pass a
 	// non-nil value to preserve a known past timestamp instead -- see the
@@ -554,6 +561,15 @@ type CaseRepository interface {
 	// not exist (the tag might exist but not be on this case, or not exist
 	// at all -- both are "not found" from the caller's perspective).
 	RemoveCaseTag(ctx context.Context, caseID, tagID, callerEmail string) error
+	// IsCaseLikeWorkItem reports whether workItemID names one of the five
+	// case-like work item types (caseLikeWorkItemTypes). AddCaseTag /
+	// RemoveCaseTag take any work item id -- a change request's included --
+	// and the service gates its ServiceNow tag mirror on this: only a
+	// case-like work item has a case record in the previous system to mirror
+	// a tag onto; a change request's tags stay Postgres-only. false, not an
+	// error, for an id that names no work item at all (or one row-level
+	// security hides).
+	IsCaseLikeWorkItem(ctx context.Context, workItemID string) (bool, error)
 	// SetCaseTagSNSysID best-effort persists ServiceNow's own label_entry
 	// sys_id for the (caseID, tagID) attachment on work_item_tag (migration
 	// 000088) -- called from AddCaseTag's async ServiceNow mirror success
@@ -2202,12 +2218,39 @@ func (r *caseRepo) CreateCaseComment(ctx context.Context, req domain.CreateCaseC
 	if err := r.vis.rejectHiddenChangeRequest(ctx, r.db, req.CaseID, "case not found"); err != nil {
 		return domain.CaseComment{}, err
 	}
+	//
+	// The `touched` CTE stamps the work item's updated_on/updated_by in the same
+	// statement, so a comment counts as activity on the case: ServiceNow advances
+	// sys_updated_on for any journal entry, and the lists' Updated column, their
+	// updated-date filters and the dashboard reminder widgets all read
+	// work_item.updated_on. This is what made a case nudged through "Request
+	// update" keep its old Updated date (and its place in "My Reminders").
+	//
+	// Three limits, each on purpose:
+	//   - a live comment only (createdOn nil): a comment carrying its own past
+	//     timestamp is ServiceNow history being copied in, which is not activity
+	//     happening now and must not make the case look freshly updated;
+	//   - the case-like types only: this route takes the id of ANY work item (a
+	//     customer's BFF forwards whatever id it is given), and a change
+	//     request's updated_by is the record of who proposed a time (see
+	//     change_request_customer_proposal.go), which no comment may replace;
+	//   - never backwards: NOW() is the transaction's start, so a comment that
+	//     waited on the row lock behind a later-stamped write leaves that newer
+	//     stamp (and its writer) alone.
 	const query = `
-		INSERT INTO comment (id, created_on, created_by, type, work_item_id, content)
-		SELECT gen_random_uuid(), COALESCE($5, NOW()), $1, $2::comment_type_enum, w.id, $4
-		FROM work_item w
-		WHERE w.id = $3
-		RETURNING id, work_item_id, type, content, created_by, created_on`
+		WITH created AS (
+			INSERT INTO comment (id, created_on, created_by, type, work_item_id, content)
+			SELECT gen_random_uuid(), COALESCE($5, NOW()), $1, $2::comment_type_enum, w.id, $4
+			FROM work_item w
+			WHERE w.id = $3
+			RETURNING id, work_item_id, type, content, created_by, created_on
+		), touched AS (
+			UPDATE work_item SET updated_on = NOW(), updated_by = $1
+			WHERE id = $3 AND type = ANY(` + caseLikeWorkItemTypes + `)
+			  AND $5::timestamptz IS NULL AND updated_on <= NOW()
+			  AND EXISTS (SELECT 1 FROM created)
+		)
+		SELECT id, work_item_id, type, content, created_by, created_on FROM created`
 
 	var c domain.CaseComment
 	var typeRaw, createdByEmail string
@@ -2242,6 +2285,11 @@ func (r *caseRepo) SearchCaseComments(ctx context.Context, req domain.SearchCase
 		args = append(args, caseCommentTypeEnum[*req.Filters.Type])
 		typeFilter = fmt.Sprintf(" AND cc.type = $%d::comment_type_enum", len(args))
 	}
+
+	// A customer-portal caller never sees a soft-deleted comment, in the rows
+	// or in the total (see hidesDeletedComments). An internal caller's result
+	// is unchanged.
+	typeFilter += deletedCommentFilter(ctx, "cc.")
 
 	countQuery := `SELECT COUNT(*) FROM comment cc WHERE cc.work_item_id = $1` + typeFilter
 	// Joined to "user" by email match (single user per comment, see
@@ -2885,20 +2933,61 @@ func (r *caseRepo) ConfirmCaseAttachment(ctx context.Context, id string) (domain
 
 // SearchCaseAttachments implements CaseRepository.
 //
-// Both queries filter to status = 'complete' -- see the doc comment on
-// CaseService.SearchCaseAttachments for why pending (still-uploading) rows
-// are excluded from the default list/search response rather than shown with
-// a visible status.
+// Returns the case's native uploads (case_attachment) and its synced
+// attachments (work_item_attachment) as one list, ordered newest first with
+// the id as a stable tiebreaker. Both queries read the same UNION ALL, so the
+// total and the page rows always agree.
+//
+// Native rows keep the status = 'complete' filter -- see the doc comment on
+// CaseService.SearchCaseAttachments for why pending (still-uploading) rows are
+// excluded from the default list/search response rather than shown with a
+// visible status. A synced row is skipped while PENDING, and when
+// case_attachment already holds the same id: a dual-write upload is mirrored
+// into case_attachment under the backing data source's own attachment
+// identity, which is also the id the sync gives its work_item_attachment row,
+// so the two tables describe one file and it must show once (same rule as the
+// activity feed, see SearchCaseActivities).
+//
+// The synced side is joined to work_item so that work_item's row-level
+// security scopes it like every other work item read. Its uploader is matched
+// to a user by email with a LATERAL ... LIMIT 1 ("user".email has no unique
+// constraint, so a plain join would fan one attachment into several rows
+// while the count still counted it once); an unmatched uploader is still
+// returned, carrying only the email. Synced rows have no storage key.
 func (r *caseRepo) SearchCaseAttachments(ctx context.Context, caseID string, pagination domain.Pagination) ([]domain.Attachment, int, error) {
-	const countQuery = `SELECT COUNT(*) FROM case_attachment WHERE case_id = $1 AND status = 'complete'`
-	const dataQuery = `
-		SELECT ca.id, ca.case_id, ca.filename, ca.mime_type, ca.size_bytes, ca.description,
-		       u.id, u.email, COALESCE(u.name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), '') AS full_name,
-		       ca.created_on, ca.storage_key, ca.status
+	const combined = `
+		SELECT ca.id, ca.case_id AS reference_id, ca.filename AS name, ca.mime_type AS content_type,
+		       ca.size_bytes::bigint AS size_bytes, ca.description::text AS description,
+		       u.id::text AS uploader_id, u.email::text AS uploader_email,
+		       COALESCE(u.name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), '') AS uploader_name,
+		       ca.created_on, ca.storage_key::text AS storage_key, ca.status::text AS status
 		FROM case_attachment ca
 		JOIN "user" u ON u.id = ca.uploaded_by
 		WHERE ca.case_id = $1 AND ca.status = 'complete'
-		ORDER BY ca.created_on DESC, ca.id
+		UNION ALL
+		SELECT wa.id, wa.work_item_id, COALESCE(wa.name, ''), COALESCE(wa.content_type, ''),
+		       COALESCE(wa.size_bytes, 0)::bigint, NULL::text,
+		       COALESCE(su.id::text, ''), COALESCE(wa.created_by, ''),
+		       COALESCE(su.name, NULLIF(TRIM(CONCAT_WS(' ', su.first_name, su.last_name)), ''), ''),
+		       wa.created_on, NULL::text, 'complete'
+		FROM work_item_attachment wa
+		JOIN work_item wi ON wi.id = wa.work_item_id
+		LEFT JOIN LATERAL (
+			SELECT u2.id, u2.name, u2.first_name, u2.last_name
+			FROM "user" u2
+			WHERE LOWER(u2.email) = LOWER(wa.created_by)
+			ORDER BY u2.id
+			LIMIT 1
+		) su ON TRUE
+		WHERE wa.work_item_id = $1
+		  AND wa.state IS DISTINCT FROM 'PENDING'
+		  AND NOT EXISTS (SELECT 1 FROM case_attachment dup WHERE dup.id = wa.id)`
+	const countQuery = `SELECT COUNT(*) FROM (` + combined + `) att`
+	const dataQuery = `
+		SELECT id, reference_id, name, content_type, size_bytes, description,
+		       uploader_id, uploader_email, uploader_name, created_on, storage_key, status
+		FROM (` + combined + `) att
+		ORDER BY created_on DESC, id
 		LIMIT $2 OFFSET $3`
 
 	var total int
@@ -2924,20 +3013,23 @@ func (r *caseRepo) SearchCaseAttachments(ctx context.Context, caseID string, pag
 		for rows.Next() {
 			var (
 				a                         domain.Attachment
+				sizeBytes                 int64
 				uploaderID, uploaderEmail string
 				uploaderName              string
 				// storageKey is nullable: a dual-write (ServiceNow-sourced)
 				// row has no storage_key at all -- see migration 0185's own
-				// comment. *string (not string) is required here so a NULL
-				// column value scans as a nil pointer instead of erroring.
+				// comment -- and neither does a synced row. *string (not
+				// string) is required here so a NULL column value scans as a
+				// nil pointer instead of erroring.
 				storageKey *string
 			)
 			if err := rows.Scan(
-				&a.ID, &a.ReferenceID, &a.Name, &a.Type, &a.SizeBytes, &a.Description,
+				&a.ID, &a.ReferenceID, &a.Name, &a.Type, &sizeBytes, &a.Description,
 				&uploaderID, &uploaderEmail, &uploaderName, &a.CreatedOn, &storageKey, &a.Status,
 			); err != nil {
 				return fmt.Errorf("scan case attachment: %w", err)
 			}
+			a.SizeBytes = int(sizeBytes)
 			a.ReferenceType = domain.ReferenceTypeCase
 			a.CreatedBy = domain.NewUserReference(uploaderID, uploaderEmail, uploaderName)
 			a.StorageKey = storageKey
@@ -3647,6 +3739,7 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 		        wi.type::TEXT, wi.subject, wi.description, c.severity::TEXT, c.issue_type::TEXT, `+caseLikeStateColumn+`,
 		        eng.type::TEXT, `+caseLikeWorkStateColumn+`, c.current_escalation_level::TEXT, wi.created_on, wi.updated_on,
 		        wi.created_by,
+		        wi.best_case_eta, wi.most_likely_eta, wi.worst_case_eta,
 		        p.id, p.name,
 		        d.id, d.name,
 		        dp.id, prod.name || COALESCE(' ' || pv.version, ''),
@@ -3687,11 +3780,13 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 			var depID, depName *string
 			var dpID, dpName *string
 			var creatorEmail string
+			var bestCaseEta, mostLikelyEta, worstCaseEta *time.Time
 			if err := rows.Scan(
 				&cv.ID, &cv.Number, &internalID,
 				&caseType, &subject, &description, &severity, &issueType, &state,
 				&engagementType, &workState, &escalationLevel, &createdAt, &updatedAt,
 				&creatorEmail,
+				&bestCaseEta, &mostLikelyEta, &worstCaseEta,
 				&projID, &projName,
 				&depID, &depName,
 				&dpID, &dpName,
@@ -3746,6 +3841,21 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 			}
 			cv.CreatedOn = createdAt.UTC().Format(time.RFC3339)
 			cv.UpdatedOn = updatedAt.UTC().Format(time.RFC3339)
+			// best_case_eta/most_likely_eta/worst_case_eta are DATE columns --
+			// formatted the same way GetCaseByID already does, so a caller
+			// reading either endpoint sees the identical "YYYY-MM-DD" shape.
+			if bestCaseEta != nil {
+				s := bestCaseEta.Format("2006-01-02")
+				cv.BestCaseFixEta = &s
+			}
+			if mostLikelyEta != nil {
+				s := mostLikelyEta.Format("2006-01-02")
+				cv.MostLikelyFixEta = &s
+			}
+			if worstCaseEta != nil {
+				s := worstCaseEta.Format("2006-01-02")
+				cv.WorstCaseFixEta = &s
+			}
 			if prodID != nil {
 				cv.Product = &domain.EntityRef{ID: *prodID, Name: stringOrEmpty(prodName)}
 			}
@@ -4585,6 +4695,20 @@ func (r *caseRepo) RemoveCaseTag(ctx context.Context, caseID, tagID, _ string) e
 	return nil
 }
 
+// IsCaseLikeWorkItem implements CaseRepository: the same type read a case
+// write dispatches on (readCaseLikeType), which answers pgx.ErrNoRows for a
+// work item that is not case-like -- a change request, an incident -- or
+// that does not exist.
+func (r *caseRepo) IsCaseLikeWorkItem(ctx context.Context, workItemID string) (bool, error) {
+	if _, err := readCaseLikeType(ctx, r.db, "is case-like work item", workItemID, false); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("is case-like work item: %w", err)
+	}
+	return true, nil
+}
+
 // SetCaseTagSNSysID implements CaseRepository. Returns *apierror.NotFoundError
 // if the (caseID, tagID) attachment no longer exists -- e.g. RemoveCaseTag
 // deleted it concurrently, in the gap between AddCaseTag's mirror creating
@@ -4793,6 +4917,11 @@ func (r *caseRepo) SearchCaseActivities(ctx context.Context, req domain.SearchCa
 	// backing data source's own attachment identity, which is also the id the
 	// sync gives its work_item_attachment row, so the two tables describe one
 	// file and it must show once. Shared by both queries so total and rows agree.
+	// A customer-portal caller never sees a soft-deleted comment in the feed or
+	// in its total (see hidesDeletedComments); internal callers are unchanged.
+	commentWorkNoteFilter += deletedCommentFilter(ctx, "")
+	commentWorkNoteDataFilter += deletedCommentFilter(ctx, "cm.")
+
 	const syncedAttachmentFilter = `
 			  AND wa.state IS DISTINCT FROM 'PENDING'
 			  AND NOT EXISTS (SELECT 1 FROM case_attachment ca WHERE ca.id = wa.id)`
@@ -5085,4 +5214,122 @@ func aggregateBucketKey(groupBy, raw string) string {
 		}
 	}
 	return strings.ToLower(raw)
+}
+
+// CaseVolumeTrend implements CaseRepository. It shares buildCaseSearchWhere/
+// caseSearchJoins with SearchCases/AggregateCases, so a day's opened/closed
+// counts always agree with what the equivalent search would show. "Opened"
+// buckets by wi.created_on; "closed" buckets by caseLikeOwnClosedOnColumn
+// (the closure time from the extension table of the row's own declared
+// type -- see that constant's own doc comment for why, not the broader
+// caseLikeClosedOnColumn). Both read the same days array, so this always
+// runs as a single statement (two UNION ALL branches) rather than two round
+// trips -- the caller (caseService's cache-miss fill) may ask for anywhere
+// from one day up to a full window at once.
+//
+// Every bucket comparison is a sargable range (">= start AND < end") ANDed
+// with the exact day-membership check, not a bare "to_char(...) = ANY(days)"
+// alone -- confirmed against a real staging database (505k work_item rows)
+// that the bare form forces a full sequential scan of work_item regardless
+// of any index, since wrapping the timestamp column in to_char() before
+// comparing makes it non-sargable (Postgres cannot push an index scan
+// through a function call on the indexed column). The range half lets the
+// planner use idx_work_item_type_created_on (migration 0226) to narrow to
+// the requested window before the exact-day computation ever runs; the
+// to_char() membership check on top is what keeps the result exactly
+// "these requested days," including a caller asking for a
+// non-contiguous/sparse subset (a partially-warm cache). Measured
+// improvement on staging: a single day's two-branch query dropped from
+// ~380ms (full table scan) to single-digit milliseconds.
+//
+// "Closed" has no equivalent index support yet: caseLikeOwnClosedOnColumn is
+// a CASE expression spanning five joined tables selected by wi.type, which
+// -- like caseLikeStateColumn's identical structural limitation, see
+// migration 0195's own doc comment -- no per-table index on closed_on can
+// be pushed through. Migration 0226 adds those five indexes anyway, ready
+// for whenever that rewrite (a UNION of five per-table range-filtered
+// branches, the same fix 0195 describes and defers for state) is done
+// properly; until then this branch still benefits from the sargable range
+// doing less redundant to_char() evaluation, even without an index scan.
+func (r *caseRepo) CaseVolumeTrend(ctx context.Context, req domain.SearchCasesRequest, days []string, scope SearchScope) (map[string]domain.CaseVolumeDayCount, error) {
+	out := make(map[string]domain.CaseVolumeDayCount, len(days))
+	for _, d := range days {
+		out[d] = domain.CaseVolumeDayCount{}
+	}
+	if len(days) == 0 {
+		return out, nil
+	}
+	rangeStart, rangeEnd, err := caseVolumeTrendDateRange(days)
+	if err != nil {
+		return nil, err
+	}
+	ctx = WithCallerIdentity(ctx, scope)
+	where, args, argIdx, err := buildCaseSearchWhere(req, scope)
+	if err != nil {
+		return nil, err
+	}
+	filterArgs := append(append([]any{}, args...), rangeStart, rangeEnd, days)
+	rangeStartPlaceholder := argIdx
+	rangeEndPlaceholder := argIdx + 1
+	datesPlaceholder := argIdx + 2
+	query := fmt.Sprintf(`
+		SELECT 'opened' AS kind, to_char(wi.created_on AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS bucket_date, COUNT(*) AS bucket_count
+		FROM work_item wi %[1]s %[2]s
+			AND wi.created_on >= $%[3]d AND wi.created_on < $%[4]d
+			AND to_char(wi.created_on AT TIME ZONE 'UTC', 'YYYY-MM-DD') = ANY($%[5]d::text[])
+		GROUP BY bucket_date
+		UNION ALL
+		SELECT 'closed' AS kind, to_char(%[6]s AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS bucket_date, COUNT(*) AS bucket_count
+		FROM work_item wi %[1]s %[2]s
+			AND %[6]s >= $%[3]d AND %[6]s < $%[4]d
+			AND to_char(%[6]s AT TIME ZONE 'UTC', 'YYYY-MM-DD') = ANY($%[5]d::text[])
+		GROUP BY bucket_date`,
+		caseSearchJoins, where, rangeStartPlaceholder, rangeEndPlaceholder, datesPlaceholder, caseLikeOwnClosedOnColumn)
+	rows, err := r.db.Query(ctx, query, filterArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("case volume trend: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kind, bucketDate string
+		var count int
+		if err := rows.Scan(&kind, &bucketDate, &count); err != nil {
+			return nil, fmt.Errorf("scan case volume trend bucket: %w", err)
+		}
+		dc := out[bucketDate]
+		switch kind {
+		case "opened":
+			dc.Opened = count
+		case "closed":
+			dc.Closed = count
+		}
+		out[bucketDate] = dc
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate case volume trend buckets: %w", err)
+	}
+	return out, nil
+}
+
+// caseVolumeTrendDateRange returns the [start, end) UTC instant range
+// spanning every entry in days (which need not be sorted or contiguous) --
+// the sargable pre-filter CaseVolumeTrend's query ANDs with its exact
+// day-membership check. end is exclusive (the instant after the latest
+// requested day ends).
+func caseVolumeTrendDateRange(days []string) (time.Time, time.Time, error) {
+	var min, max time.Time
+	for i, d := range days {
+		t, err := time.Parse("2006-01-02", d)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("case volume trend: invalid day %q: %w", d, err)
+		}
+		if i == 0 || t.Before(min) {
+			min = t
+		}
+		if i == 0 || t.After(max) {
+			max = t
+		}
+	}
+	return min.UTC(), max.AddDate(0, 0, 1).UTC(), nil
 }

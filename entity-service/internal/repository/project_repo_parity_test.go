@@ -63,3 +63,27 @@ func TestWso2ClosureStateRule(t *testing.T) {
 		t.Fatalf("unexpected rule order:\n%s", wso2ClosureStateRule)
 	}
 }
+
+func TestSrAccessForProject(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name     string
+		typeName string
+		static   bool
+		pdp      *bool
+		want     bool
+	}{
+		{"cloud support pdp true", "Cloud Support", false, &yes, true},
+		{"cloud support pdp false", "Cloud Support", false, &no, false},
+		{"cloud support pdp null", "Cloud Support", false, nil, false},
+		{"cloud support pdp false beats static true", "Cloud Support", true, &no, false},
+		{"managed cloud pdp true keeps static true", "Managed Cloud Subscription", true, &yes, true},
+		{"managed cloud pdp false keeps static true", "Managed Cloud Subscription", true, &no, true},
+		{"managed cloud pdp null keeps static true", "Managed Cloud Subscription", true, nil, true},
+		{"other type static false ignores pdp true", "Cloud Evaluation Support", false, &yes, false},
+	} {
+		if got := srAccessForProject(tc.typeName, tc.static, tc.pdp); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

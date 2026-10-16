@@ -27,7 +27,7 @@ import (
 	"strconv"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/viewer"
 )
 
 // entityAccountClient abstracts the entity service account operations used by AccountHandler.
@@ -195,46 +195,36 @@ func (h *AccountHandler) UpdateAccountTeams(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, result)
 }
 
-// viewerAccountClient abstracts the ServiceNow operations used by
-// ViewerAccountHandler. GetAccounts/GetAccountByID/GetProjectsByAccount used to
-// live here too, backed first by ServiceNow and later by a Postgres
-// translation layer -- both removed in favor of calling CS Portal's own
+// viewerAccountClient abstracts the account-scoped escalation read used by
+// ViewerAccountHandler. GetAccounts/GetAccountByID/GetProjectsByAccount used
+// to live here too -- removed in favor of calling CS Portal's own
 // GET /accounts/{id}, POST /accounts/search, and POST /projects/search
-// (filtered by accountId) directly, now that SPL's data source for these
-// reads is the exact same entity-service Postgres data CS Portal's own
-// routes already serve, with no ServiceNow-shape translation left to
-// justify a second, parallel /spl/* contract for them. Escalation
-// create/read have no entity-service equivalent (CreateEscalation is an
-// explicit stub -- see entity-service's escalation_service.go), so those
-// two stay here, ServiceNow-backed, unmerged.
+// (filtered by accountId) directly, since the viewer audience reads the
+// same entity-service data those routes already serve. The account-scoped
+// escalation list has no shared route (CS Portal's own
+// /cases/{id}/escalations is per-case), so it stays here, backed by
+// entity-service (see accounts_postgres.go).
 type viewerAccountClient interface {
-	GetEscalationsByAccount(ctx context.Context, accountNumber string, offset, limit int) ([]servicenow.EscalationDetail, error)
-	EscalateCase(ctx context.Context, accountNumber, caseNumber string, request servicenow.EscalationRequest, submittedByEmail string) (servicenow.EscalationResponse, error)
+	GetEscalationsByAccount(ctx context.Context, accountNumber string, offset, limit int) ([]viewer.EscalationDetail, error)
 }
 
-// ViewerAccountHandler handles HTTP requests for SupportPortalLite's
-// account-escalation endpoints -- the one piece of the account domain with
-// no Postgres/entity-service equivalent to merge onto (see viewerAccountClient's
-// own doc comment). Reading and listing accounts/projects now goes through
-// CS Portal's own /accounts and /projects routes directly.
+// ViewerAccountHandler handles HTTP requests for the viewer audience's
+// account-escalation list. Reading and listing accounts/projects goes
+// through CS Portal's own /accounts and /projects routes directly.
 type ViewerAccountHandler struct {
-	sn          viewerAccountClient
+	escalations viewerAccountClient
 	accessGuard *AccessGuard
 }
 
 // NewViewerAccountHandler creates a ViewerAccountHandler.
-func NewViewerAccountHandler(sn viewerAccountClient, accessGuard *AccessGuard) *ViewerAccountHandler {
-	return &ViewerAccountHandler{sn: sn, accessGuard: accessGuard}
+func NewViewerAccountHandler(escalations viewerAccountClient, accessGuard *AccessGuard) *ViewerAccountHandler {
+	return &ViewerAccountHandler{escalations: escalations, accessGuard: accessGuard}
 }
 
-var escalationRequestSourceValues = map[string]bool{"Customer": true, "Internal": true}
-var escalationReasonValues = map[string]bool{"Inactivity": true, "Lack Of Progress": true, "Customer Imposed Deadline": true}
-var escalationSeverityValues = map[string]bool{"High Severity": true, "Medium Severity": true}
-
-// maxPaginationLimit bounds "limit" on every SPL ServiceNow-paginated
-// route: these values flow straight into sysparm_limit on the upstream
-// ServiceNow request, so an unbounded value lets a caller force this
-// backend to buffer an arbitrarily large response in memory.
+// maxPaginationLimit bounds "limit" on every paginated viewer route: the
+// value is forwarded as the upstream page size, so an unbounded value lets
+// a caller force this backend to buffer an arbitrarily large response in
+// memory.
 const maxPaginationLimit = 100
 
 // parsePaginationParams parses required, non-negative "offset" and
@@ -285,87 +275,15 @@ func (h *ViewerAccountHandler) GetAccountEscalations(w http.ResponseWriter, r *h
 		return
 	}
 
-	result, err := h.sn.GetEscalationsByAccount(r.Context(), accountID, offset, limit)
+	result, err := h.escalations.GetEscalationsByAccount(r.Context(), accountID, offset, limit)
 	if err != nil {
-		if errors.Is(err, servicenow.ErrAccountNotFound) {
+		if errors.Is(err, viewer.ErrAccountNotFound) {
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}
-		if isUnsafeQueryValue(err) {
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-			return
-		}
-		slog.ErrorContext(r.Context(), "servicenow GetEscalationsByAccount failed", "userID", user.UserID, "accountID", accountID, "err", err)
+		slog.ErrorContext(r.Context(), "GetEscalationsByAccount failed", "userID", user.UserID, "accountID", accountID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve account escalations.")
 		return
 	}
 	writeJSONValue(w, http.StatusOK, result)
-}
-
-// EscalateCase handles POST /accounts/{accountId}/cases/{caseId}/escalate.
-func (h *ViewerAccountHandler) EscalateCase(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireViewerAccess(w, r, h.accessGuard)
-	if !ok {
-		return
-	}
-	if !requireViewerPermission(w, user, h.accessGuard, PermEscalate) {
-		return
-	}
-
-	accountID := r.PathValue("accountId")
-	caseID := r.PathValue("caseId")
-	if accountID == "" || caseID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
-			return
-		}
-		writeError(w, http.StatusBadRequest, errMsgReadBody)
-		return
-	}
-
-	var payload servicenow.EscalationRequest
-	if err := json.Unmarshal(body, &payload); err != nil {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
-	if payload.Justification == "" || !escalationRequestSourceValues[payload.RequestSource] ||
-		!escalationReasonValues[payload.Reason] || !escalationSeverityValues[payload.Severity] {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
-
-	result, err := h.sn.EscalateCase(r.Context(), accountID, caseID, payload, user.Email)
-	if err != nil {
-		if errors.Is(err, servicenow.ErrEscalationConflict) {
-			writeError(w, http.StatusConflict, "Case has already been escalated.")
-			return
-		}
-		if errors.Is(err, servicenow.ErrAccountNotFound) || errors.Is(err, servicenow.ErrCaseNotFound) {
-			writeError(w, http.StatusNotFound, ErrMsgNotFound)
-			return
-		}
-		if isUnsafeQueryValue(err) {
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-			return
-		}
-		slog.ErrorContext(r.Context(), "servicenow EscalateCase failed", "userID", user.UserID, "accountID", accountID, "caseID", caseID, "err", err)
-		mapUpstreamErrorGeneric(w, err, "Failed to escalate case.")
-		return
-	}
-	writeJSONValue(w, http.StatusOK, result)
-}
-
-// isUnsafeQueryValue reports whether err is a
-// *servicenow.ErrUnsafeQueryValue, returned when a caller-supplied value
-// fails SanitizeQueryValue.
-func isUnsafeQueryValue(err error) bool {
-	var unsafe *servicenow.ErrUnsafeQueryValue
-	return errors.As(err, &unsafe)
 }

@@ -62,9 +62,28 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
+/**
+ * The `storage` event only ever fires in OTHER documents, never the one that
+ * called `localStorage.setItem` — this tab's own writes already go through
+ * `writePreviewOverride`'s own direct `notify()` call below, so this handler
+ * only has to re-notify for a write this tab didn't make itself. Filters on
+ * `event.key` starting with the shared `STORAGE_KEY_BASE` prefix so an
+ * unrelated `localStorage` write elsewhere in the app doesn't trigger a
+ * spurious re-render here; `key === null` (a `clear()` call) is treated the
+ * same as a match, since that could plausibly have wiped this value too.
+ */
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key === null || event.key.startsWith(STORAGE_KEY_BASE)) {
+      listener();
+    }
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
 }
 
 /**

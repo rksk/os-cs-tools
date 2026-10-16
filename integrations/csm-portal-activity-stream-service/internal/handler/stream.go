@@ -37,8 +37,8 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 
 // StreamHandler handles GET /cases/{id}/activities/stream: a long-lived
 // Server-Sent Events connection that emits a `case_updated` event whenever
-// internal/caseevents.Handler observes a case.comment_added or case.status_changed
-// record for this case on any backend replica (see internal/stream.BroadcastHub).
+// internal/caseevents.Handler observes a comment, status, assignee, severity or
+// acknowledge event for this case on any backend replica (see internal/stream.BroadcastHub).
 // It is registered on the dedicated :9092 listener (see cmd/server/main.go)
 // so the health check listener's timeouts can't kill the connection, but it
 // sits behind the same middleware.Auth chain as every other endpoint — there
@@ -47,7 +47,7 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 // polyfill (native EventSource cannot set custom headers).
 //
 // The broadcast payload is a minimal {caseId, type, timestamp} — never
-// comment text or field values (see events.CommentAddedPayload/StatusChangedPayload)
+// comment text, field values, names or emails (see events.CommentAddedPayload/StatusChangedPayload)
 // — but even that is per-case, so a caller must be authorized to read the
 // requested case before subscribing, not merely hold a valid token: see the
 // GetCase call below, which registers the subscription only once the same

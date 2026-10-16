@@ -47,6 +47,7 @@ const SHIFTS = new Map(
   [
     shift("CRE_REGULAR", 540, 1080, { isRotation: false }),
     shift("CRE_AMERICAS", 1260, 1800, { isRotation: false }),
+    shift("CRE_REGULAR_IND", 540, 1080, { isRotation: false, authoringTimeZone: "Asia/Kolkata" }),
     shift("CRE_EVENING", 1080, 1260),
     shift("CRE_MORNING_OC", 360, 540, { isOnCall: true }),
     shift("CRE_LATE", 1260, 1380),
@@ -96,6 +97,30 @@ const MONDAY = "2026-10-12";
 const SATURDAY = "2026-10-17";
 
 describe("standingDayRows", () => {
+  it("puts an India region team's engineers on IND and its lead on Regular hours", () => {
+    const out = standingDayRows({
+      rotaDates: [MONDAY],
+      teams: [team("phoenix", [member("lead", "lead"), member("e")], "CRE_REGULAR_IND")],
+      shifts: SHIFTS,
+      assignments: [],
+      absences: [],
+    });
+    const codeOf = (id: string) => out.find((r) => r.engineer.userId === id)?.shiftCode;
+    expect(codeOf("e")).toBe("CRE_REGULAR_IND");
+    expect(codeOf("lead")).toBe("CRE_REGULAR");
+  });
+
+  it("keeps the Americas team's leads on Americas cover", () => {
+    const out = standingDayRows({
+      rotaDates: [MONDAY],
+      teams: [team("americas", [member("lead", "lead")], "CRE_AMERICAS")],
+      shifts: SHIFTS,
+      assignments: [],
+      absences: [],
+    });
+    expect(out.map((r) => r.shiftCode)).toEqual(["CRE_AMERICAS"]);
+  });
+
   it("lists a member with no row and no leave as working their team's regular hours", () => {
     const out = standingDayRows({
       rotaDates: [MONDAY],

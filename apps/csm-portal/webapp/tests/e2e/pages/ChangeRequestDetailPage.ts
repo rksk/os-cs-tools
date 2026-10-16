@@ -179,6 +179,39 @@ export class ChangeRequestDetailPage {
     return this.overviewCell(label).locator(".MuiChip-label");
   }
 
+  /** The Tags card (the case page's own widget, mounted under the Overview). */
+  tagsCard(): Locator {
+    return this.page.getByText("Tags", { exact: true }).locator("xpath=ancestor::*[contains(@class, 'MuiCard-root')][1]");
+  }
+
+  /** The tag chips' labels, in the order the card shows them. */
+  tagChips(): Locator {
+    return this.tagsCard().locator(".MuiChip-label");
+  }
+
+  /** The chip of one tag, by its label. */
+  tagChip(label: string): Locator {
+    return this.tagsCard().locator(".MuiChip-root", { hasText: label });
+  }
+
+  /** The "Tag" button that opens the Add tag dialog (absent without write access). */
+  addTagButton(): Locator {
+    return this.tagsCard().getByRole("button", { name: "Tag", exact: true });
+  }
+
+  /** The Add tag dialog (the case page's own), its search field and submit. */
+  addTagDialog(): Locator {
+    return this.page.getByRole("dialog", { name: "Add tag" });
+  }
+
+  addTagSearchField(): Locator {
+    return this.addTagDialog().getByLabel("Tag", { exact: true });
+  }
+
+  addTagSubmit(): Locator {
+    return this.addTagDialog().getByRole("button", { name: "Add tag" });
+  }
+
   /** The Clone button in the page header. */
   cloneButton(): Locator {
     return this.page.getByRole("button", { name: /clone/i });

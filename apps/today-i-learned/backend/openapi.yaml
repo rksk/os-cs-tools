@@ -1,0 +1,492 @@
+openapi: 3.0.3
+info:
+  title: Today I Learned API
+  version: 1.0.0
+  description: >-
+    Learnings employees share from customers, partners and their own work.
+    Every operation except /health needs a signed-in employee. Creating and
+    editing entries is only for the One WSO2 webapp.
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /user-info:
+    get:
+      summary: The signed-in employee
+      operationId: getUserInfo
+      responses:
+        '200':
+          description: Who the caller is and whether they moderate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /settings:
+    get:
+      summary: The rules the webapp's form shows
+      operationId: getSettings
+      responses:
+        '200':
+          description: Settings that match what this service enforces.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /customers/search:
+    get:
+      summary: Suggest customer names
+      operationId: searchCustomers
+      parameters:
+        - name: q
+          in: query
+          description: Part of a customer's name.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching customers; empty when suggestions are turned off.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          description: Customer suggestions are unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /submissions:
+    get:
+      summary: List entries, newest first
+      operationId: listEntries
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Search text. Matches the title, the learning, the author and the
+            customer or partner name. Every word has to match; a word matches
+            the start of a word.
+          schema:
+            type: string
+            maxLength: 200
+        - name: createdFrom
+          in: query
+          description: >-
+            Earliest creation time, inclusive. The webapp sends the start of
+            the reader's first day, so a day means their own calendar day.
+          schema:
+            type: string
+            format: date-time
+        - name: createdBefore
+          in: query
+          description: >-
+            Creation time the entries must be before, exclusive. The webapp
+            sends the start of the day after the reader's last day.
+          schema:
+            type: string
+            format: date-time
+        - name: author
+          in: query
+          description: >-
+            The author's name alone. Every word has to match the start of a
+            word in it, so "ale sam" finds "Alex Sample".
+          schema:
+            type: string
+            maxLength: 200
+        - name: source
+          in: query
+          description: Only entries from this source.
+          schema:
+            $ref: '#/components/schemas/Source'
+        - name: mine
+          in: query
+          description: Only the caller's own entries.
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          description: Page size.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: offset
+          in: query
+          description: Entries to skip.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      summary: Share an entry
+      operationId: createEntry
+      description: >-
+        The entry is shared under the caller's verified email. Only the One
+        WSO2 webapp may call this. A new entry is announced in Google Chat;
+        if Novera doesn't accept the announcement, the entry is still saved,
+        with notifiedAt null, for a moderator to send later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEntryRequest'
+      responses:
+        '201':
+          description: The new entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /submissions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: One entry
+      operationId: getEntry
+      responses:
+        '200':
+          description: The entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      summary: Edit an entry
+      operationId: updateEntry
+      description: >-
+        Only the author or a moderator, and only from the One WSO2 webapp. The
+        byline never changes. A save that changes nothing doesn't mark the
+        entry as edited. Edits aren't announced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEntryRequest'
+      responses:
+        '200':
+          description: The entry as saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Delete an entry
+      operationId: deleteEntry
+      description: Only the author or a moderator.
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /submissions/{id}/notify:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Send an entry to Google Chat
+      operationId: notifyEntry
+      description: >-
+        For an entry whose announcement failed (notifiedAt is null). Only a
+        moderator, and only from the One WSO2 webapp. An entry is sent at most
+        once: an entry already sent, or being sent by another request, gets a
+        409.
+      responses:
+        '200':
+          description: Novera accepted the announcement; the entry, with notifiedAt set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Entry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The entry was already sent to Google Chat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          description: Novera didn't accept the announcement; the entry is still unsent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        '503':
+          description: Sending to Google Chat isn't configured on this service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: The request isn't valid; the message says why.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+    Unauthorized:
+      description: No valid token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+    Forbidden:
+      description: The caller may not do this.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+    NotFound:
+      description: No entry with this id.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+    TooLarge:
+      description: The request body is over 256 KB.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+    InternalError:
+      description: Something failed on the server.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+  schemas:
+    ErrorPayload:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Written for people; shown as it is.
+    Settings:
+      type: object
+      required: [whatMaxLength, notificationsEnabled]
+      properties:
+        whatMaxLength:
+          type: integer
+          description: >-
+            The most characters of plain text a learning may have, markup not
+            counted. ENTRY_TEXT_MAX_LENGTH; 500 unless configured.
+        notificationsEnabled:
+          type: boolean
+          description: Whether entries are announced in Google Chat (NOVERA_* is configured).
+    UserInfo:
+      type: object
+      required: [email, displayName, canModerate]
+      properties:
+        email:
+          type: string
+        displayName:
+          type: string
+        canModerate:
+          type: boolean
+          description: Whether the caller may edit and delete anyone's entries.
+    Customer:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    Source:
+      type: string
+      enum: [Customer, Partner, Internal, Other]
+    Entry:
+      type: object
+      required: [id, title, who, where, whereDetail, what, submittedByEmail, createdAt, updatedAt, notifiedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        who:
+          type: string
+          description: The byline the author shared it under.
+        where:
+          $ref: '#/components/schemas/Source'
+        whereDetail:
+          type: string
+          nullable: true
+          description: The customer or partner name, or what Other means. Null for Internal.
+        what:
+          type: string
+          description: The learning, as sanitised HTML.
+        submittedByEmail:
+          type: string
+          description: The author's verified email.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the entry was last edited; null if it never has been.
+        notifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When Novera accepted the entry's Google Chat announcement; null
+            if it hasn't, so a moderator can send it (POST
+            /submissions/{id}/notify).
+    EntryPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        total:
+          type: integer
+          description: How many entries match, across all pages.
+        limit:
+          type: integer
+        offset:
+          type: integer
+    CreateEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [title, who, where, what]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        who:
+          type: string
+          maxLength: 200
+        where:
+          $ref: '#/components/schemas/Source'
+        whereDetail:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Required for Customer, Partner and Other; ignored for Internal.
+        what:
+          type: string
+          description: >-
+            The learning as HTML. At most whatMaxLength characters of text
+            (see /settings), markup not counted; 20 more are accepted as a
+            margin for counting differences.
+    UpdateEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [title, where, what]
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        where:
+          $ref: '#/components/schemas/Source'
+        whereDetail:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: Required for Customer, Partner and Other; ignored for Internal.
+        what:
+          type: string
+          description: >-
+            The learning as HTML. At most whatMaxLength characters of text
+            (see /settings), markup not counted; 20 more are accepted as a
+            margin for counting differences.

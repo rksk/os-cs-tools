@@ -54,6 +54,10 @@ export default function UndoToast({
 }): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const held = useRef(false);
+  // The pointer and focus hold it separately: one leaving must not restart
+  // the clock while the other is still on the toast.
+  const hovered = useRef(false);
+  const focused = useRef(false);
   const timer = useRef<number | undefined>(undefined);
 
   /** Start (or restart) the clock. The caller passes a stable onDismiss. */
@@ -73,13 +77,19 @@ export default function UndoToast({
 
   if (!offer) return null;
 
-  const hold = (): void => {
-    held.current = true;
-    window.clearTimeout(timer.current);
+  /** Held while either is on it; the clock restarts once both have left. */
+  const sync = (): void => {
+    held.current = hovered.current || focused.current;
+    if (held.current) window.clearTimeout(timer.current);
+    else arm();
   };
-  const release = (): void => {
-    held.current = false;
-    arm();
+  const setHovered = (on: boolean) => (): void => {
+    hovered.current = on;
+    sync();
+  };
+  const setFocused = (on: boolean) => (): void => {
+    focused.current = on;
+    sync();
   };
 
   return (
@@ -87,10 +97,10 @@ export default function UndoToast({
       className="undotoast"
       role="status"
       aria-live="polite"
-      onMouseEnter={hold}
-      onMouseLeave={release}
-      onFocus={hold}
-      onBlur={release}
+      onMouseEnter={setHovered(true)}
+      onMouseLeave={setHovered(false)}
+      onFocus={setFocused(true)}
+      onBlur={setFocused(false)}
     >
       <span className="ut-msg">
         <b>{offer.verb ?? "Saved"}</b> · {offer.message}

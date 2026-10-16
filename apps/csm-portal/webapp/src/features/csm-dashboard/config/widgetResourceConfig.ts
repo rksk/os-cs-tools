@@ -39,8 +39,10 @@ import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import {
   casesHref,
   DEFAULT_CASES_FILTERS,
+  readCasesFiltersFromUrl,
   writeCasesFiltersToUrl,
 } from "@features/csm-cases/utils/casesFiltersUrl";
+import type { AdvancedFilterRow } from "@features/csm-cases/utils/advancedFilters";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import {
   ALL_ONBOARDING_STATUSES,
@@ -62,7 +64,6 @@ import type { BeTaskState } from "@api/backend/types";
 import {
   appendWidgetTitleParam,
   buildWidgetPreviewHref,
-  isAnyOfBranchArray,
 } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 
 /** A resolved search-result row, typed loosely since its real shape depends
@@ -197,50 +198,95 @@ function asCaseFieldFilters(v: unknown): CaseDashboardFieldFilter[] | undefined 
     : undefined;
 }
 
-/** Reads the `values` of the first entry matching `field` in a case widget's
- * `filters.filters` array, or `undefined` if that field isn't present. */
-function caseFilterValues(
-  fieldFilters: CaseDashboardFieldFilter[] | undefined,
-  field: string,
-): string[] | undefined {
-  return fieldFilters?.find((f) => f.field === field)?.values;
+/**
+ * Reads a widget's `filters.filters` entries by field AND op together (the op
+ * itself carries meaning for `tag`/`state`/`projectOnboardingStatus` in vs.
+ * notIn, `escalation`'s value-less isEmpty vs. isNotEmpty and each gte/lte
+ * bound, so the wrong op is never silently matched) and remembers which
+ * entries were taken, so whatever no branch of the translation claimed can be
+ * reported instead of vanishing.
+ */
+interface CaseFilterReader {
+  /** The first `field`/`op` entry. A second one is left untaken: for `in` it
+   * is a further constraint (an intersection) and for a bound it is a second
+   * bound, neither of which the list can hold as one value. */
+  first: (field: string, op: string) => CaseDashboardFieldFilter | undefined;
+  /** The values of EVERY `field`/`op` entry, merged. Only right for `notIn`,
+   * where "not in A" and "not in B" together are exactly "not in A or B". */
+  merged: (field: string, op: string) => string[] | undefined;
+  /** Gives an entry back: its value could not be translated faithfully. */
+  reject: (entry: CaseDashboardFieldFilter) => void;
+  /** Entries no branch took, or that were rejected. */
+  untaken: () => CaseDashboardFieldFilter[];
 }
 
-/** Reads the first entry matching `field` AND `op` in a case widget's
- * `filters.filters` array, or `undefined` if no such combination is present
- * — used for fields where the op itself carries meaning (`tag` in vs.
- * notIn, `escalation`'s value-less isEmpty vs. isNotEmpty, and each
- * gte/lte range bound), so the wrong op is never silently matched. */
-function caseFilterEntry(
-  fieldFilters: CaseDashboardFieldFilter[] | undefined,
-  field: string,
-  op: string,
-): CaseDashboardFieldFilter | undefined {
-  return fieldFilters?.find((f) => f.field === field && f.op === op);
+function readCaseFilters(fieldFilters: CaseDashboardFieldFilter[] | undefined): CaseFilterReader {
+  const entries = fieldFilters ?? [];
+  const taken = new Set<CaseDashboardFieldFilter>();
+  return {
+    first: (field, op) => {
+      const entry = entries.find((f) => f.field === field && f.op === op);
+      if (entry) taken.add(entry);
+      return entry;
+    },
+    merged: (field, op) => {
+      const matching = entries.filter((f) => f.field === field && f.op === op);
+      if (matching.length === 0) return undefined;
+      matching.forEach((e) => taken.add(e));
+      return [...new Set(matching.flatMap((e) => e.values ?? []))];
+    },
+    reject: (entry) => {
+      taken.delete(entry);
+    },
+    untaken: () => entries.filter((f) => !taken.has(f)),
+  };
+}
+
+/** Whether a widget filter value carries anything at all: an empty string,
+ * array or object, `null` and `undefined` constrain nothing. */
+function isFilledFilterValue(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === "string") return v.length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v).length > 0;
+  return true;
+}
+
+/** Same value for every `CasesFilters` field, compared structurally. */
+function sameCasesFilters(a: CasesFilters, b: CasesFilters): boolean {
+  return (Object.keys(DEFAULT_CASES_FILTERS) as (keyof CasesFilters)[]).every(
+    (key) => JSON.stringify(a[key]) === JSON.stringify(b[key]),
+  );
+}
+
+/** What {@link translateCaseDashboardFilters} produced, and whether the
+ * cases list can show exactly what the widget counted. */
+export interface CaseDashboardFilterTranslation {
+  filters: Partial<CasesFilters>;
+  /** `true` when every predicate of the widget is held by `filters` AND comes
+   * back unchanged from the list's own URL reader (a value the reader does
+   * not accept, e.g. an unknown state, would be dropped there). `false` means
+   * the list would show MORE than the tile counted, so a click-through must
+   * go somewhere that applies the widget's filters verbatim instead. */
+  lossless: boolean;
 }
 
 /**
  * Translate a dashboard widget's opaque case filters (the `POST
  * /cases/search`-shaped `{ filters: BeCaseFieldFilter[] }` body — see
  * `BeCaseSearchFilters`) into the cases list's own `CasesFilters` shape.
+ *
  * Every field the case-search DSL supports (see `caseFilterFieldSet` in
- * `case_filters.go`) now has a home in `CasesFilters` and is passed through
- * — this used to drop `taskSLABusinessElapsedPercent`, `escalationLevel`/
- * `escalation`, `creTeam`/`sreTeam`, `tag`, `projectOnboardingStatus`,
- * `projectType`, and the `createdOn`/`updatedOn`/`closedOn` date ranges,
- * which was the root cause of the click-through data-loss bug this function
- * exists to fix (a tile reading a filtered count landed on the org-wide
- * cases list because its filters had nowhere to go). `parentId` and
- * `resolutionNotes` remain genuinely dropped: no dashboard widget uses them
- * today, and `CasesFilters` has no equivalent to invent one for without
- * guessing at a UI treatment. `anyOf` (cross-field OR) is dropped here too —
- * `CasesFilters` is an AND-only model with nothing to translate it into — but
- * a widget carrying `anyOf` never reaches this function's output at all (see
- * `caseFamilyBuildHref` below, and `DashboardWidgetPreviewPage.tsx`'s own
- * `anyOf` routing check): its click-through routes to the generic,
- * filter-faithful dashboard-widget preview page instead, the same fallback
- * `incident_task` uses for a resourceType with no representable destination
- * in its own list page.
+ * `case_filters.go`) that the list can express has a home in `CasesFilters`:
+ * `slaBreached` and `resolvedOn` ride in `advancedFilters` (the list's
+ * generic field/op/value rows, shown and editable in the Advanced builder).
+ * Anything the list cannot express — `accountEscalationActive`, an
+ * `anyOf` OR group, a second `in` entry on the same field, a bound given
+ * twice — is NOT translated, and {@link CaseDashboardFilterTranslation.lossless}
+ * says so, because a tile that counted with such a predicate and a list that
+ * silently ignored it show two different numbers for the same click.
+ * `parentId` and `resolutionNotes` are in that group too: no `CasesFilters`
+ * field holds them.
  *
  * `assignedUserId` carries the current user's own UUID (every widget that
  * sets it does so via the current-user placeholder), and
@@ -251,106 +297,83 @@ function caseFilterEntry(
  *
  * `tag`, `state`, and `projectOnboardingStatus` — the only 3 case-search
  * fields whose backend contract accepts `notIn` at all (`case_filters.go`'s
- * per-field op table) — are each matched on field *and* op together via
- * `caseFilterEntry`, never read op-blind via `caseFilterValues` plus an
- * inferred op. A `notIn` widget filter on any of these can then never
- * silently decode as its own opposite (an inclusion of exactly the values it
- * meant to exclude) — which is exactly the bug once reported against a live
- * `projectOnboardingStatus notIn` widget click-through, and the same bug the
- * dashboard preview URL shipped once for `tag` (see `casesFiltersUrl.ts`'s
- * `writeCasesFiltersToUrl` doc comment for that full story). `tag`/`state`
- * map their two ops to two distinct `CasesFilters` fields (`tags`/
- * `excludeTags`, `states`/`excludeStates`). `projectOnboardingStatus` is the
+ * per-field op table) — are each matched on field *and* op together, never
+ * read op-blind plus an inferred op. A `notIn` widget filter on any of these
+ * can then never silently decode as its own opposite (an inclusion of exactly
+ * the values it meant to exclude). `tag`/`state` map their two ops to two
+ * distinct `CasesFilters` fields (`tags`/`excludeTags`, `states`/
+ * `excludeStates`). Several `notIn` entries on one field are merged into one
+ * exclusion list — a widget that excludes the `patch` tag in one entry and
+ * the `s_dip` tag in another means "neither", and keeping only the first
+ * showed the cases carrying the second. `projectOnboardingStatus` is the
  * exception: its domain is the 4 fixed values in `onboardingStatus.ts`, so
  * instead of a third `excludeOnboardingStatuses` field, a `notIn` filter is
  * folded into `onboardingStatuses`' own complement (every known value except
  * the excluded ones) — `notIn(X)` and `in(all-but-X)` are equivalent over a
- * closed, fixed set, and this keeps the field (and its URL param) singular
- * so the "Onboarding status" bar control can show/edit it as plain selected
- * values without a second, exclude-flavored param to collide with. Every
- * other field this function reads is `in`-only per that same op table, so
- * reading it op-blind carries no equivalent risk. Likewise `escalation`'s
- * value-less `isEmpty`/`isNotEmpty` map to the explicit tri-state
- * `hasEscalation` (`false`/`true`), never silently defaulted when absent
- * (`undefined`, i.e. not touched in `out`).
+ * closed, fixed set, and this keeps the field (and its URL param) singular.
+ * Likewise `escalation`'s value-less `isEmpty`/`isNotEmpty` map to the
+ * explicit tri-state `hasEscalation` (`false`/`true`).
  *
  * Exported (not just used internally for `buildHref`) so
  * `DashboardWidgetPreviewPage.tsx` can seed a real, editable `CasesFilterBar`
- * from a case-family widget's own opaque filters, rather than only ever
- * building a one-shot click-through URL from them.
+ * from a case-family widget's own opaque filters.
  */
-export function translateCaseDashboardFilters(
+export function translateCaseDashboardFiltersChecked(
   filters: Record<string, unknown>,
-): Partial<CasesFilters> {
+): CaseDashboardFilterTranslation {
   const out: Partial<CasesFilters> = {};
   const fieldFilters = asCaseFieldFilters(filters.filters);
+  const read = readCaseFilters(fieldFilters);
 
-  // `state` in vs. notIn -> two distinct CasesFilters fields, same reasoning
-  // as `tag` below: `state` is one of only 3 case-search fields whose
-  // backend contract accepts `notIn` at all (`state`, `tag`,
-  // `projectOnboardingStatus` — see `case_filters.go`'s per-field op table),
-  // so a `notIn` widget filter must never be read op-blind and decoded as
-  // an inclusion of the very states it meant to exclude.
-  const states = caseFilterEntry(fieldFilters, "state", "in")?.values;
+  const states = read.first("state", "in")?.values;
   if (states && states.length > 0) out.states = states as CasesFilters["states"];
-  const excludeStates = caseFilterEntry(fieldFilters, "state", "notIn")?.values;
+  const excludeStates = read.merged("state", "notIn");
   if (excludeStates && excludeStates.length > 0) {
     out.excludeStates = excludeStates as CasesFilters["excludeStates"];
   }
-  const severities = caseFilterValues(fieldFilters, "severity");
-  if (severities && severities.length > 0) {
-    out.severities = severities
-      .map((s) => DASHBOARD_SEVERITY_TO_S_CODE[s])
-      .filter((s): s is Severity => Boolean(s));
+  const severityEntry = read.first("severity", "in");
+  const severities = severityEntry?.values;
+  if (severityEntry && severities && severities.length > 0) {
+    const mapped = severities.map((s) => DASHBOARD_SEVERITY_TO_S_CODE[s]);
+    // A severity the list has no code for would simply vanish from the filter.
+    if (mapped.some((s) => s === undefined)) read.reject(severityEntry);
+    else out.severities = mapped;
   }
-  const types = caseFilterValues(fieldFilters, "type");
+  const types = read.first("type", "in")?.values;
   if (types && types.length > 0) out.caseTypes = types as CasesFilters["caseTypes"];
-  const productNames = caseFilterValues(fieldFilters, "product");
+  const productNames = read.first("product", "in")?.values;
   if (productNames && productNames.length > 0) out.productNames = productNames;
-  const assignedUserIds = caseFilterValues(fieldFilters, "assignedUserId");
+  const assignedUserIds = read.first("assignedUserId", "in")?.values;
   if (assignedUserIds && assignedUserIds.length > 0) out.assignees = ["@me"];
-  const engagementTypes = caseFilterValues(fieldFilters, "engagementType");
+  const engagementTypes = read.first("engagementType", "in")?.values;
   if (engagementTypes && engagementTypes.length > 0) {
     out.engagementTypes = engagementTypes as CasesFilters["engagementTypes"];
   }
-  const workStates = caseFilterValues(fieldFilters, "workState");
+  const workStates = read.first("workState", "in")?.values;
   if (workStates && workStates.length > 0) {
     out.workStates = workStates as CasesFilters["workStates"];
   }
 
-  const csTeams = caseFilterValues(fieldFilters, "creTeam");
+  const csTeams = read.first("creTeam", "in")?.values;
   if (csTeams && csTeams.length > 0) out.csTeams = csTeams;
-  const sreTeams = caseFilterValues(fieldFilters, "sreTeam");
+  const sreTeams = read.first("sreTeam", "in")?.values;
   if (sreTeams && sreTeams.length > 0) out.sreTeams = sreTeams;
 
-  // `tag` in vs. notIn -> two distinct CasesFilters fields, matched by
-  // field+op together so one can never be mistaken for the other.
-  const tags = caseFilterEntry(fieldFilters, "tag", "in")?.values;
+  // `tag` in vs. notIn -> two distinct CasesFilters fields, so one can never
+  // be mistaken for the other.
+  const tags = read.first("tag", "in")?.values;
   if (tags && tags.length > 0) out.tags = tags;
-  const excludeTags = caseFilterEntry(fieldFilters, "tag", "notIn")?.values;
+  const excludeTags = read.merged("tag", "notIn");
   if (excludeTags && excludeTags.length > 0) out.excludeTags = excludeTags;
 
   // `projectOnboardingStatus` in vs. notIn -> both fold into the single
-  // `onboardingStatuses` field (unlike `state`/`tag`, which each keep a
-  // separate exclude field) — its domain is the 4 fixed values in
-  // `onboardingStatus.ts`, so `notIn(X)` decodes to `in(all-but-X)`, its
+  // `onboardingStatuses` field: `notIn(X)` decodes to `in(all-but-X)`, its
   // complement over that closed set, rather than a second field/URL param
-  // that could collide with (or be conflated with) this one. This is the
-  // field the click-through sign-flip bug was originally reported against:
-  // a widget's `notIn` was silently decoding as an inclusion of exactly the
-  // onboarding statuses it meant to exclude — reading it op-aware and
-  // complementing rather than passing the excluded values straight through
-  // is what keeps that bug from recurring.
-  const includedOnboardingStatuses = caseFilterEntry(
-    fieldFilters,
-    "projectOnboardingStatus",
-    "in",
-  )?.values;
-  const excludedOnboardingStatuses = caseFilterEntry(
-    fieldFilters,
-    "projectOnboardingStatus",
-    "notIn",
-  )?.values;
+  // that could collide with this one. A widget's `notIn` used to decode as
+  // an inclusion of exactly the statuses it meant to exclude; reading it
+  // op-aware and complementing is what keeps that from recurring.
+  const includedOnboardingStatuses = read.first("projectOnboardingStatus", "in")?.values;
+  const excludedOnboardingStatuses = read.merged("projectOnboardingStatus", "notIn");
   let onboardingStatuses = includedOnboardingStatuses;
   let excludedAllStatuses = false;
   if (excludedOnboardingStatuses && excludedOnboardingStatuses.length > 0) {
@@ -365,23 +388,20 @@ export function translateCaseDashboardFilters(
   if (excludedAllStatuses) {
     // `notIn` excluded every known value (or intersected down to none with
     // an `in` list) -- the widget's own filter can never match any case.
-    // Falling through to the `length > 0` check below would drop
-    // `onboardingStatuses` entirely, which this app's convention reads as
-    // "unfiltered" and would show every case instead of none — the exact
-    // sign-flip bug this field exists to prevent. See `ONBOARDING_STATUS_NO_MATCH`.
+    // Dropping `onboardingStatuses` would read as "unfiltered" and show every
+    // case instead of none: the sign-flip this field's design exists to
+    // prevent. See `ONBOARDING_STATUS_NO_MATCH`.
     out.onboardingStatuses = [ONBOARDING_STATUS_NO_MATCH];
   } else if (onboardingStatuses && onboardingStatuses.length > 0) {
     out.onboardingStatuses = onboardingStatuses;
   }
 
-  const slaGte = caseFilterEntry(fieldFilters, "taskSLABusinessElapsedPercent", "gte")
-    ?.values?.[0];
+  const slaGte = read.first("taskSLABusinessElapsedPercent", "gte")?.values?.[0];
   if (slaGte !== undefined) {
     const n = Number(slaGte);
     if (Number.isInteger(n) && n >= 0) out.slaElapsedPctGte = n;
   }
-  const slaLte = caseFilterEntry(fieldFilters, "taskSLABusinessElapsedPercent", "lte")
-    ?.values?.[0];
+  const slaLte = read.first("taskSLABusinessElapsedPercent", "lte")?.values?.[0];
   if (slaLte !== undefined) {
     const n = Number(slaLte);
     if (Number.isInteger(n) && n >= 0) out.slaElapsedPctLte = n;
@@ -389,17 +409,16 @@ export function translateCaseDashboardFilters(
 
   // Value-less predicate: presence of the entry (matched by op alone, no
   // `values` to read) is the whole filter -- must not be skipped for
-  // "having nothing to read", the exact failure mode `writeWidgetPreviewHref`
-  // shipped once for `isEmpty`/`isNotEmpty` entries generally.
-  if (caseFilterEntry(fieldFilters, "escalation", "isNotEmpty")) out.hasEscalation = true;
-  else if (caseFilterEntry(fieldFilters, "escalation", "isEmpty")) out.hasEscalation = false;
+  // "having nothing to read".
+  if (read.first("escalation", "isNotEmpty")) out.hasEscalation = true;
+  else if (read.first("escalation", "isEmpty")) out.hasEscalation = false;
 
-  const escalationLevels = caseFilterValues(fieldFilters, "escalationLevel");
+  const escalationLevels = read.first("escalationLevel", "in")?.values;
   if (escalationLevels && escalationLevels.length > 0) {
     out.escalationLevels = escalationLevels;
   }
 
-  const projectTypes = caseFilterValues(fieldFilters, "projectType");
+  const projectTypes = read.first("projectType", "in")?.values;
   if (projectTypes && projectTypes.length > 0) out.projectTypes = projectTypes;
 
   const dateRangeFields: [string, keyof CasesFilters, keyof CasesFilters][] = [
@@ -408,13 +427,57 @@ export function translateCaseDashboardFilters(
     ["closedOn", "closedOnGte", "closedOnLte"],
   ];
   for (const [beField, gteKey, lteKey] of dateRangeFields) {
-    const gte = caseFilterEntry(fieldFilters, beField, "gte")?.values?.[0];
+    const gte = read.first(beField, "gte")?.values?.[0];
     if (gte !== undefined) (out as Record<string, unknown>)[gteKey] = gte;
-    const lte = caseFilterEntry(fieldFilters, beField, "lte")?.values?.[0];
+    const lte = read.first(beField, "lte")?.values?.[0];
     if (lte !== undefined) (out as Record<string, unknown>)[lteKey] = lte;
   }
 
-  return out;
+  // The two predicates with no typed `CasesFilters` slot of their own travel
+  // as the list's generic rows (see `advancedFilters.ts`), which the Advanced
+  // builder shows and the request builder emits like any other row.
+  const advancedFilters: AdvancedFilterRow[] = [];
+  const slaBreachedEntry = read.first("slaBreached", "eq");
+  const slaBreached = slaBreachedEntry?.values?.[0];
+  if (slaBreachedEntry && slaBreached !== undefined) {
+    if (slaBreached === "true" || slaBreached === "false") {
+      advancedFilters.push({ field: "slaBreached", op: "eq", values: [slaBreached] });
+    } else {
+      read.reject(slaBreachedEntry);
+    }
+  }
+  for (const op of ["gte", "lte"] as const) {
+    const bound = read.first("resolvedOn", op)?.values?.[0];
+    if (bound !== undefined) advancedFilters.push({ field: "resolvedOn", op, values: [bound] });
+  }
+  if (advancedFilters.length > 0) out.advancedFilters = advancedFilters;
+
+  // Anything a branch above did not take, any other top-level key with a
+  // value (a flat legacy field, a malformed `anyOf`), is a predicate the
+  // list would not apply.
+  const otherKeysFilled = Object.entries(filters).some(
+    ([key, value]) => key !== "filters" && isFilledFilterValue(value),
+  );
+  // A `filters.filters` that is present but not an array of entries was not
+  // read at all.
+  const unreadFieldFilters = filters.filters !== undefined && fieldFilters === undefined;
+  let lossless = read.untaken().length === 0 && !otherKeysFilled && !unreadFieldFilters;
+  if (lossless) {
+    // The last guard is the list itself: write the filters into the URL the
+    // list will open and read them back the way it will. A value its reader
+    // does not accept (an unknown state, a work state without the single
+    // in-progress state it needs) would not survive that.
+    const full: CasesFilters = { ...DEFAULT_CASES_FILTERS, ...out };
+    lossless = sameCasesFilters(full, readCasesFiltersFromUrl(writeCasesFiltersToUrl(full)));
+  }
+  return { filters: out, lossless };
+}
+
+/** {@link translateCaseDashboardFiltersChecked}'s filters alone. */
+export function translateCaseDashboardFilters(
+  filters: Record<string, unknown>,
+): Partial<CasesFilters> {
+  return translateCaseDashboardFiltersChecked(filters).filters;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,17 +536,41 @@ function caseTypeListHref(
 }
 
 /**
+ * Where a click-through goes when the destination list cannot hold every
+ * filter the widget counted with: the generic dashboard-widget preview page,
+ * which posts the widget's own filters to the search endpoint verbatim, so
+ * what it lists is exactly what the tile counted. Landing on the plain list
+ * with some filters silently dropped would show a larger number than the tile.
+ * `ctx` is the owning widget's id and display name; without one (a caller
+ * that has no widget at hand) the page still opens, under a generic title.
+ */
+function widgetPreviewFallbackHref(
+  previewSlug: string,
+  resourceType: BeWidgetResourceType,
+  filters: Record<string, unknown>,
+  ctx: { widgetId: string; displayName: string } | undefined,
+): string {
+  return buildWidgetPreviewHref({
+    previewSlug,
+    widgetId: ctx?.widgetId || "widget",
+    displayName: ctx?.displayName || "Dashboard widget",
+    filters,
+    resourceType,
+  });
+}
+
+/**
  * Shared `buildHref` wrapper for every case-family resourceType (`case`,
- * `service_request`, `security_report_analysis`, `engagement` —
- * `announcement` is excluded, see its own `buildHref` comment): a widget's
- * `anyOf` cross-field-OR branches have no representation in `CasesFilters`
- * (an AND-only model), so `fallback()` — which goes through
- * `translateCaseDashboardFilters` one way or another — would silently drop
- * them and land on a broader, unfiltered-by-`anyOf` list than what the tile
- * actually counted (the bug this wrapper exists to close). Route through the
- * generic, filter-faithful dashboard-widget preview page instead whenever
- * `anyOf` is present, exactly mirroring `incident_task`'s own fallback for a
- * resourceType with no representable destination of its own.
+ * `service_request`, `security_report_analysis`, `engagement`, and
+ * `announcement`, whose own `buildHref` comment explains its destination): the
+ * list page the tile links to only holds the filters `CasesFilters` can
+ * express, so `fallback()` — which goes through `translateCaseDashboardFilters`
+ * one way or another — silently drops the rest and would land on a broader
+ * list than the tile counted (an `anyOf` OR group, `accountEscalationActive`,
+ * a second `in` entry on one field...). Whenever the translation is not
+ * lossless the click goes to {@link widgetPreviewFallbackHref} instead,
+ * exactly mirroring `incident_task`'s own fallback for a resourceType with no
+ * representable destination of its own.
  */
 function caseFamilyBuildHref(
   previewSlug: string,
@@ -491,22 +578,28 @@ function caseFamilyBuildHref(
   ctx: { widgetId: string; displayName: string } | undefined,
   fallback: () => string,
 ): string {
-  if (isAnyOfBranchArray(filters.anyOf)) {
-    return buildWidgetPreviewHref({
-      previewSlug,
-      widgetId: ctx?.widgetId ?? "",
-      displayName: ctx?.displayName ?? "",
-      filters,
-      // Only ever called for the case-family resourceTypes (case,
-      // service_request, security_report_analysis, engagement — see this
-      // function's own doc comment); any one of them picks the same
-      // case-DSL encoding, so the literal here doesn't need to match the
-      // caller's own exact resourceType.
-      resourceType: "case",
-    });
+  if (!translateCaseDashboardFiltersChecked(filters).lossless) {
+    // Only ever called for the case-family resourceTypes; any one of them
+    // picks the same case-DSL encoding, so the literal here doesn't need to
+    // match the caller's own exact resourceType.
+    return widgetPreviewFallbackHref(previewSlug, "case", filters, ctx);
   }
   return fallback();
 }
+
+/** Whether `filters` carries a value under any key other than the ones a list
+ * page's own URL scheme reads. For `incident`, `change_request` and `problem`,
+ * whose lists take only a few named filters, anything else would be dropped. */
+function hasFiltersBeyond(filters: Record<string, unknown>, listKeys: readonly string[]): boolean {
+  return Object.entries(filters).some(
+    ([key, value]) => !listKeys.includes(key) && isFilledFilterValue(value),
+  );
+}
+
+/** The only filter keys the incidents list reads from its URL. */
+const INCIDENT_LIST_FILTER_KEYS = ["priorities"] as const;
+/** The only filter keys the change requests list reads from its URL. */
+const CHANGE_REQUEST_LIST_FILTER_KEYS = ["states", "impacts"] as const;
 
 /** Dashboard incident filters already use the real `BeIncidentPriority`
  * wire values (`CRITICAL`/`HIGH`/...), same as `IncidentFilters.priorities` —
@@ -754,12 +847,13 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     // CsmAnnouncementsPage keeps its own filters in local component state,
     // not the URL (unlike /cases, /operations, /engagements) — there is no
     // query-param scheme to land a filtered click-through on for the plain
-    // case, so the fallback stays the unfiltered list, same as `problem`
-    // above. An `anyOf` filter still routes through `caseFamilyBuildHref` to
-    // the generic dashboard-widget preview page, though: that page resolves
-    // `resourceType` from `previewSlug` generically and posts raw filters
-    // straight to the search endpoint, so it needs no announcement-specific
-    // filtered route of its own to render this widget's exact result set.
+    // case, so the fallback stays the unfiltered list. A filter the case-list
+    // translation cannot hold (an `anyOf` OR group, say) still routes through
+    // `caseFamilyBuildHref` to the generic dashboard-widget preview page,
+    // though: that page resolves `resourceType` from `previewSlug` generically
+    // and posts raw filters straight to the search endpoint, so it needs no
+    // announcement-specific filtered route of its own to render this widget's
+    // exact result set.
     buildHref: (filters, ctx) => caseFamilyBuildHref("announcements", filters, ctx, () => "/announcements"),
     icon: Megaphone,
     iconColor: "success",
@@ -786,14 +880,19 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     itemsKey: "incidents",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: (item) => asString(item.priority),
-    buildHref: (filters) =>
-      operationsHref(
-        "incidents",
-        writeIncidentFiltersToUrl({
-          ...DEFAULT_INCIDENT_FILTERS,
-          ...translateIncidentDashboardFilters(filters),
-        }),
-      ),
+    // The incidents list reads priorities from its URL and nothing else, so a
+    // widget filtering on state, business service, SLA... would land on every
+    // incident. Those go to the preview page, which applies them all.
+    buildHref: (filters, ctx) =>
+      hasFiltersBeyond(filters, INCIDENT_LIST_FILTER_KEYS)
+        ? widgetPreviewFallbackHref("incidents", "incident", filters, ctx)
+        : operationsHref(
+            "incidents",
+            writeIncidentFiltersToUrl({
+              ...DEFAULT_INCIDENT_FILTERS,
+              ...translateIncidentDashboardFilters(filters),
+            }),
+          ),
     icon: AlertTriangle,
     iconColor: "warning",
     previewSlug: "incidents",
@@ -806,14 +905,19 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     itemsKey: "changeRequests",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    buildHref: (filters) =>
-      operationsHref(
-        "change_requests",
-        writeChangeRequestFiltersToUrl({
-          ...DEFAULT_CR_FILTERS,
-          ...translateChangeRequestDashboardFilters(filters),
-        }),
-      ),
+    // The change requests list reads states and impacts from its URL; a
+    // widget filtering on anything else (the approval outcome, an assignment
+    // group...) goes to the preview page rather than landing on every change.
+    buildHref: (filters, ctx) =>
+      hasFiltersBeyond(filters, CHANGE_REQUEST_LIST_FILTER_KEYS)
+        ? widgetPreviewFallbackHref("change-requests", "change_request", filters, ctx)
+        : operationsHref(
+            "change_requests",
+            writeChangeRequestFiltersToUrl({
+              ...DEFAULT_CR_FILTERS,
+              ...translateChangeRequestDashboardFilters(filters),
+            }),
+          ),
     icon: GitPullRequest,
     iconColor: "info",
     previewSlug: "change-requests",
@@ -826,9 +930,13 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     itemsKey: "problems",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    // No dashboard widget filters problems today; the tab has no URL filter
-    // scheme of its own yet either, so this is unfiltered.
-    buildHref: () => operationsHref("problems"),
+    // The problems tab has no URL filter scheme of its own, so it can only
+    // show the unfiltered list: a widget that filters problems (by state, say)
+    // goes to the preview page instead.
+    buildHref: (filters, ctx) =>
+      hasFiltersBeyond(filters, [])
+        ? widgetPreviewFallbackHref("problems", "problem", filters, ctx)
+        : operationsHref("problems"),
     icon: AlertOctagon,
     iconColor: "error",
     previewSlug: "problems",

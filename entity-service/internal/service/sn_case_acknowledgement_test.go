@@ -272,6 +272,78 @@ func TestSNCaseService_UpdateCase_AcknowledgePublishesCaseAcknowledged(t *testin
 	if payload.Product != "WSO2 API Manager" {
 		t.Errorf("product = %q, want %q", payload.Product, "WSO2 API Manager")
 	}
+	if payload.CaseType != "CASE" {
+		t.Errorf("caseType = %q, want %q", payload.CaseType, "CASE")
+	}
+}
+
+// TestSNCaseService_UpdateCase_AcknowledgePublishesCaseTypeForSecurityReportAnalysis
+// verifies the acknowledge publish carries the case's own type uppercased —
+// csm-notification-service uses this to render a security_report_analysis
+// ack card with no severity line, since that type never carries one.
+func TestSNCaseService_UpdateCase_AcknowledgePublishesCaseTypeForSecurityReportAnalysis(t *testing.T) {
+	ackSysid := sysid32('9')
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "Case acknowledged successfully",
+				"case": map[string]any{
+					"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00",
+					"number":              "CS0001001",
+					"alreadyAcknowledged": false,
+					"acknowledgedBy": map[string]any{
+						"id": ackSysid, "name": "Jane Doe", "email": "jane.doe@example.com",
+					},
+				},
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/tags") {
+			_, _ = w.Write([]byte(`{"tags":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id": "` + testCaseSysid + `",
+			"internalId": "WSO2-050",
+			"number": "CS0001001",
+			"title": "Case subject",
+			"description": "d",
+			"createdOn": "2026-01-01 10:00:00",
+			"createdBy": "reporter@example.com",
+			"caseType": {"id": "ab36479047ccf510a0a29cd3846d43ee"},
+			"project": {"id": "` + testProjectSysid + `", "name": "Project A"},
+			"deployment": {"id": "", "name": ""},
+			"deployedProduct": {"id": "", "name": "", "version": ""},
+			"product": {"id": "` + sysid32('7') + `", "name": "WSO2 API Manager"},
+			"state": {"id": 1, "label": "Open"},
+			"account": {"id": "` + testProjectSysid + `", "name": "Account A", "type": "customer"}
+		}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher, nil, nil, "", nil)
+
+	acknowledge := true
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{ID: testCaseUUID, Acknowledge: &acknowledge}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	var payload events.CaseAcknowledgedPayload
+	if err := json.Unmarshal(publisher.calls[0].payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.CaseType != "SECURITY_REPORT_ANALYSIS" {
+		t.Errorf("caseType = %q, want %q", payload.CaseType, "SECURITY_REPORT_ANALYSIS")
+	}
+	if payload.Severity != "" {
+		t.Errorf("severity = %q, want empty for a type that never carries one", payload.Severity)
+	}
 }
 
 // TestSNCaseService_UpdateCase_AcknowledgeAlreadyAcknowledgedSkipsPublish

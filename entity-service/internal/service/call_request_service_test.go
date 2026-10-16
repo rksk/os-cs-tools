@@ -24,30 +24,29 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
-	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
 
 // stubCallRequestRepo is a minimal repository.CallRequestRepository whose
 // unconfigured methods panic if called -- same convention as
 // stubProblemRepo (problem_service_test.go).
 type stubCallRequestRepo struct {
-	createCallRequest               func(ctx context.Context, req domain.CreateCallRequestRequest, callerID, callerEmail string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error)
-	createCallRequestFromServiceNow func(ctx context.Context, req domain.CreateCallRequestRequest, id, createdBy string, createdOn time.Time, callerID string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error)
+	createCallRequest               func(ctx context.Context, req domain.CreateCallRequestRequest, callerID, callerEmail string) (domain.CreateCallRequestResponse, error)
+	createCallRequestFromServiceNow func(ctx context.Context, req domain.CreateCallRequestRequest, id, createdBy string, createdOn time.Time, callerID string) (domain.CreateCallRequestResponse, error)
 	updateCallRequest               func(ctx context.Context, req domain.UpdateCallRequestRequest, assigneeID *string, callerEmail string) (domain.UpdateCallRequestResponse, error)
 	setCallRequestSNSysID           func(ctx context.Context, id, snSysID string) error
 	getCallRequestSNSysID           func(ctx context.Context, id string) (*string, error)
 	searchAllCallRequests           func(ctx context.Context, f domain.SearchAllCallRequestsFilters, sortBy domain.CallRequestSort, p domain.Pagination) ([]domain.CallRequestView, int, error)
 }
 
-func (s *stubCallRequestRepo) CreateCallRequest(ctx context.Context, req domain.CreateCallRequestRequest, callerID, callerEmail string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error) {
+func (s *stubCallRequestRepo) CreateCallRequest(ctx context.Context, req domain.CreateCallRequestRequest, callerID, callerEmail string) (domain.CreateCallRequestResponse, error) {
 	if s.createCallRequest != nil {
-		return s.createCallRequest(ctx, req, callerID, callerEmail, initialState)
+		return s.createCallRequest(ctx, req, callerID, callerEmail)
 	}
 	panic("not implemented")
 }
-func (s *stubCallRequestRepo) CreateCallRequestFromServiceNow(ctx context.Context, req domain.CreateCallRequestRequest, id, createdBy string, createdOn time.Time, callerID string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error) {
+func (s *stubCallRequestRepo) CreateCallRequestFromServiceNow(ctx context.Context, req domain.CreateCallRequestRequest, id, createdBy string, createdOn time.Time, callerID string) (domain.CreateCallRequestResponse, error) {
 	if s.createCallRequestFromServiceNow != nil {
-		return s.createCallRequestFromServiceNow(ctx, req, id, createdBy, createdOn, callerID, initialState)
+		return s.createCallRequestFromServiceNow(ctx, req, id, createdBy, createdOn, callerID)
 	}
 	panic("not implemented")
 }
@@ -89,11 +88,11 @@ func (s *stubCallRequestRepo) GetCallRequestSNSysID(ctx context.Context, id stri
 // doubles as an assertion that it's never reached.
 type stubMirrorCallRequestService struct {
 	CallRequestService
-	createCallRequestSNFirstDetailsFn func(ctx context.Context, req domain.CreateCallRequestRequest) (id, createdBy string, createdOn time.Time, state domain.CallRequestStateType, err error)
+	createCallRequestSNFirstDetailsFn func(ctx context.Context, req domain.CreateCallRequestRequest) (id, createdBy string, createdOn time.Time, err error)
 	updateCallRequest                 func(ctx context.Context, req domain.UpdateCallRequestRequest) (domain.UpdateCallRequestResponse, error)
 }
 
-func (s *stubMirrorCallRequestService) createCallRequestSNFirstDetails(ctx context.Context, req domain.CreateCallRequestRequest) (id, createdBy string, createdOn time.Time, state domain.CallRequestStateType, err error) {
+func (s *stubMirrorCallRequestService) createCallRequestSNFirstDetails(ctx context.Context, req domain.CreateCallRequestRequest) (id, createdBy string, createdOn time.Time, err error) {
 	if s.createCallRequestSNFirstDetailsFn == nil {
 		panic("stubMirrorCallRequestService: createCallRequestSNFirstDetailsFn not set")
 	}
@@ -115,8 +114,8 @@ func TestCallRequestService_CreateCallRequest_SNFailureLeavesPostgresUntouched(t
 	req := domain.CreateCallRequestRequest{CaseID: testUUID, Reason: "r", UTCTimes: []string{"2026-10-01T10:00:00Z"}, DurationMinutes: 30}
 
 	mirror := &stubMirrorCallRequestService{
-		createCallRequestSNFirstDetailsFn: func(context.Context, domain.CreateCallRequestRequest) (string, string, time.Time, domain.CallRequestStateType, error) {
-			return "", "", time.Time{}, "", errors.New("sn downstream unreachable")
+		createCallRequestSNFirstDetailsFn: func(context.Context, domain.CreateCallRequestRequest) (string, string, time.Time, error) {
+			return "", "", time.Time{}, errors.New("sn downstream unreachable")
 		},
 	}
 	repo := &stubCallRequestRepo{}
@@ -146,17 +145,16 @@ func TestCallRequestService_CreateCallRequest_SNSuccessCreatesPostgresRowWithMat
 	req := domain.CreateCallRequestRequest{CaseID: testUUID, Reason: "r", UTCTimes: []string{"2026-10-01T10:00:00Z"}, DurationMinutes: 30}
 
 	mirror := &stubMirrorCallRequestService{
-		createCallRequestSNFirstDetailsFn: func(context.Context, domain.CreateCallRequestRequest) (string, string, time.Time, domain.CallRequestStateType, error) {
-			return snID, snCreatedBy, createdOn, domain.CallRequestStatePendingOnWSO2, nil
+		createCallRequestSNFirstDetailsFn: func(context.Context, domain.CreateCallRequestRequest) (string, string, time.Time, error) {
+			return snID, snCreatedBy, createdOn, nil
 		},
 	}
 
 	var gotID, gotCreatedBy, gotCallerID string
 	var gotCreatedOn time.Time
-	var gotInitialState domain.CallRequestStateType
 	repo := &stubCallRequestRepo{
-		createCallRequestFromServiceNow: func(_ context.Context, _ domain.CreateCallRequestRequest, id, createdBy string, createdOnArg time.Time, callerID string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error) {
-			gotID, gotCreatedBy, gotCreatedOn, gotCallerID, gotInitialState = id, createdBy, createdOnArg, callerID, initialState
+		createCallRequestFromServiceNow: func(_ context.Context, _ domain.CreateCallRequestRequest, id, createdBy string, createdOnArg time.Time, callerID string) (domain.CreateCallRequestResponse, error) {
+			gotID, gotCreatedBy, gotCreatedOn, gotCallerID = id, createdBy, createdOnArg, callerID
 			var resp domain.CreateCallRequestResponse
 			resp.CallRequest.ID = id
 			resp.CallRequest.CreatedBy = createdBy
@@ -179,160 +177,9 @@ func TestCallRequestService_CreateCallRequest_SNSuccessCreatesPostgresRowWithMat
 		t.Errorf("CreateCallRequestFromServiceNow got (%q, %q, %v, %q), want (%q, %q, %v, %q)",
 			gotID, gotCreatedBy, gotCreatedOn, gotCallerID, snID, snCreatedBy, createdOn, testUUID)
 	}
-	// The mirrored state is callRequestCreateInitialState's own caller-based
-	// decision -- NOT ServiceNow's create response (which the mock above
-	// deliberately set to pending_on_wso2, to prove it's ignored). ServiceNow's
-	// own create flow always assigns pending_on_wso2 unconditionally with no
-	// caller concept at all, so mirroring its response would silently undo
-	// this fix for every dual-write deployment; see createCallRequestSNFirst's
-	// own doc comment. The test context here carries NO resolved caller
-	// identity at all (no WithCallerIdentity call) -- CallerIdentityFromContext's
-	// own ok=false case -- which callRequestCreateInitialState treats the same
-	// as an external caller, pending_on_wso2, rather than guessing the caller
-	// is staff (see that function's own doc comment for why collapsing
-	// "unresolved" into IsExternalCaller's plain false would get this wrong).
-	if gotInitialState != domain.CallRequestStatePendingOnWSO2 {
-		t.Errorf("CreateCallRequestFromServiceNow initialState = %q, want %q (callRequestCreateInitialState's own decision, not ServiceNow's)",
-			gotInitialState, domain.CallRequestStatePendingOnWSO2)
-	}
 	if resp.CallRequest.ID != snID {
 		t.Errorf("response call request id = %q, want %q (the ServiceNow-assigned id)", resp.CallRequest.ID, snID)
 	}
-}
-
-// TestCallRequestService_CreateCallRequest_InitialStateByCaller covers the
-// fix for a real, reported bug: every call request used to start
-// pending_on_wso2 regardless of who created it -- correct for a
-// customer-raised request (WSO2 must respond), backwards for a CSM-raised
-// one (the agent is proposing times, so the customer is the one who must
-// respond). Both the plain-Postgres and the dual-write (ServiceNow-first)
-// CREATE paths now decide the initial state from the resolved caller's own
-// scope, and must agree with each other -- run as one table against both
-// constructors so a future change can't fix one path and silently leave the
-// other on the old, caller-blind behavior.
-func TestCallRequestService_CreateCallRequest_InitialStateByCaller(t *testing.T) {
-	req := domain.CreateCallRequestRequest{CaseID: testUUID, Reason: "r", UTCTimes: []string{"2026-10-01T10:00:00Z"}, DurationMinutes: 30}
-
-	tests := []struct {
-		name string
-		// unresolved: true skips WithCallerIdentity entirely, so
-		// repository.CallerIdentityFromContext's own ok comes back false --
-		// genuinely no identity, never reached through callerIdentityMiddleware
-		// -- as opposed to `scope` below, which is always a RESOLVED identity,
-		// even when it is the zero SearchScope{} (ok=true, every field false).
-		// IsExternalCaller answers false for both an unresolved context and a
-		// resolved-but-internal one, so the two have to be tested separately
-		// to catch a regression that collapses them back into one case (a
-		// real, CodeRabbit-caught bug: the resolved-empty-scope case alone
-		// happens to produce the right answer for the wrong reason, which let
-		// the unresolved case silently regress to pending_on_customer without
-		// any test noticing).
-		unresolved bool
-		scope      repository.SearchScope
-		wantState  domain.CallRequestStateType
-	}{
-		{
-			name:      "an external (customer) caller raises a request WSO2 must respond to",
-			scope:     repository.SearchScope{ProjectIDs: []string{testUUID}, ViewerEmail: "jane.doe@example.com"},
-			wantState: domain.CallRequestStatePendingOnWSO2,
-		},
-		{
-			name:      "an internal (CSM) caller proposes times the customer must respond to",
-			scope:     repository.SearchScope{Unrestricted: true, ViewerEmail: "jane.doe@example.com"},
-			wantState: domain.CallRequestStatePendingOnCustomer,
-		},
-		{
-			name:      "a staff caller who also holds a customer record is still internal",
-			scope:     repository.SearchScope{HasInternalAccess: true, ViewerEmail: "jane.doe@example.com"},
-			wantState: domain.CallRequestStatePendingOnCustomer,
-		},
-		{
-			name:      "a resolved identity with every field at its zero value is treated as external",
-			scope:     repository.SearchScope{},
-			wantState: domain.CallRequestStatePendingOnWSO2,
-		},
-		{
-			name:       "no identity resolved at all keeps the original, safer default",
-			unresolved: true,
-			wantState:  domain.CallRequestStatePendingOnWSO2,
-		},
-	}
-
-	t.Run("plain Postgres", func(t *testing.T) {
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
-				if !tt.unresolved {
-					ctx = repository.WithCallerIdentity(ctx, tt.scope)
-				}
-
-				var gotState domain.CallRequestStateType
-				repo := &stubCallRequestRepo{
-					createCallRequest: func(_ context.Context, _ domain.CreateCallRequestRequest, _, _ string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error) {
-						gotState = initialState
-						return domain.CreateCallRequestResponse{}, nil
-					},
-				}
-				svc := NewCallRequestService(repo, stubUserRepo{
-					getUserByEmail: func(context.Context, string) (domain.User, error) {
-						return domain.User{ID: testUUID, Email: "jane.doe@example.com"}, nil
-					},
-				})
-
-				if _, err := svc.CreateCallRequest(ctx, req); err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if gotState != tt.wantState {
-					t.Errorf("initial state = %q, want %q", gotState, tt.wantState)
-				}
-			})
-		}
-	})
-
-	t.Run("dual-write (ServiceNow-first)", func(t *testing.T) {
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
-				if !tt.unresolved {
-					ctx = repository.WithCallerIdentity(ctx, tt.scope)
-				}
-
-				// ServiceNow's own create response always reports
-				// pending_on_wso2, unconditionally (its CallRequestUtils.
-				// scheduleCall script has no caller concept at all) -- the
-				// opposite of wantState whenever wantState is
-				// pending_on_customer, which is exactly what proves this
-				// path ignores ServiceNow's response rather than mirroring
-				// it.
-				mirror := &stubMirrorCallRequestService{
-					createCallRequestSNFirstDetailsFn: func(context.Context, domain.CreateCallRequestRequest) (string, string, time.Time, domain.CallRequestStateType, error) {
-						return "sn-id", "jane.doe@example.com", time.Now().UTC(), domain.CallRequestStatePendingOnWSO2, nil
-					},
-				}
-
-				var gotState domain.CallRequestStateType
-				repo := &stubCallRequestRepo{
-					createCallRequestFromServiceNow: func(_ context.Context, _ domain.CreateCallRequestRequest, _, _ string, _ time.Time, _ string, initialState domain.CallRequestStateType) (domain.CreateCallRequestResponse, error) {
-						gotState = initialState
-						return domain.CreateCallRequestResponse{}, nil
-					},
-				}
-				dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
-				svc := NewCallRequestServiceWithSNWriteback(repo, stubUserRepo{
-					getUserByEmail: func(context.Context, string) (domain.User, error) {
-						return domain.User{ID: testUUID, Email: "jane.doe@example.com"}, nil
-					},
-				}, dispatcher, mirror)
-
-				if _, err := svc.CreateCallRequest(ctx, req); err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if gotState != tt.wantState {
-					t.Errorf("initial state = %q, want %q", gotState, tt.wantState)
-				}
-			})
-		}
-	})
 }
 
 const testUUID = "99999999-0000-4000-8000-000000000001"

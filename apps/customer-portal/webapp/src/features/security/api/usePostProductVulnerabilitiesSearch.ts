@@ -27,10 +27,12 @@ import { parseApiResponseMessage } from "@utils/ApiError";
  * Searches product vulnerabilities (POST /products/vulnerabilities/search).
  *
  * @param {ProductVulnerabilitiesSearchRequest} request - Search filters, pagination, and sort.
+ * @param {{ staleTime?: number }} [options] - Optional override of how long a cached result counts as fresh.
  * @returns {UseQueryResult<ProductVulnerabilitiesSearchResponse, Error>} Query result.
  */
 export function usePostProductVulnerabilitiesSearch(
   request: ProductVulnerabilitiesSearchRequest,
+  options?: { staleTime?: number },
 ): UseQueryResult<ProductVulnerabilitiesSearchResponse, Error> {
   const logger = useLogger();
   const { isSignedIn, isLoading: isAuthLoading } = useAsgardeo();
@@ -73,6 +75,6 @@ export function usePostProductVulnerabilitiesSearch(
       return data;
     },
     enabled: isSignedIn && !isAuthLoading,
-    staleTime: 0,
+    staleTime: options?.staleTime ?? 0,
   });
 }

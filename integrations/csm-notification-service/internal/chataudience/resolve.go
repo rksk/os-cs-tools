@@ -39,6 +39,13 @@ const (
 	Onboarding      = "Onboarding"
 	Americas        = "Americas"
 	Evaluation      = "Evaluation"
+	// Migration is the standing audience a frustration-detection Chat alert
+	// routes to instead of the usual team/Incident Monitor audience, when
+	// the comment landed on a migration engagement (case type "engagement",
+	// engagement type "migration") -- see dispatch.checkFrustration, which
+	// decides this before ever calling Resolve, since it replaces Resolve's
+	// whole team-first decision rather than adding to it.
+	Migration = "Migration"
 )
 
 // onboardingStatuses are the entity-service project.onboarding_status raw

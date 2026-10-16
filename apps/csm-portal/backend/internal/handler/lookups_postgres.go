@@ -99,9 +99,8 @@ func (c *postgresLookupsClient) GetProductList(ctx context.Context) ([]string, e
 			return nil, fmt.Errorf("unmarshal entity-service products response: %w", err)
 		}
 
-		// Trim/dedupe/sort matches the ServiceNow-backed implementation's
-		// own behavior exactly (see internal/servicenow/lookups.go) so
-		// callers see no difference in shape.
+		// Trim/dedupe/sort keeps the response shape the webapp has always
+		// consumed: distinct, non-empty, sorted product names.
 		for _, p := range resp.Products {
 			name := strings.TrimSpace(p.Name)
 			if name != "" && !seen[name] {

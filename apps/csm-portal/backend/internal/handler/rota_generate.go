@@ -22,15 +22,21 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
+
+// rotaMonthRe is a month as the night crew read takes it: YYYY-MM.
+var rotaMonthRe = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 
 // entityRotaGenerateClient is the one entity-service call the "Generate
 // month" action needs. Its own interface rather than a method on
 // entityScheduleClient, so nothing that fakes the schedule client changes.
 type entityRotaGenerateClient interface {
 	GenerateRotaMonth(ctx context.Context, code string, body []byte) ([]byte, error)
+	GetRotaNightCrew(ctx context.Context, code, from, to string) ([]byte, error)
 }
 
 // RotaGenerateHandler proxies the Team Schedule's "Generate month" action.
@@ -80,4 +86,35 @@ func (h *RotaGenerateHandler) GenerateRotaMonth(w http.ResponseWriter, r *http.R
 		status = http.StatusOK
 	}
 	writeJSON(w, status, result)
+}
+
+// GetRotaNightCrew handles GET /team-schedule/rotas/{code}/night-crew: the TZ3
+// people each month from..to was generated with. Anyone who can read the
+// schedule may read it.
+func (h *RotaGenerateHandler) GetRotaNightCrew(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	if !rotaMonthRe.MatchString(from) || !rotaMonthRe.MatchString(to) {
+		writeError(w, http.StatusBadRequest, "from and to must be months, YYYY-MM.")
+		return
+	}
+	result, err := h.entity.GetRotaNightCrew(r.Context(), r.PathValue("code"), from, to)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetRotaNightCrew failed", "userID", user.UserID, "err", err)
+		var apiErr *apierror.Error
+		if errors.As(err, &apiErr) {
+			switch apiErr.StatusCode {
+			case http.StatusBadRequest, http.StatusNotFound:
+				writeError(w, apiErr.StatusCode, upstreamErrorMessageStrict(apiErr.Body, "Failed to load the night crew."))
+				return
+			}
+		}
+		mapUpstreamErrorGeneric(w, err, "Failed to load the night crew.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

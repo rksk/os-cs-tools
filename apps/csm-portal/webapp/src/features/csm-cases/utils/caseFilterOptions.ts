@@ -38,16 +38,19 @@ export const SEVERITY_OPTIONS: { value: Severity; label: string }[] = ALL_SEVERI
   (s) => ({ value: s, label: s }),
 );
 
-/** Excludes `reopened` — a valid backend enum value, but never a case's own
- * `state` (only ever a `nextStates` transition marker, see `CaseState`'s own
- * doc comment) — so offering it here would suggest a filter that can never
- * match anything. Mirrors `anyOfFilters.ts`'s own `ANY_OF_STATE_VALUES`. */
+/** Every state a case can be in. `reopened` is listed although the
+ * transition to it is not offered (see `CaseState`'s own doc comment): cases
+ * carried over from the previous system hold it and the dashboard tiles count
+ * them, so a list that could not select it would show fewer cases than the
+ * tile it was opened from. Mirrors `anyOfFilters.ts`'s own
+ * `ANY_OF_STATE_VALUES`. */
 export const PRIMARY_STATES: CaseState[] = [
   "open",
   "work_in_progress",
   "awaiting_info",
   "solution_proposed",
   "waiting_on_wso2",
+  "reopened",
   "closed",
 ];
 export const STATE_OPTIONS: { value: CaseState; label: string }[] = PRIMARY_STATES.map((s) => ({

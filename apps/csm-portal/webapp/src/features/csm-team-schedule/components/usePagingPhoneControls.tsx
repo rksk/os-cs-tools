@@ -35,14 +35,14 @@ function refusal(err: unknown): string | undefined {
 
 function saveError(err: unknown): string {
   if (err instanceof BackendApiError && err.status === 400) return "That number was not accepted. Check it and try again.";
-  return refusal(err) ?? "The paging number was not saved. Try again.";
+  return refusal(err) ?? "The alert number was not saved. Try again.";
 }
 
 function testError(err: unknown): string {
   if (err instanceof BackendApiError && err.status === 429) {
     return err.message || "This number was tested less than 2 minutes ago. Try again shortly.";
   }
-  if (err instanceof BackendApiError && err.status === 409) return "There is no paging number to test.";
+  if (err instanceof BackendApiError && err.status === 409) return "There is no alert number to test.";
   return refusal(err) ?? "The test call could not be started. Try again.";
 }
 
@@ -114,7 +114,7 @@ export function usePagingPhoneControls(
       onRemove={() =>
         del.mutate(open.member.userId, {
           onSuccess: close,
-          onError: (err) => setError(refusal(err) ?? "The paging number was not removed. Try again."),
+          onError: (err) => setError(refusal(err) ?? "The alert number was not removed. Try again."),
         })
       }
     />

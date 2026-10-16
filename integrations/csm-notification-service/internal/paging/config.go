@@ -110,16 +110,32 @@ type LadderConfig struct {
 	// [apollo, artemis] notifies both SaaS teams. Empty, such an incident
 	// posts to chat above, as before. Its closing message follows. SRE only.
 	TeamlessChats []string `yaml:"teamlessChats"`
+	// TeamChannels is how each SRE team's alerts go out (chat, call, both,
+	// log), by team key, set on the Team Schedule's Alert Settings tab (Team
+	// routing) and never from this file. A team's channel can only narrow the
+	// ladder's channel above (narrowChannel); a team not listed uses it as it
+	// is. SRE only.
+	TeamChannels map[string]Channel `yaml:"-"`
 	// UnansweredChat posts a closing message when the ladder has called every
 	// rung and nobody acknowledged the incident, to the team's own space
 	// (teamChats), else chat. It is posted whatever channel says, so a
 	// call-only ladder still tells the room the calls have ended. SRE only.
+	// An incident with an INCIDENT_CHAT_SPACES space gets it there whether this is on or not.
 	UnansweredChat bool `yaml:"unansweredChat"`
 	// SMEHandoffChat posts one message to the incident's SRE team space
 	// (teamChats, else chat) when it is escalated to an SME team: who
 	// escalated it, that SRE paging stopped, and that the SMEs are being
 	// paged. Posted whatever channel says. SRE only.
+	// An incident with an INCIDENT_CHAT_SPACES space gets it there whether this is on or not.
 	SMEHandoffChat bool `yaml:"smeHandoffChat"`
+	// AckChat posts one reply in a ladder's thread when the ladder stops for
+	// any reason but a hand-off to the SMEs (which posts its own): who
+	// acknowledged it, or that the case closed or its severity changed, and
+	// how many calls were cancelled. It goes where the rung cards went, and
+	// only once a rung has gone out, so a room is never told about a chain it
+	// never saw. The SRE ladder's setting covers its SME ladders too. Defaults
+	// to on; a pointer so a deployment can turn it off.
+	AckChat *bool `yaml:"ackChat"`
 
 	// Phones is where a recipient's phone number comes from when the rung's
 	// resolver does not supply one (the Team Schedule never does).
@@ -484,6 +500,11 @@ func (l LadderConfig) RequireBothGestures() bool {
 		return true
 	}
 	return *l.Acknowledgement.RequireBoth
+}
+
+// AckChatOn reports whether a stopped ladder replies in its thread (AckChat).
+func (l LadderConfig) AckChatOn() bool {
+	return l.AckChat == nil || *l.AckChat
 }
 
 // Safety caps what a single ladder can spend before anybody is dialled.

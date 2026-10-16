@@ -273,6 +273,8 @@ export default function CreateCustomerAnnouncementForm(): JSX.Element {
               projects={resolvedAudience.projects}
               total={resolvedAudience.total}
               isLoading={resolvedAudience.isLoading}
+              isLoadingMore={resolvedAudience.isLoadingMore}
+              expectedTotal={resolvedAudience.expectedTotal}
               isError={resolvedAudience.isError}
             />
           </Grid>
@@ -322,6 +324,7 @@ export default function CreateCustomerAnnouncementForm(): JSX.Element {
               the editor in a labelled group for assistive tech. */}
           <Box role="group" aria-labelledby="announcement-description-label">
             <EditorWithSourceToggle
+              keepStyledHtmlAsSource
               value={description}
               onChange={setDescription}
               placeholder="Describe the announcement…"

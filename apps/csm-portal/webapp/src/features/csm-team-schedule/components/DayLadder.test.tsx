@@ -221,6 +221,37 @@ describe("DayLadder: cards that share their hours", () => {
 });
 
 describe("DayLadder: who is not on the rota", () => {
+  it("keeps somebody on half-day leave in the Leave card, flagged with their half", () => {
+    const HD_AM = {
+      ...ANNUAL_LEAVE, id: "k-hdam", code: "HALF_DAY_LEAVE_MORNING", shortCode: "HD-AM",
+      label: "Half day leave — morning", colourToken: "HDM", sortOrder: 11,
+    };
+    const { container } = render(
+      <DayLadder
+        day={WEDNESDAY}
+        tz={TZ}
+        zoneLabel="IST"
+        lanes={[lane([nineToFive("Asela", REGULAR.code)])]}
+        shifts={SHIFTS}
+        zones={ZONES}
+        absences={[
+          absence({ name: "Nuwan", startsOn: ISO, endsOn: ISO }),
+          absence({ name: "Hiru", startsOn: ISO, endsOn: ISO, kindCode: HD_AM.code }),
+        ]}
+        absenceKinds={[ANNUAL_LEAVE, HD_AM]}
+        {...scopeControls()}
+      />,
+    );
+    const cards = [...container.querySelectorAll(".offcard")];
+    expect(cards).toHaveLength(1);
+    expect(cards[0].querySelector(".offh b")).toHaveTextContent("2");
+    const person = (name: string) =>
+      [...cards[0].querySelectorAll(".lnm")].find((n) => n.querySelector(".who")?.textContent === name);
+    expect(person("Hiru")?.querySelector(".hdflag")).toHaveTextContent("HD-AM");
+    // Whole-day leave still does not name its kind.
+    expect(person("Nuwan")?.querySelector(".hdflag")).toBeNull();
+  });
+
   it("lists leave ahead of the allocations", () => {
     renderLadder(
       [nineToFive("Asela", REGULAR.code)],
@@ -338,6 +369,48 @@ describe("DayLadder: TZ3 is one card", () => {
     expect(labels).toEqual(["L1 escalation", "L2 escalation", "L3 escalation", "Regular hours"]);
     expect(screen.getByText("Nimal")).toBeInTheDocument();
     expect(container.textContent).not.toContain("Others in TZ3");
+  });
+});
+
+describe("DayLadder: others in a zone, by team", () => {
+  const day = (name: string, teamKey: string) =>
+    assignment({ name, rotaDate: ISO, shiftCode: TZ1.code, zoneCode: "TZ1", teamKey });
+  const renderZone = (assignments: ReturnType<typeof day>[]) =>
+    render(
+      <DayLadder
+        day={WEDNESDAY}
+        tz={TZ}
+        zoneLabel="IST"
+        lanes={[{ name: "TZ1", assignments, layout: "zone" }]}
+        shifts={shiftMap(TZ1)}
+        zones={ZONES}
+        absences={[]}
+        absenceKinds={[ANNUAL_LEAVE]}
+        {...scopeControls()}
+      />,
+    );
+
+  it("lists each team under its own heading and count, as the Leave card does", () => {
+    const { container } = renderZone([
+      day("Nadia", "orion_abt_cre_team"),
+      day("Kasun", "lyra_abt_cre_team"),
+      day("Ruwan", "orion_abt_cre_team"),
+    ]);
+    const card = [...container.querySelectorAll(".zblk")].find((el) => el.textContent?.includes("Others in TZ1"))!;
+    const groups = [...card.querySelectorAll(".zteam")].map((g) => ({
+      heading: g.querySelector(".offgh")?.firstChild?.textContent,
+      count: g.querySelector(".offgh b")?.textContent,
+      names: [...g.querySelectorAll(".lnm .who")].map((n) => n.textContent),
+    }));
+    expect(groups).toEqual([
+      { heading: "Orion", count: "2", names: ["Nadia", "Ruwan"] },
+      { heading: "Lyra", count: "1", names: ["Kasun"] },
+    ]);
+  });
+
+  it("keeps the escalation card as tiers, not teams", () => {
+    const { container } = renderZone([{ ...day("Nadia", "orion_abt_cre_team"), tier: "L1" }]);
+    expect(container.querySelector(".zbp.tiers .zteam")).toBeNull();
   });
 });
 

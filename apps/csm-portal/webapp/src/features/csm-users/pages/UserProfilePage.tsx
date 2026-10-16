@@ -38,6 +38,10 @@ import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { useGetUserById } from "@features/csm-users/api/useGetUserById";
 import { useSearchRoles } from "@features/csm-admin/api/useSearchRoles";
 import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityChip";
+import {
+  projectContactRoleChips,
+  projectContactRoleChipSx,
+} from "@features/csm-projects/utils/projectContactRoles";
 import { grantableRoleLabel } from "@features/csm-users/utils/grantableRoleLabels";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import {
@@ -147,6 +151,13 @@ interface ProjectAccessStatus {
  */
 function deriveProjectAccessStatus(pa: UserProjectAccess): ProjectAccessStatus {
   if (!pa.grantsCaseAccess) {
+    // A linked row whose addresses agree is only waiting on registration.
+    if (
+      pa.contactRecordPresent &&
+      (pa.contactRecordEmail ?? "").toLowerCase() === pa.contactEmail.toLowerCase()
+    ) {
+      return { label: "Invited", color: "warning" };
+    }
     return {
       label: "No access",
       color: "error",
@@ -400,7 +411,7 @@ function PermissionsCard({ user }: { user: NormalizedUserDetail }): JSX.Element 
  */
 function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.Element {
   const access = user.projectAccess ?? [];
-  const blockedCount = access.filter((pa) => !pa.grantsCaseAccess).length;
+  const blockedCount = access.filter((pa) => deriveProjectAccessStatus(pa).label === "No access").length;
 
   return (
     <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -482,17 +493,23 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
                         )}
                       </TableCell>
                       <TableCell>
-                        {pa.roles && pa.roles.length > 0
-                          ? pa.roles.map((r) => (
+                        {pa.roles && pa.roles.length > 0 ? (
+                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                            {projectContactRoleChips({ roles: pa.roles }).map((chip) => (
                               <Chip
-                                key={r}
+                                key={chip.label}
                                 size="small"
-                                label={r}
+                                icon={chip.Icon ? <chip.Icon size={12} /> : undefined}
+                                label={chip.label}
                                 variant="outlined"
-                                sx={{ mr: 0.5, mb: 0.5 }}
+                                color={chip.chipColor}
+                                sx={projectContactRoleChipSx(chip.chipColor)}
                               />
-                            ))
-                          : "—"}
+                            ))}
+                          </Box>
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
                       <TableCell>
                         <Chip size="small" label={status.label} color={status.color} variant="outlined" />

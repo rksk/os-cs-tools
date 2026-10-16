@@ -55,14 +55,20 @@ type fakeScheduleRepo struct {
 	gotKindCode string
 	gotRange    domain.ApplyScheduleRangeRequest
 	adminTeams  []string
+	// markerTeams is what a rota marker holds (migration 0225). Nil by
+	// default, so the existing tests describe nobody holding one.
+	markerTeams []string
 
 	// Per-team answers, when set: which teams the caller leads, which the
 	// engineer belongs to, and a span that moved the engineer to movedTo
 	// from movedHome. Unset, the blanket answers above apply.
-	ledTeams   []string
-	memberOf   []string
-	movedTo    string
-	movedHome  string
+	ledTeams  []string
+	memberOf  []string
+	movedTo   string
+	movedHome string
+	// shareRota is the answer to TeamsShareRota: the SaaS Night cover and
+	// its people's own teams are one rota.
+	shareRota  bool
 	gotAbsence domain.ApplyScheduleAbsenceRequest
 
 	// The families of the rota admin roles held (nil = none), and what the
@@ -167,6 +173,10 @@ func (f *fakeScheduleRepo) MovedToTeamOver(_ context.Context, _ string, teamKey,
 	return "", false, f.err
 }
 
+func (f *fakeScheduleRepo) TeamsShareRota(context.Context, string, string) (bool, error) {
+	return f.shareRota, f.err
+}
+
 func (f *fakeScheduleRepo) LeadTeamsFor(context.Context, string) ([]string, error) {
 	if f.leadsTeam {
 		return []string{"castor"}, f.err
@@ -182,6 +192,13 @@ func (f *fakeScheduleRepo) RotaAdminTeamsFor(context.Context, string) ([]string,
 		return []string{}, f.err
 	}
 	return f.adminTeams, f.err
+}
+
+func (f *fakeScheduleRepo) RotaMarkerTeamsFor(context.Context, string) ([]string, error) {
+	if f.markerTeams == nil {
+		return []string{}, f.err
+	}
+	return f.markerTeams, f.err
 }
 
 func (f *fakeScheduleRepo) Catalogue(context.Context) (domain.ScheduleCatalogue, error) {
@@ -602,8 +619,76 @@ func TestMyLeadTeamsCoversLeadingAndAdministering(t *testing.T) {
 	}
 	// castor is held both ways and must appear once, not twice.
 	want := []string{"castor", "draco", "vega"}
-	if !reflect.DeepEqual(teams, want) {
-		t.Fatalf("MyLeadTeams = %v, want %v", teams, want)
+	if !reflect.DeepEqual(teams.TeamKeys, want) || len(teams.MarkerOnlyTeamKeys) != 0 {
+		t.Fatalf("MyLeadTeams = %+v, want %v and no marker-only teams", teams, want)
+	}
+}
+
+// A rota marker's team is one they may edit, and the page also needs to know
+// it is held only as a marker: Generate month and the tags are not theirs.
+// A team they also lead is no marker-only team.
+func TestMyLeadTeamsListsAMarkersTeamApart(t *testing.T) {
+	repo := &fakeScheduleRepo{leadsTeam: true} // LeadTeamsFor returns castor
+	repo.markerTeams = []string{"lyra", "castor"}
+	svc := NewScheduleService(repo, alwaysUnrestrictedAccess{})
+
+	teams, err := svc.MyLeadTeams(leadCtx("castor.01@example.com"))
+	if err != nil {
+		t.Fatalf("MyLeadTeams: %v", err)
+	}
+	if want := []string{"castor", "lyra"}; !reflect.DeepEqual(teams.TeamKeys, want) {
+		t.Fatalf("TeamKeys = %v, want %v", teams.TeamKeys, want)
+	}
+	if want := []string{"lyra"}; !reflect.DeepEqual(teams.MarkerOnlyTeamKeys, want) {
+		t.Fatalf("MarkerOnlyTeamKeys = %v, want %v", teams.MarkerOnlyTeamKeys, want)
+	}
+}
+
+// A rota marker marks their own team: rotations, leave and allocations all go
+// through the rota writer rule, and the marker passes it for that team only.
+func TestRotaMarkerMarksOwnTeamOnly(t *testing.T) {
+	repo := &leadOf{team: ""}
+	repo.markerTeams = []string{"lyra"}
+	svc := NewScheduleService(repo, alwaysUnrestrictedAccess{})
+	ctx := leadCtx("lyra.marker@example.com")
+	req := domain.ApplyScheduleRangeRequest{
+		UserID:    "22222222-2222-2222-2222-222222222222",
+		TeamKey:   "Lyra",
+		ShiftCode: "CRE_EVENING",
+		From:      "2026-10-01",
+		To:        "2026-10-03",
+	}
+	if _, err := svc.ApplyRange(ctx, req); err != nil {
+		t.Fatalf("a rota marker was refused their own team: %v", err)
+	}
+
+	repo.called = false
+	req.TeamKey = "castor"
+	_, err := svc.ApplyRange(ctx, req)
+	var forbidden *apierror.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("want ForbiddenError marking another team, got %v", err)
+	}
+	if repo.called {
+		t.Fatal("a rota marker wrote to a team that is not theirs")
+	}
+}
+
+// The tags are shared by every team, so they stay with the leads and rota
+// admins: being one team's marker is not leading a team.
+func TestRotaMarkerCannotChangeTheTags(t *testing.T) {
+	repo := &fakeScheduleRepo{leadsTeam: false}
+	repo.markerTeams = []string{"lyra"}
+	svc := NewScheduleService(repo, alwaysUnrestrictedAccess{})
+	_, err := svc.CreateAbsenceKind(leadCtx("lyra.marker@example.com"), domain.CreateScheduleAbsenceKindRequest{
+		ShortCode: "Trn", Label: "Training", Bucket: "allocation", ColourToken: "int",
+	})
+	var forbidden *apierror.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("want ForbiddenError, got %v", err)
+	}
+	if repo.called {
+		t.Fatal("a rota marker wrote to the shared tags")
 	}
 }
 
@@ -1005,5 +1090,66 @@ func TestMarkingAMoveFromTheHomeRowNamesTheHomeTeam(t *testing.T) {
 	}
 	if repo.gotAbsence.HomeTeamKey != "draco" {
 		t.Fatalf("home team = %q, want draco", repo.gotAbsence.HomeTeamKey)
+	}
+}
+
+// The SaaS Night cover has no lead of its own, and the people on it are still
+// on the SaaS rota: their own team's lead keeps rostering them there. Another
+// SaaS team's lead does not.
+func TestTheHomeLeadRostersTheirOwnPersonOnTheNightCover(t *testing.T) {
+	night := func(callerLeads ...string) *fakeScheduleRepo {
+		return &fakeScheduleRepo{
+			ledTeams: callerLeads, memberOf: []string{"apollo"},
+			movedTo: "saas-night-cover", movedHome: "apollo", shareRota: true,
+		}
+	}
+	tier := "L2"
+	req := domain.ApplyScheduleRangeRequest{
+		UserID: movedEngineer, TeamKey: "saas-night-cover", ShiftCode: "SRE_TZ3", Tier: &tier,
+		From: "2026-11-04", To: "2026-11-04",
+	}
+
+	repo := night("apollo")
+	if _, err := NewScheduleService(repo, alwaysUnrestrictedAccess{}).ApplyRange(leadCtx("apollo.lead@example.com"), req); err != nil {
+		t.Fatalf("the Apollo lead was refused their own engineer's night on the Night cover: %v", err)
+	}
+	if !repo.called {
+		t.Fatal("the write never reached the repository")
+	}
+
+	repo = night("artemis")
+	_, err := NewScheduleService(repo, alwaysUnrestrictedAccess{}).ApplyRange(leadCtx("artemis.lead@example.com"), req)
+	var forbidden *apierror.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("the Artemis lead rostered an Apollo engineer: got %v, want ForbiddenError", err)
+	}
+}
+
+// Remove on a move (or leave inside one) is filed under the team it moved
+// them to, where they are no member: their own team's lead may still remove
+// it. A third team's lead may not.
+func TestTheHomeLeadRemovesAMoveFiledUnderTheOtherTeam(t *testing.T) {
+	home := "draco"
+	span := domain.ScheduleAbsence{
+		ID: "11111111-1111-1111-1111-111111111111", Engineer: domain.ScheduleEngineer{UserID: movedEngineer},
+		TeamKey: "americas", HomeTeamKey: &home, KindCode: "ALLO_BR", StartsOn: "2026-10-01",
+	}
+
+	repo := &fakeScheduleRepo{ledTeams: []string{"draco"}, memberOf: []string{"draco"}, absenceByID: span}
+	if err := NewScheduleService(repo, alwaysUnrestrictedAccess{}).DeleteAbsence(leadCtx("draco.lead@example.com"), span.ID, nil); err != nil {
+		t.Fatalf("the Draco lead could not remove their engineer's rotation: %v", err)
+	}
+	if repo.deletedID != span.ID {
+		t.Fatalf("deleted %q, want %q", repo.deletedID, span.ID)
+	}
+
+	repo = &fakeScheduleRepo{ledTeams: []string{"castor"}, memberOf: []string{"draco"}, absenceByID: span}
+	err := NewScheduleService(repo, alwaysUnrestrictedAccess{}).DeleteAbsence(leadCtx("castor.lead@example.com"), span.ID, nil)
+	var forbidden *apierror.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("a third team's lead removed it: got %v, want ForbiddenError", err)
+	}
+	if repo.deletedID != "" {
+		t.Fatal("the repository was written to")
 	}
 }

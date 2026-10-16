@@ -29,7 +29,6 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/servicenow"
 )
 
 // upstreamErrorCases is the table used by every PATCH/update handler — the
@@ -208,6 +207,108 @@ func TestCreateCase(t *testing.T) {
 				assertErrorMessage(t, w, tc.wantMsg)
 				assertContentType(t, w, "application/json")
 			})
+		}
+	})
+}
+
+func TestCreateCase_WatchList(t *testing.T) {
+	const base = `"type":"case","projectId":"proj-1","deploymentId":"dep-1","deployedProductId":"dp-1","subject":"Login failure","description":"d","severity":"high","issueType":"error"`
+
+	create := func(t *testing.T, body string) (status int, sent map[string]json.RawMessage) {
+		t.Helper()
+		client := &mockEntityCaseClient{
+			createCaseFn: func(_ context.Context, b []byte) ([]byte, error) {
+				if err := json.Unmarshal(b, &sent); err != nil {
+					t.Fatalf("upstream received invalid JSON: %v", err)
+				}
+				return []byte(`{"id":"case-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(body)))
+		w := httptest.NewRecorder()
+		h.CreateCase(w, r)
+		return w.Code, sent
+	}
+
+	t.Run("forwards an email watch list and trims entries", func(t *testing.T) {
+		status, sent := create(t, `{`+base+`,"watchList":["  jane.doe@example.com ","john.doe@example.com"]}`)
+		if status != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", status)
+		}
+		var got []string
+		if err := json.Unmarshal(sent["watchList"], &got); err != nil {
+			t.Fatalf("watchList not forwarded: %v", err)
+		}
+		if len(got) != 2 || got[0] != "jane.doe@example.com" || got[1] != "john.doe@example.com" {
+			t.Errorf("watchList = %v", got)
+		}
+		if _, ok := sent["projectId"]; !ok {
+			t.Error("other fields must survive the rewrite")
+		}
+	})
+
+	t.Run("forwards a user id watch list", func(t *testing.T) {
+		status, sent := create(t, `{`+base+`,"watchList":["00000000-0000-0000-0000-000000000000"]}`)
+		if status != http.StatusCreated || string(sent["watchList"]) != `["00000000-0000-0000-0000-000000000000"]` {
+			t.Errorf("status = %d watchList = %s", status, sent["watchList"])
+		}
+	})
+
+	t.Run("omitted stays omitted", func(t *testing.T) {
+		status, sent := create(t, `{`+base+`}`)
+		if status != http.StatusCreated {
+			t.Fatalf("status = %d", status)
+		}
+		if _, ok := sent["watchList"]; ok {
+			t.Error("watchList must not be added")
+		}
+	})
+
+	t.Run("empty and null pass through unchanged", func(t *testing.T) {
+		for _, v := range []string{`[]`, `null`} {
+			status, sent := create(t, `{`+base+`,"watchList":`+v+`}`)
+			if status != http.StatusCreated || string(sent["watchList"]) != v {
+				t.Errorf("watchList %s: status = %d forwarded = %s", v, status, sent["watchList"])
+			}
+		}
+	})
+
+	t.Run("rejects invalid watch lists without calling upstream", func(t *testing.T) {
+		tooMany := `"` + strings.Repeat(`a@example.com","`, maxCaseCreateWatchList) + `a@example.com"`
+		for name, wl := range map[string]string{
+			"empty entry":      `["jane.doe@example.com",""]`,
+			"blank entry":      `["   "]`,
+			"non-string entry": `[1]`,
+			"not an array":     `"jane.doe@example.com"`,
+			"too many":         `[` + tooMany + `]`,
+		} {
+			called := false
+			client := &mockEntityCaseClient{
+				createCaseFn: func(context.Context, []byte) ([]byte, error) { called = true; return []byte(`{}`), nil },
+			}
+			h := NewCaseHandler(client)
+			r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(`{`+base+`,"watchList":`+wl+`}`)))
+			w := httptest.NewRecorder()
+			h.CreateCase(w, r)
+			if w.Code != http.StatusBadRequest || called {
+				t.Errorf("%s: status = %d upstreamCalled = %v, want 400 and no call", name, w.Code, called)
+			}
+		}
+	})
+
+	t.Run("other create types are forwarded untouched", func(t *testing.T) {
+		body := `{"type":"service_request","watchList":[""]}`
+		var got []byte
+		client := &mockEntityCaseClient{
+			createCaseFn: func(_ context.Context, b []byte) ([]byte, error) { got = b; return []byte(`{"id":"x"}`), nil },
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(body)))
+		w := httptest.NewRecorder()
+		h.CreateCase(w, r)
+		if w.Code != http.StatusCreated || string(got) != `{"type":"service_request","watchList":[""]}` {
+			t.Errorf("status = %d forwarded = %s", w.Code, got)
 		}
 	})
 }
@@ -4281,6 +4382,83 @@ func TestAggregateCases(t *testing.T) {
 	})
 }
 
+func TestVolumeTrend(t *testing.T) {
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodPost, "/cases/volume-trend", strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		h.VolumeTrend(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/volume-trend", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
+		w := httptest.NewRecorder()
+		h.VolumeTrend(w, r)
+		assertStatus(t, w, http.StatusRequestEntityTooLarge)
+		assertErrorMessage(t, w, ErrMsgTooLarge)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects invalid JSON body", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/volume-trend", strings.NewReader(`not-json`)))
+		w := httptest.NewRecorder()
+		h.VolumeTrend(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("forwards body to upstream and returns 200 with response", func(t *testing.T) {
+		const reqPayload = `{"filters":{},"days":30}`
+		var capturedBody []byte
+		client := &mockEntityCaseClient{
+			volumeTrendFn: func(_ context.Context, body []byte) ([]byte, error) {
+				capturedBody = body
+				return []byte(`{"days":30,"series":[{"label":"Opened","points":[{"date":"2026-10-13","count":3}]},{"label":"Closed","points":[{"date":"2026-10-13","count":1}]}]}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/volume-trend", strings.NewReader(reqPayload)))
+		w := httptest.NewRecorder()
+		h.VolumeTrend(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if string(capturedBody) != reqPayload {
+			t.Errorf("upstream received body %q, want %q", capturedBody, reqPayload)
+		}
+		resp := decodeJSON[map[string]any](t, w)
+		if resp["days"] != float64(30) {
+			t.Errorf("days = %v, want 30", resp["days"])
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to load case volume trend.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					volumeTrendFn: func(_ context.Context, _ []byte) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/volume-trend", strings.NewReader(`{}`)))
+				w := httptest.NewRecorder()
+				h.VolumeTrend(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
 func TestSearchFeedback(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
@@ -4433,22 +4611,6 @@ func TestAggregateFeedback(t *testing.T) {
 			})
 		}
 	})
-}
-
-type mockViewerCaseClient struct {
-	getAttachmentsInfoFn func(ctx context.Context, caseNumber string, offset, limit int) ([]servicenow.AttachmentInfo, error)
-}
-
-func (m *mockViewerCaseClient) GetAttachmentsInfo(ctx context.Context, caseNumber string, offset, limit int) ([]servicenow.AttachmentInfo, error) {
-	return m.getAttachmentsInfoFn(ctx, caseNumber, offset, limit)
-}
-
-func TestSplGetAttachmentsInfo_MissingCaseIDIs400(t *testing.T) {
-	h := NewViewerCaseHandler(&mockViewerCaseClient{}, viewerAccessGuard)
-	r := withUser(httptest.NewRequest(http.MethodGet, "/spl/cases//attachments-info?offset=0&limit=10", nil))
-	w := httptest.NewRecorder()
-	h.GetAttachmentsInfo(w, r)
-	assertStatus(t, w, http.StatusBadRequest)
 }
 
 // TestCaseHandler_CreateCaseEscalation_NotifiedButNotTeamLeadCannotDeescalate:

@@ -384,6 +384,18 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	entityReq := dto.BuildEntityUpdateCaseRequest(id, req)
+
+	// No state-transition legality check here on purpose: entity-service is
+	// the single, authoritative enforcer of which from->to state moves are
+	// legal for a given caller (see its own CLAUDE.md, "Case state-transition
+	// legality") -- it rejects an illegal move with 400 regardless of which
+	// BFF forwarded the request, so this backend does not duplicate that
+	// table. An earlier version of this handler carried its own copy of the
+	// legacy customer-facing rule set; removed once entity-service's own
+	// enforcement landed, rather than kept as a second, potentially
+	// drifting copy of the same rule.
+
 	// req.WatchList carries project-contact emails, not entity-service user
 	// ids — resolve before forwarding (see resolveWatchListUserIDs). Only
 	// meaningful when WatchList is actually the field being set (StateKey is
@@ -407,10 +419,10 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "None of the provided watch list users could be found.")
 			return
 		}
-		req.WatchList = resolvedIDs
+		entityReq.WatchList = resolvedIDs
 	}
 
-	result, err := h.entity.UpdateCase(r.Context(), id, dto.BuildEntityUpdateCaseRequest(id, req))
+	result, err := h.entity.UpdateCase(r.Context(), id, entityReq)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity UpdateCase failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to update case.")

@@ -262,8 +262,8 @@ func TestTeamChatSpaces_TwoSpacesCallOnce(t *testing.T) {
 
 	plan := Plan{Trigger: Trigger{IncidentID: testIncidentID, Team: "Default SRE Group"}}
 	rung := PlannedCall{Level: Level0, Ordinal: 1, Recipient: Recipient{Name: "a-l1"}}
-	if err := e.placeVia(context.Background(), plan, rung, e.notifiersFor(plan), ChannelBoth); err != nil {
-		t.Fatal(err)
+	if err, cardErr := e.placeVia(context.Background(), plan, rung, e.notifiersFor(plan), ChannelBoth); err != nil || cardErr != nil {
+		t.Fatal(err, cardErr)
 	}
 	if calls != 1 {
 		t.Errorf("calls placed = %d; want 1", calls)
@@ -289,8 +289,8 @@ func TestTeamChatSpaces_OneTeamSpaceKeepsTheLaddersCall(t *testing.T) {
 
 	plan := Plan{Trigger: Trigger{IncidentID: testIncidentID, Team: "Apollo SRE Group"}}
 	rung := PlannedCall{Level: Level0, Ordinal: 1, Recipient: Recipient{Name: "a-l1"}}
-	if err := e.placeVia(context.Background(), plan, rung, e.notifiersFor(plan), ChannelBoth); err != nil {
-		t.Fatal(err)
+	if err, cardErr := e.placeVia(context.Background(), plan, rung, e.notifiersFor(plan), ChannelBoth); err != nil || cardErr != nil {
+		t.Fatal(err, cardErr)
 	}
 	if calls != 1 {
 		t.Errorf("calls placed = %d; want 1, the ladder's", calls)

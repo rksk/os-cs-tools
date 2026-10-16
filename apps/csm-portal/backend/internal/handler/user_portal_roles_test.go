@@ -29,8 +29,9 @@ import (
 
 // testAccessConfigForCSMRoles mirrors testAccessConfig, but with dummy token
 // role names shaped like SCIM role display names (plain strings, no assumed
-// prefix of any kind) -- withPortalRoles hands SCIM's roles straight to
-// RolesFor, so these are what it matches against.
+// prefix of any kind) -- withPortalRoles matches a held role by ID, resolved
+// through these names via testRoleIDsForCSMRoles/newAccessGuardForCSMRoles,
+// not by name directly.
 func testAccessConfigForCSMRoles() AccessConfig {
 	return AccessConfig{
 		Viewer:               []string{"test-viewer"},
@@ -44,6 +45,32 @@ func testAccessConfigForCSMRoles() AccessConfig {
 	}
 }
 
+// testRoleIDsForCSMRoles is a dummy ASGARDEO_ROLE_IDS mapping (real role name
+// -> Asgardeo role ID) for every name testAccessConfigForCSMRoles configures
+// -- what AccessGuard.WithRoleIDs resolves against. "test-admin-id" is
+// deliberately not a UUID shape, the same "plain string, no assumed format"
+// posture the role names themselves take.
+func testRoleIDsForCSMRoles() map[string]string {
+	return map[string]string{
+		"test-viewer":                "test-viewer-id",
+		"test-escalator":             "test-escalator-id",
+		"test-attachment-downloader": "test-attachment-downloader-id",
+		"test-usage-metrics-viewer":  "test-usage-metrics-viewer-id",
+		"test-cs-engineer":           "test-cs-engineer-id",
+		"test-admin":                 "test-admin-id",
+		"test-timecard-approver":     "test-timecard-approver-id",
+		"test-dashboard-designer":    "test-dashboard-designer-id",
+	}
+}
+
+// newAccessGuardForCSMRoles builds the AccessGuard these tests wire in --
+// WithRoleIDs is what makes RolesForIDs (what withPortalRoles now calls)
+// resolve anything at all; a guard built without it answers empty for every
+// role, the same as if ASGARDEO_ROLE_IDS configured none of these names.
+func newAccessGuardForCSMRoles() *AccessGuard {
+	return NewAccessGuard(testAccessConfigForCSMRoles()).WithRoleIDs(testRoleIDsForCSMRoles())
+}
+
 type getUserPortalRolesResponse struct {
 	Roles            []string `json:"roles"`
 	CsmPlatformRoles []string `json:"csmPlatformRoles"`
@@ -51,28 +78,38 @@ type getUserPortalRolesResponse struct {
 
 // TestGetUser_PortalRoles_AddsCsmPlatformRolesForWso2Email: a wso2.com
 // target's profile gains a separate `csmPlatformRoles` field, translated from
-// SCIM's role assignment through AccessGuard.RolesFor -- entity-service's own
-// `roles` field (the Customer Portal's own role vocabulary) is left
-// untouched, since the two describe different things for the same person.
-// SCIM's full, unfiltered role list is passed straight to RolesFor: a role
-// belonging to some other Asgardeo application ("some-other-app-role") is
-// correctly ignored because it simply never matches any configured
-// AUTH_<ROLE>_ROLES value -- not because of any separate narrowing step.
+// SCIM's role assignment through SearchUser (resolving the target's Asgardeo
+// ID) then GetUserByID (that ID's full role list) then
+// AccessGuard.RolesForIDs -- entity-service's own `roles` field (the
+// Customer Portal's own role vocabulary) is left untouched, since the two
+// describe different things for the same person. SCIM's full, unfiltered
+// role list is passed straight to RolesForIDs: a role belonging to some
+// other Asgardeo application ("some-other-app-role-id", no configured
+// mapping) is correctly ignored because it simply never matches any
+// configured ASGARDEO_ROLE_IDS entry -- not because of any separate
+// narrowing step.
 func TestGetUser_PortalRoles_AddsCsmPlatformRolesForWso2Email(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
+	const scimUserID = "scim-user-1"
 	var gotEmail string
+	var gotUserID string
 	h := NewUsersHandler(&mockSCIMClient{
 		searchUserFn: func(_ context.Context, email string) (*scim.UserInfo, error) {
 			gotEmail = email
-			return &scim.UserInfo{Roles: []string{
-				"test-admin", "some-other-app-role",
-			}}, nil
+			return &scim.UserInfo{ID: scimUserID}, nil
+		},
+		getUserByIDFn: func(_ context.Context, userID string) ([]scim.RoleAssignment, error) {
+			gotUserID = userID
+			return []scim.RoleAssignment{
+				{ID: "test-admin-id", Name: "test-admin"},
+				{ID: "some-other-app-role-id", Name: "some-other-app-role"},
+			}, nil
 		},
 	}, &mockEntityUserClient{
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"staff@wso2.com","userType":"internal","roles":["admin","internal"]}`), nil
 		},
-	}, testDirectory(t), false, nil).WithAccessGuard(NewAccessGuard(testAccessConfigForCSMRoles()))
+	}, testDirectory(t), false, nil).WithAccessGuard(newAccessGuardForCSMRoles())
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
@@ -82,6 +119,9 @@ func TestGetUser_PortalRoles_AddsCsmPlatformRolesForWso2Email(t *testing.T) {
 	assertStatus(t, w, http.StatusOK)
 	if gotEmail != "staff@wso2.com" {
 		t.Errorf("SearchUser called with email %q, want the profile's email", gotEmail)
+	}
+	if gotUserID != scimUserID {
+		t.Errorf("GetUserByID called with %q, want the SCIM user ID %q", gotUserID, scimUserID)
 	}
 	got := decodeJSON[getUserPortalRolesResponse](t, w)
 	if !reflect.DeepEqual(got.Roles, []string{"admin", "internal"}) {
@@ -93,22 +133,28 @@ func TestGetUser_PortalRoles_AddsCsmPlatformRolesForWso2Email(t *testing.T) {
 }
 
 // TestGetUser_PortalRoles_EmptyWhenNoScimRoleMatchesAnyConfiguredRole: SCIM
-// can return a non-empty role list for a wso2.com target where none of them
-// match any configured AUTH_<ROLE>_ROLES value -- e.g. the person genuinely
-// holds no role for this portal in Asgardeo, or holds roles for other
-// applications only. csmPlatformRoles must still come back as a present,
-// empty array in that case -- not omitted, not an error.
+// can return a non-empty role list for a wso2.com target where none of their
+// role IDs match any configured ASGARDEO_ROLE_IDS entry -- e.g. the person
+// genuinely holds no role for this portal in Asgardeo, or holds roles for
+// other applications only. csmPlatformRoles must still come back as a
+// present, empty array in that case -- not omitted, not an error.
 func TestGetUser_PortalRoles_EmptyWhenNoScimRoleMatchesAnyConfiguredRole(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
 	h := NewUsersHandler(&mockSCIMClient{
 		searchUserFn: func(_ context.Context, _ string) (*scim.UserInfo, error) {
-			return &scim.UserInfo{Roles: []string{"some-other-app-role", "another-unrelated-role"}}, nil
+			return &scim.UserInfo{ID: "scim-user-1"}, nil
+		},
+		getUserByIDFn: func(_ context.Context, _ string) ([]scim.RoleAssignment, error) {
+			return []scim.RoleAssignment{
+				{ID: "some-other-app-role-id", Name: "some-other-app-role"},
+				{ID: "another-unrelated-role-id", Name: "another-unrelated-role"},
+			}, nil
 		},
 	}, &mockEntityUserClient{
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"staff@wso2.com","userType":"internal","roles":["admin","internal"]}`), nil
 		},
-	}, testDirectory(t), false, nil).WithAccessGuard(NewAccessGuard(testAccessConfigForCSMRoles()))
+	}, testDirectory(t), false, nil).WithAccessGuard(newAccessGuardForCSMRoles())
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
@@ -133,13 +179,16 @@ func TestGetUser_PortalRoles_AddedForAWso2EmailEvenWhenTaggedExternal(t *testing
 	const id = "11111111-1111-1111-1111-111111111111"
 	h := NewUsersHandler(&mockSCIMClient{
 		searchUserFn: func(_ context.Context, _ string) (*scim.UserInfo, error) {
-			return &scim.UserInfo{Roles: []string{"test-admin"}}, nil
+			return &scim.UserInfo{ID: "scim-user-1"}, nil
+		},
+		getUserByIDFn: func(_ context.Context, _ string) ([]scim.RoleAssignment, error) {
+			return []scim.RoleAssignment{{ID: "test-admin-id", Name: "test-admin"}}, nil
 		},
 	}, &mockEntityUserClient{
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"staff@wso2.com","userType":"external","roles":["customer"]}`), nil
 		},
-	}, testDirectory(t), false, nil).WithAccessGuard(NewAccessGuard(testAccessConfigForCSMRoles()))
+	}, testDirectory(t), false, nil).WithAccessGuard(newAccessGuardForCSMRoles())
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)

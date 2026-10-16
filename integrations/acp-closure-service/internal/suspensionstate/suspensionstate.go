@@ -153,6 +153,11 @@ func withState(raw json.RawMessage, key string, window closure.NoticeWindow, act
 			return nil, fmt.Errorf("suspensionstate: parse blob: %w", err)
 		}
 	}
+	// A JSON null (suspension_process_state NULL on the CSM database: a project
+	// that never had a notice) decodes into a nil map; start a new blob.
+	if blob == nil {
+		blob = map[string]json.RawMessage{}
+	}
 
 	eventType, ok := windowToEventType[window]
 	if !ok {

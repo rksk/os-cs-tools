@@ -125,12 +125,24 @@ describe("useCaseActivityStream", () => {
     const source = mockInstances[0];
     expect(source.url).toBe("https://stream.example.test/cases/case-1/activities/stream");
     expect(source.headers).toEqual({
-      "x-jwt-assertion": "access-token",
+      Authorization: "Bearer access-token",
       "x-user-id-token": "id-token",
     });
   });
 
-  it("invalidates the comments and activities queries on a case_updated event", async () => {
+  // Every key a case_updated event (and reactivation) must refetch.
+  const expectedInvalidations = [
+    ["csm-case-comments", "case-1"],
+    ["csm-case-activities", "case-1"],
+    ["csm-case-detail", "case-1"],
+    ["csm-case-slas", "case-1"],
+    ["csm-cases"],
+    ["csm-case-children"],
+  ];
+  const invalidatedKeys = () =>
+    invalidateQueriesMock.mock.calls.map(([arg]) => (arg as { queryKey: unknown[] }).queryKey);
+
+  it("invalidates comments, activities, details, SLAs and case lists on a case_updated event", async () => {
     renderHook(() => useCaseActivityStream("case-1"), { wrapper });
     await waitFor(() => expect(mockInstances).toHaveLength(1));
     const source = mockInstances[0];
@@ -139,12 +151,7 @@ describe("useCaseActivityStream", () => {
       source.dispatchEvent(new MessageEvent("case_updated", { data: "{}" }));
     });
 
-    expect(invalidateQueriesMock).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ["csm-case-comments", "case-1"] }),
-    );
-    expect(invalidateQueriesMock).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ["csm-case-activities", "case-1"] }),
-    );
+    expect(invalidatedKeys()).toEqual(expectedInvalidations);
   });
 
   it("closes and reconnects with a fresh token after an error", async () => {
@@ -164,7 +171,7 @@ describe("useCaseActivityStream", () => {
     });
 
     await waitFor(() => expect(mockInstances).toHaveLength(2));
-    expect(mockInstances[1].headers?.["x-jwt-assertion"]).toBe("fresh-access-token");
+    expect(mockInstances[1].headers?.Authorization).toBe("Bearer fresh-access-token");
   });
 
   it("backs off exponentially on consecutive errors, and resets after a successful connection", async () => {
@@ -328,8 +335,8 @@ describe("useCaseActivityStream", () => {
       act(() => setDocumentVisibility("visible"));
       await waitFor(() => expect(mockInstances).toHaveLength(2));
       expect(mockInstances[1].closed).toBe(false);
-      // Comments + activities, once: events emitted while closed were not delivered.
-      expect(invalidateQueriesMock).toHaveBeenCalledTimes(2);
+      // The full set, once: events emitted while closed were not delivered.
+      expect(invalidatedKeys()).toEqual(expectedInvalidations);
     });
 
     it("closes when its case tab is deactivated, and reconnects when it is activated again", async () => {
@@ -342,7 +349,7 @@ describe("useCaseActivityStream", () => {
 
       act(() => setTabVisible(true));
       await waitFor(() => expect(mockInstances).toHaveLength(2));
-      expect(invalidateQueriesMock).toHaveBeenCalledTimes(2);
+      expect(invalidatedKeys()).toEqual(expectedInvalidations);
     });
 
     it("cancels a pending reconnect when it goes inactive", async () => {

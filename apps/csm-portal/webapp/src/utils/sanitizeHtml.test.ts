@@ -20,6 +20,7 @@ import {
   escapeHtml,
   isBlankHtml,
   looksLikeHtml,
+  sanitizeAnnouncementHtml,
   sanitizeDescriptionHtml,
   sanitizeRichTextHtml,
   sanitizeStructuredHtml,
@@ -250,5 +251,84 @@ describe("sanitizeStructuredHtml", () => {
 
   it("does not change what the shared policy does elsewhere (hook is scoped)", () => {
     expect(sanitizeRichTextHtml('<p style="color:red">x</p>')).toContain("color:red");
+  });
+});
+
+describe("sanitizeAnnouncementHtml", () => {
+  const anchors = (html: string): HTMLAnchorElement[] => [
+    ...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a"),
+  ];
+
+  it("keeps target=_blank and always sets rel=noopener noreferrer", () => {
+    const [a, b] = anchors(
+      sanitizeAnnouncementHtml(
+        '<a href="https://x.test/a" target="_blank">a</a><a href="https://x.test/b" target="_blank" rel="opener">b</a>',
+      ),
+    );
+    for (const link of [a, b]) {
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    }
+  });
+
+  it("accepts the keyword in any case", () => {
+    const [a] = anchors(sanitizeAnnouncementHtml('<a href="https://x.test" target="_BLANK">a</a>'));
+    expect(a.getAttribute("target")).toBe("_blank");
+  });
+
+  it("leaves a link without a target alone", () => {
+    const [a] = anchors(sanitizeAnnouncementHtml('<a href="https://x.test">a</a>'));
+    expect(a.hasAttribute("target")).toBe(false);
+  });
+
+  it("drops any other target (_top, _parent, a frame name)", () => {
+    const links = anchors(
+      sanitizeAnnouncementHtml(
+        '<a href="https://x.test/1" target="_top">1</a><a href="https://x.test/2" target="_parent">2</a><a href="https://x.test/3" target="frame">3</a>',
+      ),
+    );
+    expect(links).toHaveLength(3);
+    for (const link of links) expect(link.hasAttribute("target")).toBe(false);
+  });
+
+  it("keeps a target on links only, not on forms or image maps", () => {
+    const out = sanitizeAnnouncementHtml(
+      '<a href="https://x.test" target="_blank">a</a><form action="https://x.test" target="_blank"><input name="q"></form>' +
+        '<map name="m"><area href="https://x.test" target="_blank" shape="rect" coords="0,0,1,1"></map>',
+    );
+    const doc = new DOMParser().parseFromString(out, "text/html");
+    expect(doc.querySelector("a")?.getAttribute("target")).toBe("_blank");
+    expect(doc.querySelectorAll("[target]")).toHaveLength(1);
+  });
+
+  it("still removes scripts, event handlers and javascript: links", () => {
+    const out = sanitizeAnnouncementHtml(
+      '<a href="javascript:alert(1)" target="_blank" onclick="alert(2)">x</a><script>alert(3)</script>',
+    );
+    expect(out).not.toMatch(/javascript:|onclick|<script/i);
+    expect(out).toContain("x");
+  });
+
+  it("keeps the styling the default policy keeps", () => {
+    expect(sanitizeAnnouncementHtml('<div style="padding:15px;border-radius:12px">x</div>')).toContain("border-radius:12px");
+  });
+
+  it("does not change how the shared policy treats target elsewhere", () => {
+    expect(sanitizeRichTextHtml('<a href="https://x.test" target="_blank">a</a>')).not.toContain("target=");
+  });
+
+  it("returns exactly what the default sanitizer returns for HTML with no link target", () => {
+    for (const html of [
+      "plain text & more",
+      "a < b and c > d",
+      "",
+      "<p>Hi &amp; bye</p>",
+      '<a href="https://x.test">no target</a>',
+      '<div style="padding:15px;border-radius:12px"><span>x</span></div><script>alert(1)</script>',
+      "<table><tbody><tr><td>13</td></tr></tbody></table>",
+      '<p>the word target in text, <a href="https://x.test">link</a></p>',
+    ]) {
+      expect(sanitizeAnnouncementHtml(html)).toBe(DOMPurify.sanitize(html));
+    }
   });
 });

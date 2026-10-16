@@ -101,12 +101,14 @@ import {
 } from "@features/csm-operations/utils/changeRequests";
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
 import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
-import { AttachmentsWidget } from "@features/csm-cases/components/CaseDetailWidgets";
+import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
+import { AttachmentsWidget, TagsWidget } from "@features/csm-cases/components/CaseDetailWidgets";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
+import { useAddCaseTag, useRemoveCaseTag } from "@features/csm-cases/api/useCaseTags";
 import type {
   BeChangeRequestCustomerProposal,
   BeChangeRequestDetail,
@@ -316,9 +318,10 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   // several times at once (one per open tab, kept alive in the background —
   // see `CaseTabIsolatedRouter`), while there is only ever one real matched
   // route/location for the app as a whole.
-  // UX only — the backend 403s attachment downloads the same regardless of
-  // this flag, so hiding the control here is never the enforcement.
-  const { canDownloadAttachment } = usePortalAccess();
+  // UX only — the backend 403s attachment downloads and tag edits the same
+  // regardless of these flags, so hiding a control here is never the
+  // enforcement.
+  const { canDownloadAttachment, canWrite } = usePortalAccess();
   const routedId = useNormalizedIdParam("id");
   const routedNavigate = useNavTransition();
   const routedLocationState = useLocation().state;
@@ -389,6 +392,29 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const { data: attachments } = useGetCsmCaseAttachments(id, "change_request");
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
+  // Tags: the case page's own hooks and widget, pointed at this change
+  // request. The routes take a work item id (`POST /cases/{id}/tags`, ...),
+  // and the mutations invalidate THIS detail's query so the chips follow.
+  const [addTagOpen, setAddTagOpen] = useState(false);
+  const addTag = useAddCaseTag(id, [ApiQueryKeys.CHANGE_REQUEST_DETAILS, id ?? ""]);
+  const removeTag = useRemoveCaseTag(id, [ApiQueryKeys.CHANGE_REQUEST_DETAILS, id ?? ""]);
+  const onAddTag = useCallback(
+    (label: string) => {
+      addTag.mutate(label, {
+        onSuccess: () => setAddTagOpen(false),
+        onError: (err) => showError("Could not add the tag.", err),
+      });
+    },
+    [addTag, showError],
+  );
+  const onRemoveTag = useCallback(
+    (tagId: string) => {
+      removeTag.mutate(tagId, {
+        onError: (err) => showError("Could not remove the tag.", err),
+      });
+    },
+    [removeTag, showError],
+  );
   const [composerOpen, setComposerOpen] = useState(false);
   // Reports composerOpen up to the in-app case-tabs layer, purely so closing
   // this change request's tab from the tab strip can confirm first — see
@@ -993,6 +1019,19 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
         </Box>
       </Card>
 
+      {/* Tags: the case page's widget, read-only without write access. Shown
+          whenever the backend carried a `tags` array; another data source
+          leaves it null and has no tags to show or edit. */}
+      {cr.tags != null && (
+        <TagsWidget
+          // The same projection the case detail mapper applies to its tags.
+          tags={cr.tags.map((t) => ({ id: t.id, label: t.label }))}
+          onAdd={canWrite ? () => setAddTagOpen(true) : undefined}
+          onRemove={canWrite ? (t) => onRemoveTag(t.id) : undefined}
+          removingId={removeTag.isPending ? removeTag.variables : null}
+        />
+      )}
+
       <Box className="csm-print-hide" sx={{ borderBottom: 1, borderColor: "divider" }}>
         <Tabs
           value={activeTab}
@@ -1345,6 +1384,15 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
             setAcceptError(null);
           }}
           onConfirm={() => void confirmAccept()}
+        />
+      )}
+
+      {addTagOpen && (
+        <AddTagDialog
+          existingLabels={(cr.tags ?? []).map((t) => t.label)}
+          isSaving={addTag.isPending}
+          onClose={() => setAddTagOpen(false)}
+          onSave={onAddTag}
         />
       )}
 

@@ -25,6 +25,7 @@ package repository
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -229,5 +230,121 @@ func TestRotaGenerateIntegration_LieuOverLeaveIsSkipped(t *testing.T) {
 	}
 	if res.LieuWritten != 0 {
 		t.Fatal("lieu written over leave already booked")
+	}
+}
+
+// A generation records the month's TZ3 people in the same transaction, and the
+// next generation of that month replaces them -- with nobody chosen, clears
+// them. Other months are left alone. A rota code of its own keeps the test off
+// any real rota's months.
+func TestRotaGenerateIntegration_RecordsAndReplacesTheNightCrew(t *testing.T) {
+	repo, pool := newRotaGenerateIntegrationRepo(t)
+	ctx := context.Background()
+	const rota = "GEN_TEST"
+	clean := func() { mustExec(t, pool, `DELETE FROM team_schedule_night_crew WHERE rota_code = $1`, rota) }
+	clean()
+	t.Cleanup(clean)
+
+	write := func(month string, crew ...RotaNightCrewRow) {
+		t.Helper()
+		if _, err := repo.ReplaceGeneratedMonth(ctx, RotaMonthWrite{
+			ActorEmail: "lead@example.test", Owner: RotaGeneratorOwner(rota), TeamKeys: []string{genTeamKey},
+			ShiftCodes: []string{"SRE_TZ3"}, From: month, To: month,
+			RotaCode: rota, Month: month, NightCrew: crew,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("2026-11-01", RotaNightCrewRow{UserID: genUserA, TeamKey: genTeamKey}, RotaNightCrewRow{UserID: genUserB, TeamKey: genTeamKey})
+	write("2026-12-01", RotaNightCrewRow{UserID: genUserC, TeamKey: genTeamKey})
+
+	got, err := repo.NightCrew(ctx, rota, "2026-10-01", "2026-12-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Month != "2026-11-01" || got[2].Month != "2026-12-01" || got[2].UserID != genUserC {
+		t.Fatalf("night crew: %+v", got)
+	}
+	if n := genCountRows(t, pool, `SELECT count(*) FROM team_schedule_night_crew WHERE rota_code = $1 AND created_by = 'lead@example.test'`, rota); n != 3 {
+		t.Fatalf("want 3 rows naming who chose them, got %d", n)
+	}
+
+	// November again, with only C: A and B are back on their team.
+	write("2026-11-01", RotaNightCrewRow{UserID: genUserC, TeamKey: genTeamKey})
+	got, _ = repo.NightCrew(ctx, rota, "2026-11-01", "2026-11-01")
+	if len(got) != 1 || got[0].UserID != genUserC {
+		t.Fatalf("november after the second run: %+v", got)
+	}
+	// November with nobody chosen: cleared; December untouched.
+	write("2026-11-01")
+	got, _ = repo.NightCrew(ctx, rota, "2026-11-01", "2026-12-01")
+	if len(got) != 1 || got[0].Month != "2026-12-01" {
+		t.Fatalf("after clearing november: %+v", got)
+	}
+}
+
+// Lieu leave earned on the SaaS Night cover falls inside the move that put the
+// person there. It is written, the move stepping aside for those days (as for
+// leave a lead marks); regenerating the month without that lieu makes the
+// move whole again.
+func TestRotaGenerateIntegration_LieuInsideTheNightCoverSplitsTheMove(t *testing.T) {
+	repo, pool := newRotaGenerateIntegrationRepo(t)
+	ctx := context.Background()
+	if genCountRows(t, pool, `SELECT count(*) FROM team_schedule_absence_kind WHERE code = 'SRE_NIGHT_COVER'`) == 0 {
+		t.Fatal("no SRE_NIGHT_COVER tag; apply migration 0232")
+	}
+	t.Cleanup(func() {
+		mustExec(t, pool, `DELETE FROM team_schedule_assignment WHERE user_id = $1::uuid`, genUserA)
+		mustExec(t, pool, `DELETE FROM team_schedule_absence WHERE user_id = $1::uuid`, genUserA)
+	})
+	mustExec(t, pool, `
+		INSERT INTO team_schedule_absence
+		  (id, created_on, updated_on, created_by, updated_by, user_id, team_key, kind_id, starts_on, ends_on, home_team_key)
+		SELECT gen_random_uuid(), now(), now(), 'lead@example.test', 'lead@example.test', $1, 'saas-night-cover', k.id,
+		       '2026-11-02', '2026-11-27', $2
+		  FROM team_schedule_absence_kind k WHERE k.code = 'SRE_NIGHT_COVER'`, genUserA, genTeamKey)
+	moves := func() string {
+		rows, err := pool.Query(ctx, `
+			SELECT ab.starts_on::text || '..' || ab.ends_on::text
+			  FROM team_schedule_absence ab JOIN team_schedule_absence_kind k ON k.id = ab.kind_id
+			 WHERE ab.user_id = $1::uuid AND k.code = 'SRE_NIGHT_COVER' ORDER BY ab.starts_on`, genUserA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, s)
+		}
+		return strings.Join(out, " ")
+	}
+
+	write := RotaMonthWrite{
+		ActorEmail: "lead@example.test", Owner: genOwner, TeamKeys: []string{genTeamKey, "saas-night-cover"},
+		ShiftCodes: []string{"SRE_TZ3"}, From: "2026-11-01", To: "2026-11-30", LieuNotes: []string{genLieu},
+		Lieu: []RotaLieuRow{{UserID: genUserA, TeamKey: genTeamKey, From: "2026-11-09", To: "2026-11-10", Note: genLieu}},
+	}
+	res, err := repo.ReplaceGeneratedMonth(ctx, write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LieuWritten != 1 {
+		t.Fatalf("lieu written %d times inside the Night cover, want 1", res.LieuWritten)
+	}
+	if got, want := moves(), "2026-11-02..2026-11-08 2026-11-11..2026-11-27"; got != want {
+		t.Fatalf("the move around the lieu leave is %q, want %q", got, want)
+	}
+
+	// Regenerated without that lieu: the move is one span again.
+	write.Lieu = nil
+	if _, err := repo.ReplaceGeneratedMonth(ctx, write); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := moves(), "2026-11-02..2026-11-27"; got != want {
+		t.Fatalf("after the lieu went, the move is %q, want %q", got, want)
 	}
 }

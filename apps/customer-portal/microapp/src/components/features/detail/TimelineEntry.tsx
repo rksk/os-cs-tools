@@ -15,7 +15,16 @@
 // under the License.
 
 import { Box, Card, Stack, Typography, useTheme, pxToRem, colors, Divider, Skeleton } from "@wso2/oxygen-ui";
-import { ArrowUpRight, Circle, CircleCheck, CircleDot, Paperclip } from "@wso2/oxygen-ui-icons-react";
+import {
+  ArrowUpRight,
+  Circle,
+  CircleCheck,
+  CircleDashed,
+  CircleDot,
+  CircleHelp,
+  CircleMinus,
+  Paperclip,
+} from "@wso2/oxygen-ui-icons-react";
 import { TimelineConnector, TimelineContent, TimelineItem, TimelineSeparator } from "@mui/lab";
 import type { Attachment } from "@root/src/types";
 import type { ReactNode } from "react";
@@ -37,8 +46,15 @@ export interface ProgressTimelineEntryProps extends TimelineEntryBaseProps {
   variant: "progress";
   title: string;
   description: string;
-  status?: "completed" | "active" | "pending";
+  /**
+   * How the step is drawn: a tick (`completed`), the current marker (`active`), a plain ring (`pending`), a dashed
+   * ring for a step passed with nothing on record (`no-record`), a struck ring for one that does not apply
+   * (`not-required`) and a ring with a question mark for one whose record could not be read (`unavailable`).
+   */
+  status?: "completed" | "active" | "pending" | "no-record" | "not-required" | "unavailable";
   fill?: string;
+  /** The change request has moved past this step: the connector below it is highlighted. Read from `status` when absent. */
+  passed?: boolean;
   end?: boolean;
 }
 
@@ -70,6 +86,24 @@ export function TimelineEntry({ timestamp, last = false, ...props }: TimelineEnt
           return (
             <Box color="primary.contrastText" sx={{ fill: props.fill ?? "primary.main" }}>
               <CircleDot size={pxToRem(24)} fill={props.fill ?? theme.palette.primary.main} />
+            </Box>
+          );
+        if (props.status === "no-record")
+          return (
+            <Box color="text.secondary" aria-label={`${props.title}: no record of this step`} role="img">
+              <CircleDashed size={pxToRem(20)} />
+            </Box>
+          );
+        if (props.status === "not-required")
+          return (
+            <Box color="text.disabled" aria-label={`${props.title}: not required`} role="img">
+              <CircleMinus size={pxToRem(20)} />
+            </Box>
+          );
+        if (props.status === "unavailable")
+          return (
+            <Box color="warning.main" aria-label={`${props.title}: record could not be loaded`} role="img">
+              <CircleHelp size={pxToRem(20)} />
             </Box>
           );
         return (
@@ -114,7 +148,9 @@ export function TimelineEntry({ timestamp, last = false, ...props }: TimelineEnt
           <TimelineConnector
             sx={{
               bgcolor:
-                progress && props.status !== "pending" && !(props.end ?? false) && props.status !== undefined
+                progress &&
+                !(props.end ?? false) &&
+                (props.passed ?? (props.status !== "pending" && props.status !== undefined))
                   ? "primary.main"
                   : undefined,
             }}

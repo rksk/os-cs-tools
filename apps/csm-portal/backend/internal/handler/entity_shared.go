@@ -70,6 +70,12 @@ type entitySearchCasesRequest struct {
 	Filters    entitySearchCasesFilters `json:"filters"`
 	SortBy     entityCaseSort           `json:"sortBy"`
 	Pagination entityPagination         `json:"pagination"`
+	// CountOnly mirrors entity-service's own SearchCasesRequest.CountOnly: a
+	// caller that only ever reads Total off the response (never Cases) should
+	// set this so entity-service skips building and running the page query
+	// entirely, rather than paying for a full, sorted, RLS-checked page fetch
+	// whose one row is then discarded unread.
+	CountOnly bool `json:"countOnly,omitempty"`
 }
 
 type entitySearchCaseView struct {
@@ -110,13 +116,6 @@ type entityProjectView struct {
 	// (project.onboarding_status) -- nil when onboarding isn't tracked for
 	// this project.
 	OnboardingStatus *string `json:"onboardingStatus"`
-	// GoLiveDate mirrors entity-service's own ProjectView.GoLiveDate
-	// (project.onboarding_go_live_date, RFC3339 -- entity-service marshals
-	// *time.Time, not a plain date string like AccountView.ActivationDate).
-	// This is the field the customer-health go-live computation actually
-	// checks -- OnboardingStatus above is a different, unrelated signal and
-	// must not be used for this.
-	GoLiveDate *string `json:"goLiveDate"`
 }
 
 type entitySearchProjectsRequest struct {
@@ -149,88 +148,6 @@ type entityProjectDetailsView struct {
 	RemainingQueryHours *float64                `json:"remainingQueryHours"`
 }
 
-// entitySearchDeployedProductsEolRequest mirrors entityDeployedProductsSearchRequest
-// (usage_metrics_postgres.go) -- a separate, narrower request type isn't
-// needed; this file only ever needs DeploymentIDs/Pagination, both already on
-// that shared shape. Kept here as a type alias-by-field-match is not possible
-// in Go, so the two request builders stay independent but wire-identical.
-type entitySearchDeployedProductsEolRequest struct {
-	Pagination    entityPagination `json:"pagination"`
-	DeploymentIDs []string         `json:"deploymentIds"`
-}
-
-// entityDeployedProductVersionEolRef is a narrower view of entity-service's
-// DeployedProductVersionRef than usage_metrics_postgres.go's own
-// entityDeployedProductView.Version (*entityRef, id/name only) -- this one
-// specifically needs SupportEoLDate, which that file's shape doesn't carry.
-type entityDeployedProductVersionEolRef struct {
-	Name           string  `json:"name"`
-	SupportEoLDate *string `json:"supportEoLDate"`
-}
-
-type entityDeployedProductEolView struct {
-	Product entityRef                           `json:"product"`
-	Version *entityDeployedProductVersionEolRef `json:"version"`
-}
-
-type entitySearchDeployedProductsEolResponse struct {
-	DeployedProducts []entityDeployedProductEolView `json:"deployedProducts"`
-	Total            int                            `json:"total"`
-}
-
-type entitySearchAccountsFilters struct {
-	SearchQuery string `json:"searchQuery,omitempty"`
-	OwnerEmail  string `json:"ownerEmail,omitempty"`
-	// Active mirrors entity-service's own SearchAccountsFilters.Active
-	// (account.deactivation_date IS NULL/IS NOT NULL) -- nil means both
-	// active and deactivated accounts match.
-	Active *bool `json:"active,omitempty"`
-	// LifeCycle mirrors entity-service's own SearchAccountsFilters.LifeCycle
-	// (account.life_cycle, e.g. "Customer"/"Partner"/"Prospect"/"Lost
-	// Customer"/"Lost Prospect") -- a distinct dimension from account
-	// classification (business segment: Enterprise/Partner/Cloud/OEM). This
-	// is what the legacy system's own account-scoping rule for this feature
-	// actually filters on.
-	LifeCycle string `json:"lifeCycle,omitempty"`
-	// HasProject mirrors entity-service's own SearchAccountsFilters.HasProject
-	// -- true additionally requires the account to have at least one
-	// project, matching the legacy rule's own join-existence check against
-	// the account's projects.
-	HasProject bool `json:"hasProject,omitempty"`
-}
-
-type entitySearchAccountsRequest struct {
-	Pagination entityPagination            `json:"pagination"`
-	Filters    entitySearchAccountsFilters `json:"filters,omitempty"`
-}
-
-type entityAccountView struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Region *string `json:"region"`
-	// SubRegion mirrors entity-service's own AccountView.SubRegion
-	// (account.sub_region) -- a finer-grained geography than Region (e.g.
-	// "ASIA"/"NA - WEST" under Region "APAC"/"NA"). This, not Region, is
-	// what the customer-health region filter's dropdown values actually
-	// match against -- see customer_health_postgres.go's own filteredAccounts.
-	SubRegion *string `json:"subRegion"`
-	// CreTeam/SreTeam mirror entity-service's own AccountView.CreTeam/SreTeam
-	// (account.cre_team_id/sre_team_id, resolved to a named group reference)
-	// -- what the customer-health "ABT team" filter matches an account's
-	// team assignment against.
-	CreTeam *entityRef `json:"creTeam"`
-	SreTeam *entityRef `json:"sreTeam"`
-	// ActivationDate mirrors entity-service's own AccountView.ActivationDate
-	// (account.activation_date, plain "YYYY-MM-DD" -- not RFC3339) -- needed
-	// by the customer-health go-live computation (see customer_health_postgres.go).
-	ActivationDate *string `json:"activationDate"`
-}
-
-type entitySearchAccountsResponse struct {
-	Accounts []entityAccountView `json:"accounts"`
-	Total    int                 `json:"total"`
-}
-
 // caseStateToDisplay translates entity-service's domain.CaseState wire
 // values (lowercase snake_case, e.g. "work_in_progress") to the six display
 // labels SPL's reports show, which are exactly ServiceNow's own state labels
@@ -245,9 +162,9 @@ var caseStateToDisplay = map[string]string{
 	"closed":            "Closed",
 }
 
-// derefStr returns "" for a nil pointer, matching servicenow.CaseDetails's
-// own convention of empty-string-not-omitted for a field ServiceNow itself
-// never leaves absent.
+// derefStr returns "" for a nil pointer: the viewer wire types keep the
+// empty-string-not-omitted convention for fields the webapp always expects
+// to be present.
 func derefStr(s *string) string {
 	if s == nil {
 		return ""

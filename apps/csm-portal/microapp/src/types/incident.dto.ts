@@ -184,25 +184,3 @@ export interface IncidentCreateResponseDto {
     createdBy: string;
   };
 }
-
-/**
- * `PATCH /incidents/{id}` body — only the fields this app sends. Unlike cases, the entity service
- * accepts `state` and `assignedEngineerId` together in one PATCH (see the webapp's
- * CsmIncidentDetailPage onAction).
- */
-export interface IncidentPatchPayloadDto {
-  state?: IncidentState;
-  assignedEngineerId?: string;
-  /** Required by ServiceNow alongside `state: RESOLVED` / `CLOSED`. */
-  resolutionCode?: IncidentResolutionCode;
-  resolutionNotes?: string;
-}
-
-/** Incident resolution codes, in the order declared in the backend's openapi.yaml. */
-export type IncidentResolutionCode =
-  | "SOLVED_WORKAROUND"
-  | "SOLVED_PERMANENTLY"
-  | "NOT_SOLVED_NOT_REPRODUCIBLE"
-  | "FALSE_ALARM"
-  | "DUPLICATE"
-  | "NOT_ACTIONABLE";

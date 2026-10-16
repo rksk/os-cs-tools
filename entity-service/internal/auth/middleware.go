@@ -45,6 +45,9 @@ type Identity struct {
 	UserEmail   string
 	UserSubject string
 	UserID      string
+	// Roles is the user token's "roles" claim (see UserClaims.Roles); empty
+	// without a user token.
+	Roles []string
 	// ClientID comes from a decoded (not signature-verified -- see
 	// Validator.ExtractClientID) x-jwt-assertion token; empty when the
 	// request carried none.
@@ -145,7 +148,7 @@ func Middleware(v *Validator) func(http.Handler) http.Handler {
 					reject(w, r, userTokenHeader, err)
 					return
 				}
-				id.UserEmail, id.UserSubject, id.UserID = uc.Email, uc.Subject, uc.UserID
+				id.UserEmail, id.UserSubject, id.UserID, id.Roles = uc.Email, uc.Subject, uc.UserID, uc.Roles
 			}
 
 			// Only reached once every token presented actually parsed --

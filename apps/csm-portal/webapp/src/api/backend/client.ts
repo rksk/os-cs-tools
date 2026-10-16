@@ -204,6 +204,9 @@ export function useBackendApi(): BackendApi {
           body: JSON.stringify(body),
         });
         if (!response.ok) throw await readError(response, correlationId);
+        // A PUT that only records a fact (a rota access grant) answers 204
+        // with no body, which response.json() would throw on.
+        if (response.status === 204) return null as TResponse;
         return (await response.json()) as TResponse;
       },
       async postEmpty<TResponse>(path: string): Promise<TResponse> {

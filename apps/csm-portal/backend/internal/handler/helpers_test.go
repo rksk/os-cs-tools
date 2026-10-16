@@ -34,10 +34,11 @@ import (
 // the identity provider's user id carried on the gateway-validated token — it
 // is NOT the platform's own user record id (see testPlatformUserID). Roles
 // holds every test role testAccessConfig() (access_test.go) grants a
-// permission for, so testUser passes every /spl/* handler's gates by
-// default (PermViewerAccess plus every sub-permission) — a test needing to
+// permission for, so testUser passes every viewer-audience handler's gate
+// by default (PermViewerAccess, PermUsageMetricsViewer) — a test needing to
 // exercise a denial builds its own narrower *middleware.UserInfo instead
-// (see e.g. spl_accounts_test.go's TestSplEscalateCase_RequiresEscalation).
+// (see e.g. reports_test.go's
+// TestGenerateTimelogsBreakdownReport_RejectsMissingViewerAccess).
 var testUser = &middleware.UserInfo{
 	Email:  "agent@example.com",
 	UserID: "f2d9bf5b-7067-43dc-8578-802c8623af5d",
@@ -155,10 +156,12 @@ type mockEntityCaseClient struct {
 	searchCaseActivitiesFn     func(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	searchCasesFn              func(ctx context.Context, body []byte) ([]byte, error)
 	aggregateCasesFn           func(ctx context.Context, body []byte) ([]byte, error)
+	volumeTrendFn              func(ctx context.Context, body []byte) ([]byte, error)
 	searchFeedbackFn           func(ctx context.Context, body []byte) ([]byte, error)
 	aggregateFeedbackFn        func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseFn                  func(ctx context.Context, caseID string) ([]byte, error)
 	getProductRepoMappingFn    func(ctx context.Context, name string) ([]byte, error)
+	searchDeployedProductsFn   func(ctx context.Context, body []byte) ([]byte, error)
 	createCaseAttachmentFn     func(ctx context.Context, body []byte) ([]byte, error)
 	searchCaseAttachmentsFn    func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseAttachmentContentFn func(ctx context.Context, attachmentID string) ([]byte, string, error)
@@ -278,6 +281,13 @@ func (m *mockEntityCaseClient) AggregateCases(ctx context.Context, body []byte) 
 	return []byte(`{"groups":[],"othersCount":0,"totalRecords":0}`), nil
 }
 
+func (m *mockEntityCaseClient) VolumeTrend(ctx context.Context, body []byte) ([]byte, error) {
+	if m.volumeTrendFn != nil {
+		return m.volumeTrendFn(ctx, body)
+	}
+	return []byte(`{"days":30,"series":[]}`), nil
+}
+
 func (m *mockEntityCaseClient) SearchFeedback(ctx context.Context, body []byte) ([]byte, error) {
 	if m.searchFeedbackFn != nil {
 		return m.searchFeedbackFn(ctx, body)
@@ -304,6 +314,13 @@ func (m *mockEntityCaseClient) GetProductRepoMapping(ctx context.Context, name s
 		return m.getProductRepoMappingFn(ctx, name)
 	}
 	return []byte(`{}`), nil
+}
+
+func (m *mockEntityCaseClient) SearchDeployedProducts(ctx context.Context, body []byte) ([]byte, error) {
+	if m.searchDeployedProductsFn != nil {
+		return m.searchDeployedProductsFn(ctx, body)
+	}
+	return []byte(`{"deployedProducts":[],"hasMore":false}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error) {
@@ -444,6 +461,7 @@ type mockSCIMClient struct {
 	searchExternalUserFn func(ctx context.Context, email string) (*scim.ExternalUserInfo, error)
 	updateUserPhoneFn    func(ctx context.Context, userID, mobile string) (*string, error)
 	getRoleFn            func(ctx context.Context, roleID string) ([]scim.RoleMember, error)
+	getUserByIDFn        func(ctx context.Context, userID string) ([]scim.RoleAssignment, error)
 	addRoleMembersFn     func(ctx context.Context, roleID string, emails []string) error
 }
 
@@ -471,6 +489,13 @@ func (m *mockSCIMClient) UpdateUserPhone(ctx context.Context, userID, mobile str
 func (m *mockSCIMClient) GetRole(ctx context.Context, roleID string) ([]scim.RoleMember, error) {
 	if m.getRoleFn != nil {
 		return m.getRoleFn(ctx, roleID)
+	}
+	return nil, nil
+}
+
+func (m *mockSCIMClient) GetUserByID(ctx context.Context, userID string) ([]scim.RoleAssignment, error) {
+	if m.getUserByIDFn != nil {
+		return m.getUserByIDFn(ctx, userID)
 	}
 	return nil, nil
 }

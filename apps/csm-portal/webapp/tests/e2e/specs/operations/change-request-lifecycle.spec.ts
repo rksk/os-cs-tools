@@ -1652,6 +1652,53 @@ test.describe("change request lifecycle — project and deployments (mocked back
 });
 
 //
+// Tags: the case page's own Tags widget and Add tag dialog, mounted under the
+// Overview. They are the change request's work_item_tag rows, read on the
+// detail (`tags`) and written through the CASE tag routes, which take a work
+// item id: `POST /cases/{id}/tags`, `DELETE /cases/{id}/tags/{tagId}`, with the
+// vocabulary searched by `POST /tags/search`. Shown to staff only (a customer's
+// read carries none), never mirrored to the previous system.
+//
+test.describe("change request tags (mocked backend)", () => {
+  test("a tag the previous system migrated is shown; an engineer adds one from the vocabulary and removes one, through the case tag routes", async ({ page }) => {
+    const api = await installFakeChangeRequestApi(page, "normal", FAKE_CREATOR);
+    api.seedTags(["Migrated-Window"]);
+    const detail = new ChangeRequestDetailPage(page);
+    await detail.goto(FAKE_CR_ID);
+
+    // The migrated tag reads as a chip under the Overview.
+    await expect(detail.tagChips()).toHaveText(["Migrated-Window"]);
+
+    // Add: the dialog searches the vocabulary (`POST /tags/search`), a suggestion
+    // is picked, and the attach goes to the case tag route with this change
+    // request's id. The chips follow the refetched detail, by label.
+    await detail.addTagButton().click();
+    await expect(detail.addTagDialog()).toBeVisible();
+    await detail.addTagSearchField().fill("apim");
+    await page.getByRole("option", { name: "apim-upgrade" }).click();
+    const [post] = await Promise.all([
+      page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith(`/cases/${FAKE_CR_ID}/tags`)),
+      detail.addTagSubmit().click(),
+    ]);
+    expect(post.postDataJSON()).toEqual({ label: "apim-upgrade" });
+    await expect(detail.addTagDialog()).toHaveCount(0);
+    await expect(detail.tagChips()).toHaveText(["apim-upgrade", "Migrated-Window"]);
+    expect(api.tags()).toEqual(["apim-upgrade", "Migrated-Window"]);
+
+    // Remove the migrated one from its chip: a DELETE on the same route, by the
+    // tag's own id, and the chip goes.
+    const [del] = await Promise.all([
+      page.waitForRequest((r) => r.method() === "DELETE" && /\/cases\/[^/]+\/tags\/[0-9a-f-]{36}$/.test(r.url())),
+      detail.tagChip("Migrated-Window").locator(".MuiChip-deleteIcon").click(),
+    ]);
+    expect(del.url()).toContain(`/cases/${FAKE_CR_ID}/tags/00000000-0000-0000-0000-0000000000a3`);
+    await expect(detail.tagChips()).toHaveText(["apim-upgrade"]);
+    expect(api.tags()).toEqual(["apim-upgrade"]);
+    expect(api.requests().filter((r) => r.includes("/change-requests/") && r.includes("/tags"))).toEqual([]);
+  });
+});
+
+//
 // Customer group: the people a customer-gated change request is directed to --
 // the registered contacts of its Customer Project, derived and read-only.
 // Against the same fake (see its header for the exact contract): with a project

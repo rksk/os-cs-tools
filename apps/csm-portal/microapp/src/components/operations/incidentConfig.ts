@@ -15,7 +15,7 @@
 // under the License.
 
 import type { ChipProps } from "@wso2/oxygen-ui";
-import type { IncidentPriority, IncidentResolutionCode, IncidentSearchPayloadDto, IncidentState } from "@src/types";
+import type { IncidentPriority, IncidentSearchPayloadDto, IncidentState } from "@src/types";
 
 // Direct port of the webapp's utils/incidents.ts label/color maps
 // (apps/csm-portal/webapp/src/features/csm-operations/utils/incidents.ts).
@@ -38,37 +38,6 @@ export const INCIDENT_STATE_COLORS: Record<IncidentState, NonNullable<ChipProps[
   RESOLVED: "success",
   CLOSED: "success",
   CANCELLED: "error",
-};
-
-// Legal next states from each state — direct port of the webapp's STATE_TRANSITIONS
-// (apps/csm-portal/webapp/src/features/csm-operations/utils/incidents.ts). Closed and Cancelled are
-// terminal.
-export const INCIDENT_STATE_TRANSITIONS: Record<IncidentState, IncidentState[]> = {
-  NEW: ["IN_PROGRESS", "CANCELLED"],
-  IN_PROGRESS: ["ON_HOLD", "RESOLVED", "CANCELLED"],
-  ON_HOLD: ["IN_PROGRESS", "CANCELLED"],
-  RESOLVED: ["CLOSED", "IN_PROGRESS"],
-  CLOSED: [],
-  CANCELLED: [],
-};
-
-// Direct port of the webapp's utils/incidentResolution.ts.
-export const INCIDENT_RESOLUTION_CODES: IncidentResolutionCode[] = [
-  "SOLVED_WORKAROUND",
-  "SOLVED_PERMANENTLY",
-  "NOT_SOLVED_NOT_REPRODUCIBLE",
-  "FALSE_ALARM",
-  "DUPLICATE",
-  "NOT_ACTIONABLE",
-];
-
-export const INCIDENT_RESOLUTION_CODE_LABELS: Record<IncidentResolutionCode, string> = {
-  SOLVED_WORKAROUND: "Solved (Work Around)",
-  SOLVED_PERMANENTLY: "Solved (Permanently)",
-  NOT_SOLVED_NOT_REPRODUCIBLE: "Not Solved (Not Reproducible)",
-  FALSE_ALARM: "False Alarm",
-  DUPLICATE: "Duplicate",
-  NOT_ACTIONABLE: "Not Actionable Alert",
 };
 
 export const INCIDENT_PRIORITY_LABELS: Record<IncidentPriority, string> = {

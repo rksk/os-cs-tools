@@ -45,6 +45,7 @@ const NONE = {
   canViewSettings: false,
   canViewWorkItemsStaffView: false,
   isAdmin: false,
+  canViewSlaTab: false,
 };
 
 describe("getPortalAccess", () => {
@@ -149,6 +150,7 @@ describe("getPortalAccess", () => {
       canViewTeamSchedule: true,
       canViewSettings: true,
       canViewWorkItemsStaffView: true,
+      canViewSlaTab: true,
     };
     // Both hold canEscalate (any internal engineer may escalate, as in
     // ServiceNow). canManagePlaybooks is the further exception beyond
@@ -194,33 +196,7 @@ describe("getPortalAccess", () => {
     expect(getPortalAccess(["admin"]).canUsePlg).toBe(true);
   });
 
-  it("plg_admin is PLG's own administrator -- the whole section, nothing outside it", () => {
-    // Both PLG capabilities, matching the backend's PermUsePlg +
-    // PermManagePlaybooks. If these disagreed, the holder would be allowed to
-    // author a template and shown no form to do it in.
-    expect(getPortalAccess(["plg_admin"])).toMatchObject({
-      canUsePlg: true,
-      canManagePlaybooks: true,
-      hasAnyRole: true,
-    });
-    // ...and nothing outside PLG. Administering the portal stays admin's.
-    expect(getPortalAccess(["plg_admin"])).toMatchObject({
-      canCreateUser: false,
-      canWrite: false,
-      canEscalate: false,
-    });
-    // The other half of the matrix, unchanged: cs_engineer works the queue and
-    // still cannot author.
-    expect(getPortalAccess(["cs_engineer"])).toMatchObject({
-      canUsePlg: true,
-      canManagePlaybooks: false,
-    });
-  });
-
-  it("admin keeps playbook authoring whether or not plg_admin is configured", () => {
-    // AUTH_PLG_ADMIN_ROLES is unset until someone configures it, and an
-    // unconfigured deployment reports no plg_admin role at all -- so admin
-    // alone must still see the authoring form.
+  it("only admin can manage playbooks -- CS engineer reads them but cannot author one", () => {
     expect(getPortalAccess(["admin"]).canManagePlaybooks).toBe(true);
     expect(getPortalAccess(["cs_engineer"]).canManagePlaybooks).toBe(false);
     // ...and losing that does not cost them PLG itself.
@@ -257,9 +233,10 @@ describe("getPortalAccess", () => {
     }
   });
 
-  it("only admin and CS engineer can use Security Center", () => {
+  it("only admin, CS engineer and security_team can use Security Center", () => {
     expect(getPortalAccess(["admin"]).canUseSecurityCenter).toBe(true);
     expect(getPortalAccess(["cs_engineer"]).canUseSecurityCenter).toBe(true);
+    expect(getPortalAccess(["security_team"]).canUseSecurityCenter).toBe(true);
     for (const role of [
       "viewer",
       "escalator",
@@ -288,7 +265,7 @@ describe("getPortalAccess", () => {
     expect(getPortalAccess(["admin"]).canUseTimeCardsAndUpdates).toBe(true);
   });
 
-  it("only full-access roles get the Operations section", () => {
+  it("only full-access roles and security_team get the Operations section", () => {
     for (const role of [
       "viewer",
       "escalator",
@@ -302,6 +279,7 @@ describe("getPortalAccess", () => {
     expect(getPortalAccess(["viewer", "escalator", "attachment_downloader"]).canUseOperations).toBe(false);
     expect(getPortalAccess(["cs_engineer"]).canUseOperations).toBe(true);
     expect(getPortalAccess(["admin"]).canUseOperations).toBe(true);
+    expect(getPortalAccess(["security_team"]).canUseOperations).toBe(true);
   });
 
   it("a user holding several roles gets the union", () => {
@@ -625,6 +603,70 @@ describe("getPortalAccess", () => {
 
     it("is false while roles are not loaded, so the controls fail closed", () => {
       expect(getPortalAccess(undefined).canViewSettings).toBe(false);
+    });
+  });
+
+  // The dedicated read-only security role: grants canUseOperations,
+  // canUseSecurityCenter and canViewSlaTab and nothing else -- never
+  // canWrite, so both sections render read-only for a holder with no other
+  // role. Mirrors the backend's AccessConfig.SecurityTeam.
+  describe("security_team", () => {
+    it("on its own grants exactly Operations, Security Center and the SLA tab, read-only", () => {
+      expect(getPortalAccess(["security_team"])).toEqual({
+        ...NONE,
+        hasAnyRole: true,
+        canUseOperations: true,
+        canUseSecurityCenter: true,
+        canViewSlaTab: true,
+      });
+    });
+
+    it("does not grant write access of any kind", () => {
+      expect(getPortalAccess(["security_team"]).canWrite).toBe(false);
+      expect(getPortalAccess(["security_team"]).canEscalate).toBe(false);
+      expect(getPortalAccess(["security_team"]).canAddWorkNotes).toBe(false);
+      expect(getPortalAccess(["security_team"]).canCreateAnnouncement).toBe(false);
+      expect(getPortalAccess(["security_team"]).canUpdateDeleteAnyComment).toBe(false);
+    });
+
+    it("matches the role key case-insensitively, like every other role", () => {
+      expect(getPortalAccess(["Security_Team"]).canUseOperations).toBe(true);
+      expect(getPortalAccess(["Security_Team"]).canUseSecurityCenter).toBe(true);
+    });
+
+    it("is false while roles are not loaded, so the controls fail closed", () => {
+      expect(getPortalAccess(undefined).canUseOperations).toBe(false);
+      expect(getPortalAccess(undefined).canUseSecurityCenter).toBe(false);
+    });
+  });
+
+  // A case's SLAs tab: admin, cs_engineer or security_team -- same role set
+  // as canUseSecurityCenter.
+  describe("canViewSlaTab", () => {
+    it("admin, CS engineer and security_team all hold it", () => {
+      expect(getPortalAccess(["admin"]).canViewSlaTab).toBe(true);
+      expect(getPortalAccess(["cs_engineer"]).canViewSlaTab).toBe(true);
+      expect(getPortalAccess(["security_team"]).canViewSlaTab).toBe(true);
+    });
+
+    it("no other role grants it", () => {
+      for (const role of [
+        "viewer",
+        "escalator",
+        "attachment_downloader",
+        "usage_metrics_viewer",
+        "timecard_approver",
+        "dashboard_designer",
+        "worknote_creator",
+        "announcement_creator",
+        "comment_updater",
+      ]) {
+        expect(getPortalAccess([role]).canViewSlaTab).toBe(false);
+      }
+    });
+
+    it("is false while roles are not loaded, so the tab fails closed", () => {
+      expect(getPortalAccess(undefined).canViewSlaTab).toBe(false);
     });
   });
 

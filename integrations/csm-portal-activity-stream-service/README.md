@@ -1,6 +1,6 @@
 # CSM Activity Stream Service
 
-Go HTTP server (`net/http`, Go 1.26+) that serves the case-activity SSE endpoint (`GET /cases/{id}/activities/stream`). It consumes the `case-events` Azure Event Hub topic in its own consumer group and fans `case.comment_added` / `case.status_changed` events to any connected SSE clients via an in-process BroadcastHub.
+Go HTTP server (`net/http`, Go 1.26+) that serves the case-activity SSE endpoint (`GET /cases/{id}/activities/stream`). It consumes the `case-events` Azure Event Hub topic in its own consumer group and fans case update events (comment added, status changed, assigned, severity changed, acknowledged) to any connected SSE clients via an in-process BroadcastHub.
 
 This service was extracted from `apps/csm-portal/backend/internal/stream` + `internal/caseevents` + the dedicated :9092 listener in `apps/csm-portal/backend/cmd/server/main.go`. That backend no longer serves the SSE stream; it only publishes events to the topic.
 
@@ -17,7 +17,7 @@ csm-portal-backend ──▶ Event Hub "case-events" ──▶ this service (con
 customer-portal-backend ┘                                              (same topic, own groups)
 ```
 
-Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
+Only `case.comment_added`, `case.status_changed`, `case.assigned`, `case.severity_changed` and `case.acknowledged` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text, field values, names or emails.
 
 ## Auth
 

@@ -16,7 +16,7 @@
 
 import type { JSX } from "react";
 import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from "@wso2/oxygen-ui";
-import { sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { sanitizeAnnouncementHtml } from "@utils/sanitizeHtml";
 
 interface AddUpdateConfirmationDialogProps {
   open: boolean;
@@ -63,7 +63,7 @@ export default function AddUpdateConfirmationDialog({
             maxHeight: 200,
             overflowY: "auto",
           }}
-          dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(content) }}
+          dangerouslySetInnerHTML={{ __html: sanitizeAnnouncementHtml(content) }}
         />
       </DialogContent>
       <DialogActions>

@@ -90,4 +90,39 @@ describe("FeaturePreviewDialog", () => {
     render(<FeaturePreviewDialog open onClose={vi.fn()} />);
     expect(screen.getByRole("switch", { name: "Preview Updates" })).toBeChecked();
   });
+
+  it("hides the state badge once this admin's own toggle is on, and brings it back when turned off", () => {
+    setOverrides({ updates: "hidden" });
+    render(<FeaturePreviewDialog open onClose={vi.fn()} />);
+
+    expect(screen.getByText("Hidden")).toBeInTheDocument();
+
+    const toggle = screen.getByRole("switch", { name: "Preview Updates" });
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText("Hidden")).toBeInTheDocument();
+  });
+
+  it("renders no badge at all for an already-stored, previewed-on override", () => {
+    setOverrides({ updates: "hidden" });
+    localStorage.setItem(
+      "csm.featurePreview.v1.user-1",
+      JSON.stringify({ updates: true }),
+    );
+    render(<FeaturePreviewDialog open onClose={vi.fn()} />);
+    expect(screen.getByRole("switch", { name: "Preview Updates" })).toBeChecked();
+    expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
+  });
+
+  it("does not offer a tab that is only hidden because its section is — only what the config names directly", () => {
+    setOverrides({ operations: "hidden" });
+    render(<FeaturePreviewDialog open onClose={vi.fn()} />);
+    expect(screen.getByText("Operations")).toBeInTheDocument();
+    expect(screen.queryByText("Incidents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Problem management")).not.toBeInTheDocument();
+  });
 });

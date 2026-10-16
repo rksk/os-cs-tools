@@ -15,8 +15,10 @@
 // under the License.
 
 // Ported from the source app's components/PieChart.tsx (consumed/remaining
-// query-hours donut used by the Timelogs report) — recharts instead of
-// chart.js/react-chartjs-2 (see CSBarChart.tsx's header comment for why).
+// query-hours donut used by the Timelogs report). The source draws it with
+// chart.js + react-chartjs-2; this app already standardizes on recharts
+// (chart.js isn't a dependency here), so this is a recharts reimplementation
+// of the same donut.
 import { Cell, Legend, Pie, PieChart as RechartsPieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useTheme } from "@mui/material/styles";
 import { CONSUMED_QUERY_HOURS, HOURS, REAMAINING_QUERY_HOURS } from "../constants";

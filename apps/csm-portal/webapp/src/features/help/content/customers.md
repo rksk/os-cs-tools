@@ -36,7 +36,7 @@ Opening a project takes you to its detail page, with four tabs:
 - **Work items**: cases, service requests, and other work items filed against this project.
 
 From a project's detail page, the **Create** menu lets you file a new case, service request
-(managed-cloud projects only), engagement, or security report already scoped to this project,
+(managed-cloud and Cloud Support projects), engagement, or security report already scoped to this project,
 so it can't end up filed against the wrong one.
 
 ### Deployments

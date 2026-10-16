@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import EventSourcePolyfill from "@sanity/eventsource";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiConfig } from "@config/apiConfig";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useIsCaseTabVisible } from "@context/case-tabs/CaseTabVisibilityContext";
@@ -53,6 +53,36 @@ function reconnectDelay(attempt: number): number {
   return Math.random() * capped;
 }
 
+/**
+ * Refetches everything on the case page that can reflect a `case_updated`
+ * event (comment, state, assignee, severity or acknowledgement change; the
+ * payload carries only the case id, never the new values). Shared by the live
+ * event handler and the reactivation path so the two cannot drift.
+ *
+ * - comments / activities / detail / SLAs: keyed by case id, so the case is
+ *   invalidated precisely. Detail is declared as `[key, caseId, userEmail]`,
+ *   which the `[key, caseId]` prefix covers. SLAs show the acknowledgement and
+ *   response/resolution clocks that state, severity and ack changes move.
+ * - CSM_CASES: every list/search/quick-search/dashboard-card variant carries
+ *   filter params this hook doesn't have, so it is invalidated by prefix; only
+ *   mounted queries refetch, the rest are just marked stale.
+ * - CSM_CASE_CHILDREN: keyed by the *parent* id, which this hook doesn't know
+ *   (the open case may be a child row on its parent's page), so prefix too.
+ */
+function invalidateCaseQueries(queryClient: QueryClient, caseId: string): void {
+  const byCase = [
+    ApiQueryKeys.CSM_CASE_COMMENTS,
+    ApiQueryKeys.CSM_CASE_ACTIVITIES,
+    ApiQueryKeys.CSM_CASE_DETAIL,
+    ApiQueryKeys.CSM_CASE_SLAS,
+  ];
+  for (const key of byCase) {
+    void queryClient.invalidateQueries({ queryKey: [key, caseId] });
+  }
+  void queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASES] });
+  void queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASE_CHILDREN] });
+}
+
 function subscribePageVisibility(onChange: () => void): () => void {
   document.addEventListener("visibilitychange", onChange);
   return () => document.removeEventListener("visibilitychange", onChange);
@@ -70,21 +100,21 @@ function usePageVisible(): boolean {
 /**
  * Opens a live Server-Sent Events connection to csm-portal-backend's
  * `GET /cases/{id}/activities/stream` (its dedicated :9092 listener — see
- * that backend's cmd/server/main.go) and invalidates the case's comments and
- * activities queries whenever it emits a `case_updated` event, so the
- * Activities tab reflects a new comment or status change without the viewer
- * having to wait out CSM_CASE_COMMENTS'/CSM_CASE_ACTIVITIES' own staleTime or
- * refresh manually.
+ * that backend's cmd/server/main.go) and invalidates the case's comments,
+ * activities, details, SLA and case-list queries (see invalidateCaseQueries)
+ * whenever it emits a `case_updated` event, so the page reflects a new
+ * comment or a state/assignee/severity/acknowledgement change without the
+ * viewer having to wait out those queries' own staleTime or refresh manually.
  *
  * Uses `@sanity/eventsource` rather than the browser's native `EventSource`
  * because native EventSource cannot set custom headers — it only supports
- * cookies/query params for auth. Unlike useAuthApiClient.ts, which sets
- * `Authorization` and relies on Choreo's gateway to translate it into
- * `x-jwt-assertion` before the main :8080 API ever sees it, this connects to
- * this stream's own, separately-declared Choreo endpoint (see
- * openapi-stream.yaml) — not guaranteed to apply the same translation — so
- * this hook sets `x-jwt-assertion`/`x-user-id-token` directly, matching
- * exactly what backend's `middleware.Auth` reads. There is no separate
+ * cookies/query params for auth. Like useAuthApiClient.ts, it sends
+ * `Authorization: Bearer <access token>` plus `x-user-id-token` and lets the
+ * Choreo gateway validate the access token and inject `x-jwt-assertion`
+ * (the gateway-signed JWT that backend's `middleware.Auth` verifies against
+ * the gateway's JWKS). The hook must never set `x-jwt-assertion` itself: the
+ * raw IdP access token is not signed with the gateway key, so the backend
+ * rejects it with a token-validation failure. There is no separate
  * ticket/token-exchange step.
  *
  * Headers are fixed at construction time, so they can't be refreshed on the
@@ -108,7 +138,7 @@ function usePageVisible(): boolean {
  * open stream permanently occupies one of the browser's per-host connections
  * (6 on HTTP/1.1), so one stream per mounted hidden tab starved every other
  * request once six case tabs were open. Going inactive closes the stream and
- * cancels any pending reconnect; coming back invalidates the queries once,
+ * cancels any pending reconnect; coming back invalidates the same queries once,
  * because events emitted in the meantime were not delivered.
  *
  * A no-op when `caseId` is unset, `apiConfig.streamEnabled` is false (the
@@ -138,8 +168,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
 
     if (wasInactiveRef.current) {
       wasInactiveRef.current = false;
-      void queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASE_COMMENTS, caseId] });
-      void queryClient.invalidateQueries({ queryKey: [ApiQueryKeys.CSM_CASE_ACTIVITIES, caseId] });
+      invalidateCaseQueries(queryClient, caseId);
     }
 
     let cancelled = false;
@@ -173,7 +202,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       const url = `${apiConfig.streamUrl}/cases/${encodeURIComponent(caseId)}/activities/stream`;
       source = new EventSourcePolyfill(url, {
         headers: {
-          "x-jwt-assertion": token,
+          Authorization: `Bearer ${token}`,
           "x-user-id-token": idToken,
         },
       });
@@ -186,12 +215,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       });
 
       source.addEventListener("case_updated", () => {
-        void queryClient.invalidateQueries({
-          queryKey: [ApiQueryKeys.CSM_CASE_COMMENTS, caseId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [ApiQueryKeys.CSM_CASE_ACTIVITIES, caseId],
-        });
+        invalidateCaseQueries(queryClient, caseId);
       });
 
       source.addEventListener("error", () => {

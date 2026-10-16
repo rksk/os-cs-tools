@@ -40,6 +40,9 @@ export interface ChangeRequest {
    */
   isProposedTimeAccepted: boolean;
   hasCustomerReviewed: boolean;
+  /** The two requirement boxes; absent when the backend cannot say (see `ChangeRequestDto`). */
+  customerApprovalRequired?: boolean | null;
+  customerReviewRequired?: boolean | null;
   assignedTeam?: string;
   serviceOutage?: string;
   rollbackPlan?: string;
