@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -24,6 +24,7 @@ const navigateMock = vi.fn();
 const useGetProblemMock = vi.fn();
 const useLocationMock = vi.fn<() => { state: { from?: string } | null }>(() => ({ state: null }));
 const patchMutateMock = vi.fn();
+const patchResetMock = vi.fn();
 const showErrorMock = vi.fn();
 const editProblemDialogMock = vi.fn();
 const problemFixNotesDialogMock = vi.fn();
@@ -57,14 +58,36 @@ vi.mock("@context/error-banner/ErrorBannerContext", () => ({
 vi.mock("@features/csm-operations/api/useGetProblem", () => ({
   useGetProblem: () => useGetProblemMock(),
 }));
-vi.mock("@features/csm-operations/api/usePatchProblem", () => ({
-  usePatchProblem: () => ({
-    mutate: patchMutateMock,
-    isPending: patchIsPending,
-    isError: false,
-    error: null,
-  }),
-}));
+// Stateful stand-in for the shared mutation: `onError` leaves the error on it
+// and `reset` clears it, as the real react-query mutation does.
+vi.mock("@features/csm-operations/api/usePatchProblem", async () => {
+  const { useState } = await import("react");
+  return {
+    usePatchProblem: () => {
+      const [error, setError] = useState<Error | null>(null);
+      return {
+        mutate: (
+          input: unknown,
+          opts?: { onError?: (err: Error) => void },
+        ) =>
+          patchMutateMock(input, {
+            ...opts,
+            onError: (err: Error) => {
+              setError(err);
+              opts?.onError?.(err);
+            },
+          }),
+        reset: () => {
+          patchResetMock();
+          setError(null);
+        },
+        isPending: patchIsPending,
+        isError: error !== null,
+        error,
+      };
+    },
+  };
+});
 // Exercised in isolation by their own test files; here we only assert this
 // page opens them and wires the expected props.
 vi.mock("@features/csm-operations/components/EditProblemDialog", () => ({
@@ -132,6 +155,7 @@ function mockQueryResult(
 describe("ProblemDetailPage", () => {
   beforeEach(() => {
     patchMutateMock.mockReset();
+    patchResetMock.mockReset();
     showErrorMock.mockReset();
     editProblemDialogMock.mockReset();
     problemFixNotesDialogMock.mockReset();
@@ -354,5 +378,57 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByText("Assignment group")).toBeInTheDocument();
     expect(screen.getByText("Choreo Special Ops")).toBeInTheDocument();
   });
-});
 
+  describe("Edit dialog error scoping", () => {
+    type DialogProps = {
+      saveError: string | null;
+      onClose: () => void;
+      onSave: (patch: { workaround: string }) => void;
+    };
+    const lastDialogProps = () => editProblemDialogMock.mock.calls.at(-1)?.[0] as DialogProps;
+
+    it("does not show a failed transition's error inside the Edit dialog opened afterwards", async () => {
+      mockQueryResult({ data: { ...BASE_PROBLEM, state: "NEW" } });
+      patchMutateMock.mockImplementation((_input, opts) => {
+        opts?.onError?.(new Error("State transition rejected"));
+      });
+      render(<ProblemDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: /Move to Assess/i }));
+      expect(showErrorMock).toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      expect(patchResetMock).toHaveBeenCalled();
+      expect(lastDialogProps().saveError).toBeNull();
+    });
+
+    it("still shows an error from a save made inside the dialog, and keeps it open", () => {
+      mockQueryResult({ data: BASE_PROBLEM });
+      patchMutateMock.mockImplementation((_input, opts) => {
+        opts?.onError?.(new Error("Save rejected"));
+      });
+      render(<ProblemDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      expect(lastDialogProps().saveError).toBeNull();
+
+      act(() => lastDialogProps().onSave({ workaround: "Restart the pod." }));
+      expect(lastDialogProps().saveError).toBe("Could not update the problem. Please try again.");
+      expect(showErrorMock).toHaveBeenCalled();
+    });
+
+    it("clears a failed save's error when the dialog is closed and reopened", () => {
+      mockQueryResult({ data: BASE_PROBLEM });
+      patchMutateMock.mockImplementation((_input, opts) => {
+        opts?.onError?.(new Error("Save rejected"));
+      });
+      render(<ProblemDetailPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      act(() => lastDialogProps().onSave({ workaround: "Restart the pod." }));
+      expect(lastDialogProps().saveError).not.toBeNull();
+
+      act(() => lastDialogProps().onClose());
+      editProblemDialogMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      expect(lastDialogProps().saveError).toBeNull();
+    });
+  });
+});

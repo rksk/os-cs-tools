@@ -380,7 +380,13 @@ export default function ProblemDetailPage(): JSX.Element {
               variant="outlined"
               size="small"
               startIcon={<Pencil size={14} />}
-              onClick={() => setEditOpen(true)}
+              onClick={() => {
+                // The mutation is shared with the state transitions; drop
+                // any earlier transition failure so the dialog only shows
+                // an error from a save made inside it.
+                patchProblem.reset();
+                setEditOpen(true);
+              }}
             >
               Edit
             </Button>
@@ -547,7 +553,9 @@ export default function ProblemDetailPage(): JSX.Element {
               : null
           }
           onClose={() => {
-            if (!patchProblem.isPending) setEditOpen(false);
+            if (patchProblem.isPending) return;
+            patchProblem.reset();
+            setEditOpen(false);
           }}
           onSave={(patch) =>
             patchProblem.mutate(

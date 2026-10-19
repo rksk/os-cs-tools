@@ -370,6 +370,14 @@ func checkProblemTransitionRequirements(t repository.ProblemTransition, req doma
 //     Postgres, without the from-state check, since Postgres may lag
 //     ServiceNow. A ServiceNow refusal returns as-is and Postgres is
 //     untouched, so the two never disagree about the state.
+//   - dual-write, assigning an owner to a NEW problem that has none, with no
+//     transition: ServiceNow moves such a problem to Assess on its own when
+//     an owner is set, and a fields-only write would never learn of it,
+//     leaving Postgres in NEW. So this is treated as an implied assess and
+//     takes the transition path above (ServiceNow first, then the fields and
+//     the move to Assess in one Postgres transaction). A clear or blank
+//     assignee, an already-owned problem, or a problem not in NEW is not
+//     affected.
 //   - dual-write, fields only: Postgres first, then a best-effort async
 //     ServiceNow mirror (snWriteback), as before. A failed mirror leaves
 //     ServiceNow one field stale until retried, never a different state.
@@ -423,6 +431,19 @@ func (s *problemService) UpdateProblem(ctx context.Context, req domain.UpdatePro
 		}
 		if err := checkProblemTransitionRequirements(*transition, req, current); err != nil {
 			return domain.UpdateProblemResponse{}, err
+		}
+	}
+
+	// Implied assess: see the doc comment. The current problem is read only
+	// when the request could trigger it, to spare every other update a read.
+	if transition == nil && s.snMirror != nil && req.AssignedToID != nil && strings.TrimSpace(*req.AssignedToID) != "" {
+		current, err := s.repo.GetProblem(ctx, req.ID)
+		if err != nil {
+			return domain.UpdateProblemResponse{}, err
+		}
+		assess := problemTransitions["assess"]
+		if current.State != nil && *current.State == assess.From && (current.AssignedTo == nil || current.AssignedTo.ID == "") {
+			transition = &assess
 		}
 	}
 

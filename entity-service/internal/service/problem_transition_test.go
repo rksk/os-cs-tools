@@ -369,3 +369,166 @@ func TestUpdateProblem_BlankRequestValueOverridesStoredOne(t *testing.T) {
 		t.Errorf("err = %v, want the fix-notes ValidationError", err)
 	}
 }
+
+// problemInState answers GetProblem with a problem in the given state,
+// owned or not, for the implied-assess tests.
+func problemInState(state string, owned bool) func(context.Context, string) (domain.ProblemDetail, error) {
+	return func(context.Context, string) (domain.ProblemDetail, error) {
+		id := testDeploymentUUID
+		d := domain.ProblemDetail{ID: &id, State: &state}
+		if owned {
+			d.AssignedTo = &domain.EntityRef{ID: testUUID, Name: "Jane Doe"}
+		}
+		return d, nil
+	}
+}
+
+// Dual-write: ServiceNow moves an unowned NEW problem to Assess once an
+// owner is set, so the owner-only request is an implied assess: ServiceNow
+// first with the fields, then one Postgres transition (from-state not
+// enforced) carrying the same fields.
+func TestUpdateProblem_DualWrite_ImpliedAssessOnFirstOwner(t *testing.T) {
+	var order []string
+	mirror := &stubMirrorProblemService{
+		updateProblem: func(_ context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+			order = append(order, "servicenow")
+			if strOrEmpty(req.AssignedToID) != testUUID || req.Transition != nil {
+				t.Errorf("ServiceNow got %+v, want the owner and no explicit transition", req)
+			}
+			return domain.UpdateProblemResponse{}, nil
+		},
+	}
+	repo := &stubProblemRepo{
+		applyProblemTransition: func(_ context.Context, req domain.UpdateProblemRequest, tr repository.ProblemTransition, enforce bool, _ string) (time.Time, error) {
+			order = append(order, "postgres")
+			if tr != problemTransitions["assess"] || enforce || strOrEmpty(req.AssignedToID) != testUUID {
+				t.Errorf("Postgres got %+v %+v enforce=%v, want assess with the owner, unenforced", tr, req, enforce)
+			}
+			return time.Now(), nil
+		},
+		getProblem: problemInState("NEW", false),
+	}
+	svc := NewProblemServiceWithSNMirror(repo, mirror, NewSNWritebackDispatcher(&recordingSNWritebackFailures{}))
+	if _, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: strp(testUUID)}); err != nil {
+		t.Fatalf("UpdateProblem: %v", err)
+	}
+	if len(order) != 2 || order[0] != "servicenow" || order[1] != "postgres" {
+		t.Errorf("order = %v, want [servicenow postgres]", order)
+	}
+}
+
+// Dual-write: a ServiceNow failure on the implied assess is returned and
+// Postgres is untouched (the stub repo panics on any write).
+func TestUpdateProblem_DualWrite_ImpliedAssessServiceNowFailureLeavesPostgres(t *testing.T) {
+	refusal := errors.New("upstream unavailable")
+	mirror := &stubMirrorProblemService{
+		updateProblem: func(context.Context, domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+			return domain.UpdateProblemResponse{}, refusal
+		},
+	}
+	svc := NewProblemServiceWithSNMirror(&stubProblemRepo{getProblem: problemInState("NEW", false)}, mirror, NewSNWritebackDispatcher(&recordingSNWritebackFailures{}))
+	_, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: strp(testUUID)})
+	if !errors.Is(err, refusal) {
+		t.Errorf("err = %v, want ServiceNow's error unchanged", err)
+	}
+}
+
+// Dual-write: ServiceNow moved but Postgres failed on the implied assess:
+// surfaced, not hidden.
+func TestUpdateProblem_DualWrite_ImpliedAssessPostgresFailureIsReturned(t *testing.T) {
+	boom := errors.New("connection reset")
+	mirror := &stubMirrorProblemService{
+		updateProblem: func(context.Context, domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+			return domain.UpdateProblemResponse{}, nil
+		},
+	}
+	repo := &stubProblemRepo{
+		applyProblemTransition: func(context.Context, domain.UpdateProblemRequest, repository.ProblemTransition, bool, string) (time.Time, error) {
+			return time.Time{}, boom
+		},
+		getProblem: problemInState("NEW", false),
+	}
+	svc := NewProblemServiceWithSNMirror(repo, mirror, NewSNWritebackDispatcher(&recordingSNWritebackFailures{}))
+	if _, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: strp(testUUID)}); !errors.Is(err, boom) {
+		t.Errorf("err = %v, want the Postgres failure", err)
+	}
+}
+
+// Dual-write: everything that is not "first owner on a NEW problem" stays on
+// the fields-only path (Postgres first, async mirror; no synchronous
+// ServiceNow call, no transition).
+func TestUpdateProblem_DualWrite_NoImpliedAssess(t *testing.T) {
+	tests := []struct {
+		name   string
+		get    func(context.Context, string) (domain.ProblemDetail, error)
+		assign *string
+	}{
+		{"already owned NEW problem", problemInState("NEW", true), strp(testUUID)},
+		{"problem past NEW", problemInState("ASSESS", false), strp(testUUID)},
+		{"unowned NEW problem, no assignee in the request", problemInState("NEW", false), nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var fieldsWrites int
+			mirrored := make(chan domain.UpdateProblemRequest, 1)
+			mirror := &stubMirrorProblemService{
+				updateProblem: func(_ context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+					mirrored <- req
+					return domain.UpdateProblemResponse{}, nil
+				},
+			}
+			repo := &stubProblemRepo{
+				updateProblemFields: func(context.Context, domain.UpdateProblemRequest, string) (time.Time, error) {
+					fieldsWrites++
+					return time.Now(), nil
+				},
+				getProblem: tc.get,
+			}
+			svc := NewProblemServiceWithSNMirror(repo, mirror, NewSNWritebackDispatcher(&recordingSNWritebackFailures{}))
+			if _, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: tc.assign, FixNotes: strp("notes")}); err != nil {
+				t.Fatalf("UpdateProblem: %v", err)
+			}
+			if fieldsWrites != 1 {
+				t.Errorf("fields writes = %d, want 1 (the fields-only path)", fieldsWrites)
+			}
+			select {
+			case <-mirrored:
+			case <-time.After(2 * time.Second):
+				t.Fatal("fields-only path never mirrored to ServiceNow")
+			}
+		})
+	}
+}
+
+// Postgres-only: an owner on a NEW problem is a plain field write. No read
+// of the current problem, no transition (the stub repo panics on either).
+func TestUpdateProblem_PlainPostgres_OwnerOnNewProblemStaysFieldsOnly(t *testing.T) {
+	var fieldsWrites int
+	repo := &stubProblemRepo{
+		updateProblemFields: func(context.Context, domain.UpdateProblemRequest, string) (time.Time, error) {
+			fieldsWrites++
+			return time.Now(), nil
+		},
+	}
+	svc := NewProblemService(repo)
+	repo.getProblem = func(context.Context, string) (domain.ProblemDetail, error) {
+		// Only the post-write re-read may call this, once.
+		return problemInState("NEW", true)(context.Background(), "")
+	}
+	if _, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: strp(testUUID)}); err != nil {
+		t.Fatalf("UpdateProblem: %v", err)
+	}
+	if fieldsWrites != 1 {
+		t.Errorf("fields writes = %d, want 1", fieldsWrites)
+	}
+}
+
+// A blank assignee never reaches the implied-assess check: it is refused as a
+// non-UUID before any read or write (the stub repo panics on either).
+func TestUpdateProblem_DualWrite_BlankAssigneeNeverImpliesAssess(t *testing.T) {
+	mirror := &stubMirrorProblemService{}
+	svc := NewProblemServiceWithSNMirror(&stubProblemRepo{}, mirror, NewSNWritebackDispatcher(&recordingSNWritebackFailures{}))
+	if _, err := svc.UpdateProblem(userCtxProblem(t), domain.UpdateProblemRequest{ID: testDeploymentUUID, AssignedToID: strp("  ")}); err == nil {
+		t.Error("want a validation error for a blank assignee")
+	}
+}
