@@ -18,6 +18,9 @@ package recipientlinks
 
 import (
 	"context"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
@@ -278,5 +281,107 @@ func TestServiceRequestLink(t *testing.T) {
 	want := "https://csm.example.com/operations/service-requests/sr-1"
 	if got := r.ServiceRequestLink("sr-1"); got != want {
 		t.Errorf("ServiceRequestLink = %q, want %q", got, want)
+	}
+}
+
+// captureHandler records every slog record at any level so a test can assert
+// on level and attributes.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+func recordAttrs(r slog.Record) map[string]slog.Value {
+	m := map[string]slog.Value{}
+	r.Attrs(func(a slog.Attr) bool {
+		m[a.Key] = a.Value
+		return true
+	})
+	return m
+}
+
+// TestResolveLinks_FallbackLogLevel: a record whose roles match neither list
+// is the intended email-domain path (debug); no record at all is a data gap
+// (warn). Both carry roleCount and never the email address.
+func TestResolveLinks_FallbackLogLevel(t *testing.T) {
+	tests := []struct {
+		name      string
+		users     []entity.UserRoleInfo
+		wantLevel slog.Level
+		wantFound bool
+		wantCount int64
+	}{
+		{
+			name:      "found, roles unmatched: debug",
+			users:     []entity.UserRoleInfo{{Email: "mystery@wso2.com", Roles: []string{"some_new_role", "another"}}},
+			wantLevel: slog.LevelDebug,
+			wantFound: true,
+			wantCount: 2,
+		},
+		{
+			name:      "found, empty roles: debug with roleCount 0",
+			users:     []entity.UserRoleInfo{{Email: "mystery@wso2.com"}},
+			wantLevel: slog.LevelDebug,
+			wantFound: true,
+			wantCount: 0,
+		},
+		{
+			name:      "not found: warn",
+			users:     nil,
+			wantLevel: slog.LevelWarn,
+			wantFound: false,
+			wantCount: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &captureHandler{}
+			prev := slog.Default()
+			slog.SetDefault(slog.New(h))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			r := New(&fakeEntityClient{users: tt.users}, testConfig())
+			if _, err := r.ResolveLinks(t.Context(), []string{"mystery@wso2.com"}, "PROJ-1", "CASE-1"); err != nil {
+				t.Fatalf("ResolveLinks() error = %v", err)
+			}
+			if len(h.records) != 1 {
+				t.Fatalf("got %d log records, want 1", len(h.records))
+			}
+			rec := h.records[0]
+			if rec.Level != tt.wantLevel {
+				t.Errorf("level = %v, want %v", rec.Level, tt.wantLevel)
+			}
+			attrs := recordAttrs(rec)
+			if got := attrs["found"]; got.Kind() != slog.KindBool || got.Bool() != tt.wantFound {
+				t.Errorf("found attr = %v, want %v", got, tt.wantFound)
+			}
+			if got, ok := attrs["roleCount"]; !ok || got.Int64() != tt.wantCount {
+				t.Errorf("roleCount attr = %v (present=%v), want %d", got, ok, tt.wantCount)
+			}
+			if got := attrs["caseID"].String(); got != "CASE-1" {
+				t.Errorf("caseID attr = %q, want CASE-1", got)
+			}
+			if _, ok := attrs["isCustomer"]; !ok {
+				t.Error("isCustomer attr missing")
+			}
+			for k, v := range attrs {
+				if strings.Contains(v.String(), "mystery@") {
+					t.Errorf("attr %q leaks the email address", k)
+				}
+			}
+			if strings.Contains(rec.Message, "mystery@") {
+				t.Error("message leaks the email address")
+			}
+		})
 	}
 }

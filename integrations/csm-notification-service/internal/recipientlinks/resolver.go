@@ -118,8 +118,10 @@ type RecipientLink struct {
 // A recipient whose roles match neither CustomerRoles nor CSMRoles — or
 // whom entity-service has no record for at all — falls back to their email
 // domain instead: wso2EmailDomain gets the CSM portal link, anything else
-// gets the customer portal link, and a warning is logged either way. The
-// role lists are operator-curated and may not be exhaustive, and
+// gets the customer portal link. This is the documented, intended path
+// (the role lists default to empty), so it is logged at debug when
+// entity-service has a record for the recipient, and at warn only when it
+// has none (a data-gap signal). The role lists are operator-curated and may not be exhaustive, and
 // incomplete/test entity-service data frequently leaves roles empty — an
 // email domain is always present.
 //
@@ -161,7 +163,7 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 // against wso2EmailDomain — never logged, same PII reasoning as everywhere
 // else in this package (an email address in the logs is what this repo's
 // own convention disallows). caseID identifies which notification a
-// warning belongs to without identifying who it's about.
+// log record belongs to without identifying who it's about.
 //
 // Classification order: role first (CustomerRoles/CSMRoles — from the same
 // SearchUsersByEmail response ResolveLinks already has, the operator-
@@ -180,8 +182,16 @@ func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found 
 		// isCustomer already false.
 	default:
 		isCustomer = !strings.EqualFold(emailDomain(email), wso2EmailDomain)
-		slog.WarnContext(ctx, "recipientlinks: recipient's roles did not resolve a portal; used email domain as a fallback",
-			"caseID", caseID, "found", found, "isCustomer", isCustomer)
+		// A record whose roles match neither list is the expected path when
+		// the role lists are unset, so it is debug-level; a missing record is
+		// a real data gap and stays at warn. roleCount distinguishes an empty
+		// roles array from an unmatched one (0 when not found).
+		level := slog.LevelDebug
+		if !found {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "recipientlinks: recipient's roles did not resolve a portal; used email domain as a fallback",
+			"caseID", caseID, "found", found, "roleCount", len(user.Roles), "isCustomer", isCustomer)
 	}
 
 	if isCustomer {
