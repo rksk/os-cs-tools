@@ -90,11 +90,9 @@ On shared topics (`Dispatcher.HandleShared`) an unknown type is skipped; on topi
 service owns, an unknown type is an error and ends in the DLQ.
 
 Recipient links: the dispatcher asks the entity service for each recipient's roles and
-builds a customer-portal or CSM-portal case link per recipient. The user type the entity
-service reports decides first (`internal` is CSM; `customer` and `external` are customer).
-When it does not, `CUSTOMER_ROLES` then `CSM_ROLES` act as a secondary signal, and otherwise
-the email domain decides (the operator's own domain, hard-coded in `internal/recipientlinks`,
-gets the CSM link). The domain fallback is logged at warn.
+builds a customer-portal or CSM-portal case link per recipient. Roles in `CUSTOMER_ROLES`
+mean customer, then roles in `CSM_ROLES` mean CSM, otherwise the email domain decides (the
+operator's own domain, hard-coded in `internal/recipientlinks`, gets the CSM link).
 
 ### Delivery semantics
 
