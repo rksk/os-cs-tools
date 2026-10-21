@@ -104,7 +104,7 @@ func TestResolveLinks_MixedRolesOneEvent(t *testing.T) {
 // whose email is on WSO2's own domain, is routed to the CSM portal.
 func TestResolveLinks_UnmatchedRole_Wso2Domain_ResolvesToCSM(t *testing.T) {
 	client := &fakeEntityClient{users: []entity.UserRoleInfo{
-		{Email: "mystery@wso2.com", Roles: []string{"some_new_role"}, UserType: "external"},
+		{Email: "mystery@wso2.com", Roles: []string{"some_new_role"}},
 	}}
 	r := New(client, testConfig())
 
@@ -122,7 +122,7 @@ func TestResolveLinks_UnmatchedRole_Wso2Domain_ResolvesToCSM(t *testing.T) {
 // the case above for a non-WSO2 domain.
 func TestResolveLinks_UnmatchedRole_ExternalDomain_ResolvesToCustomer(t *testing.T) {
 	client := &fakeEntityClient{users: []entity.UserRoleInfo{
-		{Email: "mystery@acme.com", Roles: []string{"some_new_role"}, UserType: "internal"},
+		{Email: "mystery@acme.com", Roles: []string{"some_new_role"}},
 	}}
 	r := New(client, testConfig())
 
@@ -310,37 +310,53 @@ func recordAttrs(r slog.Record) map[string]slog.Value {
 	return m
 }
 
-// TestResolveLinks_FallbackLogLevel: a record whose roles match neither list
-// is the intended email-domain path (debug); no record at all is a data gap
-// (warn). Both carry roleCount and never the email address.
-func TestResolveLinks_FallbackLogLevel(t *testing.T) {
+// TestClassification drives ResolveLinks and IsCustomer from the same table,
+// so the two entry points are proven to agree. Precedence: user type, then
+// roles, then email domain. Only the domain fallback logs, at warn, with the
+// raw userType and never the email address.
+func TestClassification(t *testing.T) {
+	const (
+		csmLink      = "https://csm.example.com/cases/CASE-1"
+		customerLink = "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
+		email        = "mystery@wso2.com"
+	)
 	tests := []struct {
-		name      string
-		users     []entity.UserRoleInfo
-		wantLevel slog.Level
-		wantFound bool
-		wantCount int64
+		name         string
+		users        []entity.UserRoleInfo
+		wantCustomer bool
+		wantWarn     bool
+		wantUserType string
+		wantRoles    int64
 	}{
+		{name: "internal userType, no roles", users: []entity.UserRoleInfo{{Email: email, UserType: "internal"}}},
+		{name: "customer userType", users: []entity.UserRoleInfo{{Email: email, UserType: "customer"}}, wantCustomer: true},
+		{name: "external userType", users: []entity.UserRoleInfo{{Email: email, UserType: "external"}}, wantCustomer: true},
+		{name: "mixed-case INTERNAL", users: []entity.UserRoleInfo{{Email: email, UserType: "INTERNAL"}}},
 		{
-			name:      "found, roles unmatched: debug",
-			users:     []entity.UserRoleInfo{{Email: "mystery@wso2.com", Roles: []string{"some_new_role", "another"}}},
-			wantLevel: slog.LevelDebug,
-			wantFound: true,
-			wantCount: 2,
+			// userType wins over roles: an internal user holding a customer
+			// role entry is still CSM.
+			name:  "internal userType beats customer role",
+			users: []entity.UserRoleInfo{{Email: email, UserType: "internal", Roles: []string{"customer_admin"}}},
+		},
+		{name: "empty userType, CSM role", users: []entity.UserRoleInfo{{Email: email, Roles: []string{"csm_agent"}}}},
+		{
+			name:         "empty userType, customer role",
+			users:        []entity.UserRoleInfo{{Email: email, Roles: []string{"customer_admin"}}},
+			wantCustomer: true,
 		},
 		{
-			name:      "found, empty roles: debug with roleCount 0",
-			users:     []entity.UserRoleInfo{{Email: "mystery@wso2.com"}},
-			wantLevel: slog.LevelDebug,
-			wantFound: true,
-			wantCount: 0,
+			name:      "empty userType, unmatched roles, wso2 email: fallback",
+			users:     []entity.UserRoleInfo{{Email: email, Roles: []string{"a", "b"}}},
+			wantWarn:  true,
+			wantRoles: 2,
 		},
+		{name: "not found: fallback", users: nil, wantWarn: true},
 		{
-			name:      "not found: warn",
-			users:     nil,
-			wantLevel: slog.LevelWarn,
-			wantFound: false,
-			wantCount: 0,
+			name:         "system userType, unmatched roles: fallback",
+			users:        []entity.UserRoleInfo{{Email: email, UserType: "system", Roles: []string{"a"}}},
+			wantWarn:     true,
+			wantUserType: "system",
+			wantRoles:    1,
 		},
 	}
 	for _, tt := range tests {
@@ -351,37 +367,82 @@ func TestResolveLinks_FallbackLogLevel(t *testing.T) {
 			t.Cleanup(func() { slog.SetDefault(prev) })
 
 			r := New(&fakeEntityClient{users: tt.users}, testConfig())
-			if _, err := r.ResolveLinks(t.Context(), []string{"mystery@wso2.com"}, "PROJ-1", "CASE-1"); err != nil {
+			links, err := r.ResolveLinks(t.Context(), []string{email}, "PROJ-1", "CASE-1")
+			if err != nil {
 				t.Fatalf("ResolveLinks() error = %v", err)
 			}
-			if len(h.records) != 1 {
-				t.Fatalf("got %d log records, want 1", len(h.records))
+			want := csmLink
+			if tt.wantCustomer {
+				want = customerLink
 			}
-			rec := h.records[0]
-			if rec.Level != tt.wantLevel {
-				t.Errorf("level = %v, want %v", rec.Level, tt.wantLevel)
+			if len(links) != 1 || links[0].CaseLink != want {
+				t.Errorf("links = %+v, want a single link %q", links, want)
 			}
-			attrs := recordAttrs(rec)
-			if got := attrs["found"]; got.Kind() != slog.KindBool || got.Bool() != tt.wantFound {
-				t.Errorf("found attr = %v, want %v", got, tt.wantFound)
-			}
-			if got, ok := attrs["roleCount"]; !ok || got.Int64() != tt.wantCount {
-				t.Errorf("roleCount attr = %v (present=%v), want %d", got, ok, tt.wantCount)
-			}
-			if got := attrs["caseID"].String(); got != "CASE-1" {
-				t.Errorf("caseID attr = %q, want CASE-1", got)
-			}
-			if _, ok := attrs["isCustomer"]; !ok {
-				t.Error("isCustomer attr missing")
-			}
-			for k, v := range attrs {
-				if strings.Contains(v.String(), "mystery@") {
-					t.Errorf("attr %q leaks the email address", k)
+			// userType-resolved and role-resolved cases are all wso2.com
+			// addresses, so a customer result here proves the domain did not decide.
+
+			if !tt.wantWarn {
+				if len(h.records) != 0 {
+					t.Fatalf("got %d log records, want none", len(h.records))
+				}
+			} else {
+				if len(h.records) != 1 {
+					t.Fatalf("got %d log records, want 1", len(h.records))
+				}
+				rec := h.records[0]
+				if rec.Level != slog.LevelWarn {
+					t.Errorf("level = %v, want warn", rec.Level)
+				}
+				attrs := recordAttrs(rec)
+				if got := attrs["found"]; got.Kind() != slog.KindBool || got.Bool() != (len(tt.users) > 0) {
+					t.Errorf("found attr = %v", got)
+				}
+				if got, ok := attrs["roleCount"]; !ok || got.Int64() != tt.wantRoles {
+					t.Errorf("roleCount attr = %v (present=%v), want %d", got, ok, tt.wantRoles)
+				}
+				if got, ok := attrs["userType"]; !ok || got.String() != tt.wantUserType {
+					t.Errorf("userType attr = %v (present=%v), want %q", got, ok, tt.wantUserType)
+				}
+				if got := attrs["caseID"].String(); got != "CASE-1" {
+					t.Errorf("caseID attr = %q, want CASE-1", got)
+				}
+				if got, ok := attrs["isCustomer"]; !ok || got.Bool() != tt.wantCustomer {
+					t.Errorf("isCustomer attr = %v (present=%v), want %v", got, ok, tt.wantCustomer)
+				}
+				for k, v := range attrs {
+					if strings.Contains(v.String(), "mystery@") {
+						t.Errorf("attr %q leaks the email address", k)
+					}
+				}
+				if strings.Contains(rec.Message, "mystery@") {
+					t.Error("message leaks the email address")
 				}
 			}
-			if strings.Contains(rec.Message, "mystery@") {
-				t.Error("message leaks the email address")
+
+			// IsCustomer must agree with the link, and never log the email.
+			h.records = nil
+			got, err := r.IsCustomer(t.Context(), email)
+			if err != nil {
+				t.Fatalf("IsCustomer() error = %v", err)
+			}
+			if got != tt.wantCustomer {
+				t.Errorf("IsCustomer = %v, want %v", got, tt.wantCustomer)
+			}
+			for _, rec := range h.records {
+				if strings.Contains(rec.Message, "mystery@") {
+					t.Error("IsCustomer log leaks the email address")
+				}
 			}
 		})
+	}
+}
+
+// TestClassification_DomainFallbackCustomer: a non-wso2 address the user type
+// and roles cannot resolve falls back to the customer portal.
+func TestClassification_DomainFallbackCustomer(t *testing.T) {
+	r := New(&fakeEntityClient{users: []entity.UserRoleInfo{{Email: "x@acme.com", UserType: "system"}}}, testConfig())
+	got, err := r.IsCustomer(t.Context(), "x@acme.com")
+	if err != nil || !got {
+		t.Errorf("IsCustomer = %v, %v; want true, nil", got, err)
 	}
 }

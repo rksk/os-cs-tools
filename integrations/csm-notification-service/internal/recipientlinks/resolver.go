@@ -52,15 +52,15 @@ type entityClient interface {
 // wso2EmailDomain is WSO2's own corporate domain — mirrors
 // apps/csm-portal/backend's own wso2EmailDomain constant (see that
 // package's user_external_account.go), used the same way here: linkFor's
-// fallback classifier when a recipient's roles (from the same
-// SearchUsersByEmail response ResolveLinks already calls) match neither
-// CustomerRoles nor CSMRoles.
+// fallback classifier when neither a recipient's user type nor its roles
+// (both from the same SearchUsersByEmail response ResolveLinks already calls)
+// resolve a portal.
 const wso2EmailDomain = "wso2.com"
 
 // Config holds the role classification and portal base URLs Resolver needs.
-// CustomerRoles and CSMRoles need not be exhaustive of every role in the
-// system — see ResolveLinks' doc comment for what happens when a
-// recipient's roles match neither list.
+// CustomerRoles and CSMRoles are a secondary signal, consulted only when the
+// user type does not decide, and need not be exhaustive of every role in the
+// system — see ResolveLinks' doc comment for the full order.
 type Config struct {
 	CustomerRoles   []string
 	CSMRoles        []string
@@ -109,21 +109,19 @@ type RecipientLink struct {
 	UserID string
 }
 
-// ResolveLinks looks up each of emails' roles via entity-service and
-// returns the case link appropriate to each: a recipient whose roles
-// include one from Config.CustomerRoles gets the customer portal's link
-// (<CustomerBaseURL>/projects/{projectID}/support/cases/{caseID}); anyone
-// else gets the CSM portal's link (<CSMBaseURL>/cases/{caseID}).
+// ResolveLinks looks up each of emails via entity-service and returns the
+// case link appropriate to each: a customer gets the customer portal's link
+// (<CustomerBaseURL>/projects/{projectID}/support/cases/{caseID}), a CSM
+// recipient gets the CSM portal's link (<CSMBaseURL>/cases/{caseID}).
 //
-// A recipient whose roles match neither CustomerRoles nor CSMRoles — or
-// whom entity-service has no record for at all — falls back to their email
-// domain instead: wso2EmailDomain gets the CSM portal link, anything else
-// gets the customer portal link. This is the documented, intended path
-// (the role lists default to empty), so it is logged at debug when
-// entity-service has a record for the recipient, and at warn only when it
-// has none (a data-gap signal). The role lists are operator-curated and may not be exhaustive, and
-// incomplete/test entity-service data frequently leaves roles empty — an
-// email domain is always present.
+// Classification order (see classify, shared with IsCustomer): the user type
+// entity-service reports first, then the operator-curated role lists as a
+// secondary signal, then the email domain. A recipient neither of those
+// resolves — entity-service has no record, or its user type is empty/unknown
+// and its roles match neither list — falls back to the email domain
+// (wso2EmailDomain gets the CSM portal link, anything else the customer
+// portal link) and that is logged at warn: with user types in play it is a
+// genuine data gap, not an expected path.
 //
 // The returned links are the bare case link only — appending a
 // comment-specific anchor/fragment is internal/dispatch's job (see
@@ -165,33 +163,14 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 // own convention disallows). caseID identifies which notification a
 // log record belongs to without identifying who it's about.
 //
-// Classification order: role first (CustomerRoles/CSMRoles — from the same
-// SearchUsersByEmail response ResolveLinks already has, the operator-
-// curated, most specific signal); when a recipient's roles match neither
-// list — including when entity-service has no record for them at all —
-// their email domain decides instead: wso2EmailDomain gets the CSM portal
-// link, anything else gets the customer portal link. A domain is always
-// present, unlike roles, which incomplete/test entity-service data
-// frequently leaves empty.
+// The classification itself is classify's; see its doc comment for the order.
+// When it could not resolve the recipient and the email domain decided, that
+// is logged at warn with the raw userType (an enum, not PII).
 func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found bool, email, projectID, caseID string) string {
-	isCustomer := false
-	switch {
-	case found && r.matchesAny(user.Roles, r.customerRoles):
-		isCustomer = true
-	case found && r.matchesAny(user.Roles, r.csmRoles):
-		// isCustomer already false.
-	default:
-		isCustomer = !strings.EqualFold(emailDomain(email), wso2EmailDomain)
-		// A record whose roles match neither list is the expected path when
-		// the role lists are unset, so it is debug-level; a missing record is
-		// a real data gap and stays at warn. roleCount distinguishes an empty
-		// roles array from an unmatched one (0 when not found).
-		level := slog.LevelDebug
-		if !found {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "recipientlinks: recipient's roles did not resolve a portal; used email domain as a fallback",
-			"caseID", caseID, "found", found, "roleCount", len(user.Roles), "isCustomer", isCustomer)
+	isCustomer, resolved := r.classify(user, found, email)
+	if !resolved {
+		slog.WarnContext(ctx, "recipientlinks: recipient's roles did not resolve a portal; used email domain as a fallback",
+			"caseID", caseID, "found", found, "userType", user.UserType, "roleCount", len(user.Roles), "isCustomer", isCustomer)
 	}
 
 	if isCustomer {
@@ -200,12 +179,46 @@ func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found 
 	return fmt.Sprintf("%s/cases/%s", r.csmBase, url.PathEscape(caseID))
 }
 
-// IsCustomer classifies a single email the same way linkFor classifies a
-// recipient -- role first (CustomerRoles/CSMRoles), falling back to the
-// email's own domain when entity-service has no record for it or its roles
-// match neither list. Unlike ResolveLinks, this doesn't build a case link at
-// all: it exists for a caller (dispatch's frustration-detection check) that
-// only needs the yes/no classification itself, not a portal link.
+// classify decides whether a recipient is a customer. It is the single
+// classifier behind both linkFor and IsCustomer so the two cannot drift.
+// resolved is false only when the email domain had to decide.
+//
+// Order:
+//  1. found, userType "internal" (case-insensitive): CSM.
+//  2. found, userType "customer" or "external" (case-insensitive): customer.
+//     "external" is another data source's label for the same customer users.
+//  3. found, a role in CustomerRoles: customer; else a role in CSMRoles: CSM.
+//     The role lists are a secondary, operator-curated signal.
+//  4. Otherwise (not found, or userType empty/"system"/unknown with roles
+//     unmatched): email domain, wso2EmailDomain is CSM, anything else is a
+//     customer.
+//
+// The user type wins over roles: an internal user carrying a customer role
+// entry is still CSM.
+func (r *Resolver) classify(user entity.UserRoleInfo, found bool, email string) (isCustomer, resolved bool) {
+	if found {
+		switch strings.ToLower(strings.TrimSpace(user.UserType)) {
+		case "internal":
+			return false, true
+		case "customer", "external":
+			return true, true
+		}
+		switch {
+		case r.matchesAny(user.Roles, r.customerRoles):
+			return true, true
+		case r.matchesAny(user.Roles, r.csmRoles):
+			return false, true
+		}
+	}
+	return !strings.EqualFold(emailDomain(email), wso2EmailDomain), false
+}
+
+// IsCustomer classifies a single email exactly as linkFor does (user type,
+// then roles, then the email's own domain; see classify). Unlike
+// ResolveLinks, this doesn't build a case link at all: it exists for a caller
+// (dispatch's frustration-detection check) that only needs the yes/no
+// classification itself, not a portal link. It does not log the fallback:
+// it has no case to attribute a record to.
 func (r *Resolver) IsCustomer(ctx context.Context, email string) (bool, error) {
 	users, err := r.entity.SearchUsersByEmail(ctx, []string{email})
 	if err != nil {
@@ -221,14 +234,8 @@ func (r *Resolver) IsCustomer(ctx context.Context, email string) (bool, error) {
 		}
 	}
 
-	switch {
-	case found && r.matchesAny(user.Roles, r.customerRoles):
-		return true, nil
-	case found && r.matchesAny(user.Roles, r.csmRoles):
-		return false, nil
-	default:
-		return !strings.EqualFold(emailDomain(email), wso2EmailDomain), nil
-	}
+	isCustomer, _ := r.classify(user, found, email)
+	return isCustomer, nil
 }
 
 // CSMLink builds the CSM portal's case link directly, without any recipient
