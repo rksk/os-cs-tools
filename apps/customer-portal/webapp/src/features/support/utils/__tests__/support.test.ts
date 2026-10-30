@@ -575,6 +575,22 @@ describe("plainTextCommentToHtml", () => {
     expect(plainTextCommentToHtml(html)).toBe(html);
   });
 
+  it("converts newlines to <br> when the only markup is inline, leaving the tags intact", () => {
+    expect(
+      plainTextCommentToHtml(
+        'Update released.\n\nSee the <a href="https://example.com/docs" target="_blank">docs</a>.\nThanks',
+      ),
+    ).toBe(
+      'Update released.<br><br>See the <a href="https://example.com/docs" target="_blank">docs</a>.<br>Thanks',
+    );
+  });
+
+  it("does not touch a newline inside an inline tag's attributes", () => {
+    expect(plainTextCommentToHtml('A\n<a\nhref="https://example.com">x</a>')).toBe(
+      'A<br><a\nhref="https://example.com">x</a>',
+    );
+  });
+
   it("is a no-op for content carrying a ServiceNow [code] marker, even with no HTML tags", () => {
     const withCode = "Intro\n[code]raw markup[/code]\nTail";
     expect(plainTextCommentToHtml(withCode)).toBe(withCode);

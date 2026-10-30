@@ -1302,11 +1302,12 @@ const ANY_HTML_TAG = /<[a-z][\s\S]*>/i;
  * replaces each real newline with `<br>`, after escaping has already turned
  * any structural character inert.
  *
- * A no-op for anything that already looks like real HTML (any tag at all,
- * not just the block tags collapseHtmlSourceWhitespace cares about) or
- * carries a ServiceNow `[code]`/`[/code]` marker -- both already go through
- * the existing HTML/code-block pipeline, which must not be double-processed
- * here.
+ * Content with inline-only markup (e.g. a link inside otherwise plain text,
+ * as in a system-generated notice) keeps its tags as-is and only has its
+ * newlines converted to `<br>`. A no-op for anything carrying block or
+ * `<br>` markup, or a ServiceNow `[code]`/`[/code]` marker -- both already go
+ * through the existing HTML/code-block pipeline, which must not be
+ * double-processed here.
  *
  * @param content - Raw comment content, already run through
  *   {@link collapseCommentSourceWhitespace}.
@@ -1315,8 +1316,19 @@ const ANY_HTML_TAG = /<[a-z][\s\S]*>/i;
  */
 export function plainTextCommentToHtml(content: string): string {
   if (!content || typeof content !== "string") return "";
-  if (ANY_HTML_TAG.test(content) || /\[\\?\/?code\]/i.test(content)) {
-    return content;
+  if (/\[\\?\/?code\]/i.test(content)) return content;
+  if (ANY_HTML_TAG.test(content)) {
+    // Inline-only markup (a link, `<b>`, `<span>`) with no block or `<br>`
+    // tag at all: the author's newlines are still the only line breaks, and
+    // would collapse into one run-on line just like plain text. Convert them
+    // outside tags only, so a newline inside a tag's attributes is untouched.
+    if (HTML_STRUCTURE_TAG.test(content)) return content;
+    return content
+      .split(/(<[^<>]*>)/)
+      .map((part) =>
+        part.startsWith("<") ? part : part.replace(/\r\n|\r|\n/g, "<br>"),
+      )
+      .join("");
   }
   const escaped = content
     .replace(/&/g, "&amp;")
