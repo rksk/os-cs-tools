@@ -25,6 +25,21 @@ import { useResolvedInlineImageHtml } from "@utils/useResolvedInlineImageHtml";
 const HTML_FORMAT_RE =
   /<\/?(p|span|div|ul|ol|li|strong|em|b|i|br|h[1-6]|a[\s>]|table|tr|td|th|code|pre|blockquote|img)\b/i;
 
+// Block-level or `<br>` markup means the author's layout is already expressed in tags, so source
+// newlines are left to HTML's own whitespace handling.
+const BLOCK_TAG_RE = /<(p|div|ul|ol|li|h[1-6]|table|tr|td|th|pre|blockquote|br|hr)\b[^<>]*>/i;
+
+// A comment whose only markup is inline (typically plain text with a link) still relies on its
+// newlines for line breaks, which HTML collapses to a space. Convert them to `<br>`, outside tags
+// only so a newline inside a tag's attributes is untouched.
+function preserveLineBreaks(html: string): string {
+  if (BLOCK_TAG_RE.test(html)) return html;
+  return html
+    .split(/(<[^<>]*>)/)
+    .map((part) => (part.startsWith("<") ? part : part.replace(/\r\n|\r|\n/g, "<br>")))
+    .join("");
+}
+
 const HTML_CONTENT_SX = {
   fontSize: "0.875rem",
   "& p": { margin: "0 0 0.4em 0" },
@@ -55,7 +70,7 @@ export function CommentBody({ content }: { content: string }) {
   // Sanitize the sliced content on its own, then append the ellipsis outside the sanitized HTML
   // — appending it before sanitizing risks DOMPurify swallowing it while repairing a tag the
   // slice cut through mid-way.
-  const sanitized = isHtml ? DOMPurify.sanitize(shown) : "";
+  const sanitized = isHtml ? DOMPurify.sanitize(preserveLineBreaks(shown)) : "";
   // Resolve `.iix` inline-image references against the already-sanitized HTML, mirroring the
   // webapp's CsmCaseCommentBubble (sanitize, then useResolvedInlineImageHtml on the result) —
   // comment/description HTML embeds inline images as auth-gated `.iix` refs the WebView can't
