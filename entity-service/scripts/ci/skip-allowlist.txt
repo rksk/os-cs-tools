@@ -1,0 +1,41 @@
+# Tests allowed to skip in CI (entity-service-tests workflow). One regular
+# expression per line, fullmatch against "<package path>/<Test>[/<subtest>]".
+# Anything that skips and is not listed here fails the job: see check-skips.py.
+# Every entry needs a reason on the line above it.
+
+# Manual harnesses: they serve a fixture over HTTP for a human to poke at, and
+# skip unless a *_SERVE_ADDR variable is set.
+internal/server/TestServe(CloudStatus|OutageCommunication|OutageNotify)Harness
+
+# Read a real, populated deployment (*_LIVE_DB_URL); never point these at CI.
+internal/service/Test(LongOpenCase|MigrationCase|Worklog)ReportAgainstLiveDatabase
+internal/service/Test(OutageAffectedCIs|OutageNotificationFields|PGOutageService)Live
+
+# Golden fixtures recorded from a legacy system, with one row marked known
+# stale in the test itself.
+internal/service/TestAvailability_Golden.*
+
+# Cloud status scenarios need a populated outage scope (CLOUD_STATUS_TEST_DSN
+# plus CLOUD_STATUS_TEST_SERVICE_IDS naming existing services). Not provisioned
+# in CI yet.
+internal/service/TestIntegrationCloudStatus.*
+
+# Standard-change integration tests hard-code a role id that only the local
+# compose seed creates (STANDARD_CHANGE_TEST_DSN / _APP_DSN left unset). Gap to
+# close: make the test create its own role row.
+internal/service/TestStandardChangeIntegration
+
+# Classes of skip matched by message.
+#
+# The PLG schema tests build their own database through a migration loop that
+# does not follow the canonical order, which fails against the current
+# migrations and takes the whole repository package down; so
+# PLG_TEST_DATABASE_URL is deliberately unset (see test-db-setup.sh).
+msg: set PLG_TEST_DATABASE_URL to run the schema tests
+
+# Need rows only the local compose seed provides, or an empty-page comparison
+# that proves nothing on an empty table.
+msg: no [a-z ]+ in this database, so comparing two empty pages
+
+# A migration-shape check that only applies to a reconciled schema.
+msg: deployment_node.project_key exists

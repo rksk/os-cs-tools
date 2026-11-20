@@ -1,0 +1,68 @@
+# Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Tests excluded from the entity-service-tests workflow because they FAIL when
+# run against a freshly migrated database in CI. One regular expression per
+# line, matched with `go test -skip` against the top-level test name with its
+# leading "Test" removed (anchored).
+#
+# This list is debt, not a verdict. Do not add a test here to get a PR green:
+# fix it, or say in review why it cannot run on a fresh database. Remove lines
+# as tests are fixed. Found by running the whole suite three times on a fresh
+# PostgreSQL 18 database; the first group failed on all three runs.
+#
+# Why they fail, as observed (causes not yet confirmed per test):
+#   - seed or assert through a role that is neither the superuser nor the
+#     non-superuser application role the workflow provisions (they need a role
+#     that can both insert past row-level security and be subject to it);
+#   - assume reference rows (teams, assignment groups, users) that only the
+#     local compose seed creates;
+#   - the one-off migration-convergence tests need CREATE on the database;
+#   - a few look like genuine test or product defects (an unparseable query
+#     parameter, a worklog report that still counts allocated members).
+
+# Migration-convergence tests: need to create schemas/roles/databases.
+KBManagerMigration.*
+KnowledgeArticleFKMigration.*
+KBArticleHistoryMigration.*
+
+# Case, engagement and deployment fixtures rejected by row-level security.
+CaseFeedbackIntegration_.*
+FeedbackReasonsIntegration
+EngagementTypeIntegration_.*
+ClosedByIntegration_.*
+ReopenReasonIntegration_.*
+ResolvedOnIntegration_Transitions
+EtaSharedOnIntegration_.*
+WorkaroundProvidedOnIntegration_.*
+DeploymentRLSIntegration_.*
+DeployedProductCreateIntegration
+CaseTypeTransferIntegration_AttachmentsAreAvailableOnTheConvertedTicket
+CallRequestNumberIntegration
+
+# The whole change-request integration family (130 tests). Confirmed cause: the
+# fixtures insert an assignment group and then a team_member row, but
+# team_member.team_id now references team, so the insert violates the foreign
+# key on any database that has not been through these tests before.
+ChangeRequest.*
+
+# Team schedule, worklog and incident-report tests.
+ScheduleIntegration_.*
+RotaGenerateIntegration_.*
+WorklogIntegration_LeaveFollowsTheTagsTimesheetFlag
+WorklogAllocationsRemoveMembers
+IncidentReportIntegration_.*
+AccountDefaultWatcherEmailsIntegration

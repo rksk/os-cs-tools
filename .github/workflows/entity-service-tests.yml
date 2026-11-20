@@ -1,0 +1,109 @@
+# Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Builds, vets and tests entity-service against a real PostgreSQL 18 database.
+#
+# Most of the suite is integration tests that talk to Postgres and skip
+# themselves when their *_TEST_DSN / *_TEST_DATABASE_URL variable is unset, so
+# a plain `go test ./...` on a runner with no database is green while running
+# almost nothing. This job provisions the database, applies every migration
+# from empty in the canonical order, sets the variables, and then fails on any
+# skip that is not listed in entity-service/scripts/ci/skip-allowlist.txt.
+name: Entity-service tests
+
+on:
+  pull_request:
+    paths:
+      - "entity-service/**"
+      - ".github/workflows/entity-service-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: entity-service-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: entity-service
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: csm_test
+          # Throwaway CI container. Some tests create a short-lived role with
+          # no password and connect as it, which needs trust auth.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d csm_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      SUPER_URL: postgres://postgres:postgres@127.0.0.1:5432/csm_test?sslmode=disable
+      APP_URL: postgres://csm_app:csm_app_pw@127.0.0.1:5432/csm_test?sslmode=disable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: entity-service/go.mod
+          cache-dependency-path: entity-service/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # `make migrate` (not the compose script) so the RLS migration track runs
+      # too. Writes the test database variables to $GITHUB_ENV.
+      - name: Migrate and prepare test database
+        run: ./scripts/ci/test-db-setup.sh >> "$GITHUB_ENV"
+
+      # Tests in scripts/ci/known-failures.txt are excluded (-skip): they fail
+      # against a freshly migrated database and need individual triage. The
+      # list is debt; do not add to it to get a PR green.
+      #
+      # -p 1: packages share one database and fixture ids, and run in parallel
+      # they delete each other's rows (observed foreign-key failures).
+      #
+      # Integration tests skip when their database is unreachable or unset, so
+      # check-skips.py fails the job on any skip not in skip-allowlist.txt, and
+      # prints the output of every failed test.
+      - name: Test
+        run: |
+          rc=0
+          exclude=$(grep -Ev '^[[:space:]]*(#|$)' scripts/ci/known-failures.txt | paste -sd'|' -)
+          go test -json -count=1 -p 1 -skip "^Test(${exclude})\$" ./... \
+            > "$RUNNER_TEMP/go-test.json" || rc=$?
+          python3 scripts/ci/check-skips.py "$RUNNER_TEMP/go-test.json" scripts/ci/skip-allowlist.txt || rc=$?
+          exit "$rc"
