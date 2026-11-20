@@ -81,6 +81,12 @@ ALTER TABLE project_type
 -- doesn't match (typo, prior rename, a future environment with different
 -- names) fails the migration loudly instead of leaving every feature flag
 -- silently FALSE with no indication anything went wrong.
+--
+-- Empty-database guard: each check also requires project_type to hold at
+-- least one row. On a freshly built database the table is empty (reference
+-- rows are loaded by the data sync, not by migrations), so there is nothing
+-- to backfill and the migration must not fail. On a populated database a
+-- missing name still fails loudly, exactly as before.
 DO $$
 BEGIN
     UPDATE project_type SET
@@ -94,7 +100,7 @@ BEGIN
         accepted_severity_values = ARRAY['S1', 'S2', 'S3', 'S4', 'S0']::case_severity_enum[],
         sr_product_categories = ARRAY['MS', 'PC']::deployed_product_category_enum[]
     WHERE name = 'Managed Cloud Subscription';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Managed Cloud Subscription'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -106,7 +112,7 @@ BEGIN
         has_time_logs_read_access = TRUE, has_usage_metrics_read_access = TRUE,
         accepted_severity_values = ARRAY['S1', 'S2', 'S3', 'S4']::case_severity_enum[]
     WHERE name = 'Evaluation Subscription';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Evaluation Subscription'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -119,7 +125,7 @@ BEGIN
         has_component_analysis_read_access = TRUE, has_usage_metrics_read_access = TRUE,
         accepted_severity_values = ARRAY['S1', 'S2', 'S3', 'S4']::case_severity_enum[]
     WHERE name = 'Subscription';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Subscription'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -131,7 +137,7 @@ BEGIN
         has_time_logs_read_access = TRUE, has_usage_metrics_read_access = TRUE,
         accepted_severity_values = ARRAY['S4']::case_severity_enum[]
     WHERE name = 'Development Support';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Development Support'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -150,7 +156,7 @@ BEGIN
         default_case_product_categories = ARRAY['CL']::deployed_product_category_enum[],
         sr_product_categories = ARRAY['PDP']::deployed_product_category_enum[]
     WHERE name = 'Cloud Evaluation Support';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Cloud Evaluation Support'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -177,7 +183,7 @@ BEGIN
         default_case_product_categories = ARRAY['CL']::deployed_product_category_enum[],
         sr_product_categories = ARRAY['PDP']::deployed_product_category_enum[]
     WHERE name = 'Cloud Support';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Cloud Support'' not found -- backfill skipped';
     END IF;
 END $$;
@@ -190,7 +196,7 @@ BEGIN
         has_usage_metrics_read_access = TRUE,
         accepted_severity_values = ARRAY['S4']::case_severity_enum[]
     WHERE name = 'Professional Services';
-    IF NOT FOUND THEN
+    IF NOT FOUND AND EXISTS (SELECT 1 FROM project_type) THEN
         RAISE EXCEPTION 'migration 000085: expected project_type row ''Professional Services'' not found -- backfill skipped';
     END IF;
 END $$;
