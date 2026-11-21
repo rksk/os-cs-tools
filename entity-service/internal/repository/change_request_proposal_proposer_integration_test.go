@@ -864,7 +864,7 @@ func (t *sqlTrace) sawTheContactCheckInABatch() bool {
 // role as the flow's own pool) and returns the recording.
 func (f *crFlow) traceSQL() *sqlTrace {
 	f.t.Helper()
-	cfg, err := pgxpool.ParseConfig(os.Getenv("CHANGE_REQUEST_TEST_DSN"))
+	cfg, err := pgxpool.ParseConfig(changeRequestTestDSN())
 	if err != nil {
 		f.t.Fatalf("parse DSN: %v", err)
 	}

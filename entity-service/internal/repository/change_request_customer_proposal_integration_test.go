@@ -18,7 +18,6 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -220,7 +219,7 @@ func TestChangeRequestCustomerProposalIntegration_HostileWindowsAreRefused(t *te
 // session runs in: the same proposal is stored as the same instant on a UTC
 // database and on one set to Colombo (+05:30), and an RFC 3339 value keeps its offset.
 func TestChangeRequestCustomerProposalIntegration_ZonelessWindowIsUTCInAnySession(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}

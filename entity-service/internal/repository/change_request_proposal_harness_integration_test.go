@@ -341,6 +341,11 @@ func (f *crFlow) rowCounts() map[string]int {
 	rows.Close()
 	out := map[string]int{}
 	for _, t := range tables {
+		// The audit log (and its partitions) records every write by trigger; it
+		// is not a row the feature itself adds, so it is not counted.
+		if strings.HasPrefix(t, "csm_audit_log") {
+			continue
+		}
 		var n int
 		if err := f.scoped.QueryRow(f.sys, fmt.Sprintf(`SELECT COUNT(*) FROM %q`, t)).Scan(&n); err != nil {
 			f.t.Fatalf("count %s: %v", t, err)

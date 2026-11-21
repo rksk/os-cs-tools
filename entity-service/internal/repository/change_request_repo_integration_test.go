@@ -56,6 +56,9 @@ const (
 	// that seed file for something it already covers.
 	seededGroupID = "00000000-0000-0000-0000-000000000901"
 
+	// seededGroupID is also used as a team id (team_member.team_id references
+	// team) and as a "group" id. changeRequestTestDSN creates both rows when
+	// they are missing, so a freshly migrated database needs no seed script.
 	// unknownGroupID is a well-formed UUID that is not the id of any "group"
 	// row -- used to exercise assignment_group_id's FK violation path.
 	unknownGroupID = "36666666-aaaa-0000-0000-000000000000"
@@ -157,6 +160,39 @@ const (
 	crCustomerFlagIndependentTestID      = "37777777-0000-0000-0000-000000000017"
 )
 
+var seedExampleTeamOnce sync.Once
+
+// changeRequestTestDSN returns CHANGE_REQUEST_TEST_DSN and, the first time it
+// is called with the variable set, makes sure the reference rows the change
+// request fixtures point at exist: the team and the "group" with id
+// seededGroupID. A database seeded by the local compose script already has
+// them; a freshly migrated one (CI) does not, and without the team row every
+// team_member fixture insert violates its foreign key. Best effort: a role that
+// cannot insert is left to fail visibly on the fixture that needs the row.
+func changeRequestTestDSN() string {
+	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	if dsn == "" {
+		return ""
+	}
+	seedExampleTeamOnce.Do(func() {
+		ctx := repository.WithSystemIdentity(context.Background())
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			return
+		}
+		defer pool.Close()
+		_, _ = pool.Exec(ctx,
+			`INSERT INTO team (id, created_on, updated_on, created_by, updated_by, name, type)
+			 VALUES ($1, now(), now(), 'cr-test', 'cr-test', 'Example Corp ABT', 'ABT')
+			 ON CONFLICT (id) DO NOTHING`, seededGroupID)
+		_, _ = pool.Exec(ctx,
+			`INSERT INTO "group" (id, created_on, updated_on, created_by, updated_by, name, is_active)
+			 VALUES ($1, now(), now(), 'cr-test', 'cr-test', 'Example Corp ABT', true)
+			 ON CONFLICT (id) DO NOTHING`, seededGroupID)
+	})
+	return dsn
+}
+
 // seedApprovalUserForDecisionTest inserts one "user" row per given id --
 // approval_stage_approver.approver_user_id's FK needs a real one -- as its
 // own fresh rows (not relying on any of the local docker-compose stack's own
@@ -232,7 +268,7 @@ func seedChangeRequestForApprovalTest(t *testing.T, pool *repository.Scoped, sta
 // Assess->Authorize, handled entirely by DecideChangeRequestApproval, which
 // this test does not touch.
 func TestChangeRequestIntegration_RequestApprovalIsBookkeepingOnly(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -315,7 +351,7 @@ func seedApprovalStageForDecisionTest(t *testing.T, pool *repository.Scoped, app
 // change request's Assess-stage approval, while it's actually sitting in
 // Assess, must now advance it to Authorize.
 func TestChangeRequestIntegration_DecideApprovalCascadesAssessToAuthorize(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -366,7 +402,7 @@ func TestChangeRequestIntegration_DecideApprovalCascadesAssessToAuthorize(t *tes
 // target for a rejected Assess stage in this schema, so this must be a
 // pure no-op on change_request.state.
 func TestChangeRequestIntegration_DecideApprovalRejectionDoesNotCascade(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -413,7 +449,7 @@ func TestChangeRequestIntegration_DecideApprovalRejectionDoesNotCascade(t *testi
 // account this test asserted that 409; a native stage (which always has a label)
 // is still refused, see the StaleApprovals tests.
 func TestChangeRequestIntegration_DecideApprovalDoesNotCascadeOutsideAssess(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -465,7 +501,7 @@ func TestChangeRequestIntegration_DecideApprovalDoesNotCascadeOutsideAssess(t *t
 // them resolves the stage AND cancels the other two -- not just the acted-on
 // row.
 func TestChangeRequestIntegration_DecideApprovalCancelsSiblingApprovers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -567,7 +603,7 @@ func seedPriorApprovalStagesForDecisionTest(t *testing.T, pool *repository.Scope
 // TestChangeRequestIntegration_DecideApprovalRejectionDoesNotCascade's own
 // doc comment -- a rejection never cascades state, forward or backward).
 func TestChangeRequestIntegration_DecideRejectionCancelsSiblingApprovers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -639,7 +675,7 @@ func TestChangeRequestIntegration_DecideRejectionCancelsSiblingApprovers(t *test
 // pushes the real stage to the given ordinal the same way a genuine
 // Assess-then-Authorize(-then-Review) history would.
 func TestChangeRequestIntegration_DecideRejectionCancelsSiblingApproversAtEveryCheckpoint(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -727,7 +763,7 @@ func TestChangeRequestIntegration_DecideRejectionCancelsSiblingApproversAtEveryC
 // exactly wrong: the earlier approval already had every right to leave
 // those rows alone.
 func TestChangeRequestIntegration_DecideRejectionDoesNotDisturbAlreadyApprovedStage(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -842,7 +878,7 @@ func seedChangeRequestForAssignedTeamTest(t *testing.T, pool *repository.Scoped)
 // "group" id must round-trip through work_item.assignment_group_id and come
 // back as ChangeRequest.AssignedTeam on a subsequent read.
 func TestChangeRequestIntegration_PatchAssignedTeamID(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -896,7 +932,7 @@ func TestChangeRequestIntegration_PatchAssignedTeamID(t *testing.T) {
 // changeRequestPatchFKField mapping's "assignedTeamId" entry), not a raw
 // Postgres foreign-key-violation error surfaced to the caller.
 func TestChangeRequestIntegration_PatchAssignedTeamIDUnknownTeamIsValidationError(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1043,7 +1079,7 @@ func seedTeamMembersForAssessGateTest(t *testing.T, pool *pgxpool.Pool, userIDs 
 // request has no assigned team and the request itself doesn't supply one --
 // never a silent state change with nothing to assign the Assess stage to.
 func TestChangeRequestIntegration_PatchAssessRequiresAssignedTeam(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1085,7 +1121,7 @@ func TestChangeRequestIntegration_PatchAssessRequiresAssignedTeam(t *testing.T) 
 // "Move to Assess" is sent as its own request with no assignedTeamId at
 // all) -- not just a team supplied in the very same request.
 func TestChangeRequestIntegration_PatchAssessWithTeamAlreadyOnRecordSucceeds(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1134,7 +1170,7 @@ func TestChangeRequestIntegration_PatchAssessWithTeamAlreadyOnRecordSucceeds(t *
 // freshly created Assess-stage approval_stage -- not an empty Approvals tab
 // with nobody to approve it.
 func TestChangeRequestIntegration_PatchAssessProvisionsApproversFromGroupMembers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1210,7 +1246,7 @@ func TestChangeRequestIntegration_PatchAssessProvisionsApproversFromGroupMembers
 // re-seeds approvers -- DecideChangeRequestApproval owns everything about
 // an existing stage from the moment it's created.
 func TestChangeRequestIntegration_PatchAssessDoesNotReprovisionWhenStageExists(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1270,7 +1306,7 @@ func TestChangeRequestIntegration_PatchAssessDoesNotReprovisionWhenStageExists(t
 // members must instead reject the whole PATCH with a ValidationError and
 // leave no approval_stage behind at all.
 func TestChangeRequestIntegration_PatchAssessRejectsEmptyGroup(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1332,7 +1368,7 @@ func TestChangeRequestIntegration_PatchAssessRejectsEmptyGroup(t *testing.T) {
 // still provision exactly one requested approval_stage_approver per person,
 // never two.
 func TestChangeRequestIntegration_PatchAssessDeduplicatesGroupMembers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1407,7 +1443,7 @@ func setAssessGateRequestedBy(t *testing.T, pool *repository.Scoped, userID stri
 // already shows State: Cancelled, not a later transition from Requested),
 // while every other team member's row stays "requested" exactly as before.
 func TestChangeRequestIntegration_PatchAssessProvisionsRequesterAsCancelled(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1483,7 +1519,7 @@ func TestChangeRequestIntegration_PatchAssessProvisionsRequesterAsCancelled(t *t
 // {state: "assess"} PATCH must be rejected with a ValidationError and leave
 // no approval_stage row behind at all.
 func TestChangeRequestIntegration_PatchAssessRejectsWhenOnlyMemberIsRequester(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1696,7 +1732,7 @@ func setReviewGateRequestedBy(t *testing.T, pool *repository.Scoped, userID stri
 // approval_stage_approver row per member of the assigned team, at a new,
 // third approval_stage.
 func TestChangeRequestIntegration_PatchReviewProvisionsApproversFromGroupMembers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1787,7 +1823,7 @@ func TestChangeRequestIntegration_PatchReviewProvisionsApproversFromGroupMembers
 // its Review-position stage must never create a duplicate stage or re-seed
 // approvers.
 func TestChangeRequestIntegration_PatchReviewDoesNotReprovisionWhenStageExists(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1847,7 +1883,7 @@ func TestChangeRequestIntegration_PatchReviewDoesNotReprovisionWhenStageExists(t
 // ValidationError and leave no new approval_stage behind -- only the two
 // pre-existing stages this test seeds up front.
 func TestChangeRequestIntegration_PatchReviewRejectsEmptyGroup(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1896,7 +1932,7 @@ func TestChangeRequestIntegration_PatchReviewRejectsEmptyGroup(t *testing.T) {
 // Review-checkpoint counterpart of
 // TestChangeRequestIntegration_PatchAuthorizeDeduplicatesGroupMembers.
 func TestChangeRequestIntegration_PatchReviewDeduplicatesGroupMembers(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -1953,7 +1989,7 @@ func TestChangeRequestIntegration_PatchReviewDeduplicatesGroupMembers(t *testing
 // TestChangeRequestIntegration_PatchAuthorizeProvisionsRequesterAsCancelled --
 // the identical self-approval-exclusion rule applies at this checkpoint too.
 func TestChangeRequestIntegration_PatchReviewProvisionsRequesterAsCancelled(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2026,7 +2062,7 @@ func TestChangeRequestIntegration_PatchReviewProvisionsRequesterAsCancelled(t *t
 // the Review-checkpoint counterpart of
 // TestChangeRequestIntegration_PatchAuthorizeRejectsWhenOnlyMemberIsRequester.
 func TestChangeRequestIntegration_PatchReviewRejectsWhenOnlyMemberIsRequester(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2094,7 +2130,7 @@ func TestChangeRequestIntegration_PatchReviewRejectsWhenOnlyMemberIsRequester(t 
 // (reconcileStaleApprovers) -- a stage's approvers can only act while the change
 // is in the stage's own state.
 func TestChangeRequestIntegration_AssessAuthorizeAndReviewStagesCoexist(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2338,7 +2374,7 @@ func seedChangeRequestForOnHoldTest(t *testing.T, pool *repository.Scoped, state
 // on_hold_reason, both in PatchChangeRequest's own
 // response and independently on a fresh GetChangeRequestByID read.
 func TestChangeRequestIntegration_PatchOnHoldPersistsAndReadsBack(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2388,7 +2424,7 @@ func TestChangeRequestIntegration_PatchOnHoldPersistsAndReadsBack(t *testing.T) 
 // be refused with a ValidationError, and the state column itself must stay
 // untouched.
 func TestChangeRequestIntegration_PatchStateRejectedWhileOnHold(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2437,7 +2473,7 @@ func TestChangeRequestIntegration_PatchStateRejectedWhileOnHold(t *testing.T) {
 // on_hold_reason exactly the same way a standalone
 // {onHold: false} would.
 func TestChangeRequestIntegration_PatchClearsOnHoldAndAdvancesStateTogether(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2476,7 +2512,7 @@ func TestChangeRequestIntegration_PatchClearsOnHoldAndAdvancesStateTogether(t *t
 // is never blocked, regardless of the record's current lifecycle state,
 // terminal states included.
 func TestChangeRequestIntegration_PatchOffHoldAlwaysSucceeds(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2521,7 +2557,7 @@ func TestChangeRequestIntegration_PatchOffHoldAlwaysSucceeds(t *testing.T) {
 // untouched -- being on hold only ever blocks a state-changing PATCH, never
 // any other field.
 func TestChangeRequestIntegration_PatchNonStateFieldSucceedsWhileOnHold(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2749,7 +2785,7 @@ func externalCallerCtx(email string) context.Context {
 // customer's own answer now (compliance: ServiceNow's record of it is audited),
 // and the customer gives it in the Customer Portal.
 func TestChangeRequestIntegration_PatchCustomerFlagInternalCallerCannotSetEither(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2856,7 +2892,7 @@ func snapshotCustomerFlagRow(t *testing.T, pool *repository.Scoped, id string) s
 // Customer Approval and Customer Review, is covered end to end by
 // TestChangeRequestCustomerOutcomeIntegration_*.
 func TestChangeRequestIntegration_PatchCustomerFlagQualifyingPortalUserContactNeedsTheCustomerState(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2925,7 +2961,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagQualifyingPortalUserContactNe
 // this same scenario one layer earlier, as a NotFoundError from work_item's
 // own RLS instead -- either way, the caller cannot flip the flag.
 func TestChangeRequestIntegration_PatchCustomerFlagContactOnDifferentProjectCannot(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -2982,7 +3018,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagContactOnDifferentProjectCann
 // TestChangeRequestIntegration_PatchStateRejectedWhileOnHold's own doc
 // comment already uses) still succeeds normally.
 func TestChangeRequestIntegration_PatchCustomerFlagWrongRoleContactForbiddenStateUnaffected(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -3048,7 +3084,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagWrongRoleContactForbiddenStat
 // unconditionally bypasses work_item's own RLS, so this feature's own
 // check is genuinely what is exercised here).
 func TestChangeRequestIntegration_PatchCustomerFlagInvitedContactCannotReach(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -3088,7 +3124,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagInvitedContactCannotReach(t *
 // the flags at all, and for the qualifying customer contact because the
 // customer's answer is final once given.
 func TestChangeRequestIntegration_PatchCustomerFlagLockedTrueCannotRevert(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -3158,7 +3194,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagLockedTrueCannotRevert(t *tes
 // false -> false is unchanged (see TestChangeRequestIntegration_PatchCustomerFlag
 // InternalCallerCanSetBoth for the internal path).
 func TestChangeRequestIntegration_PatchCustomerFlagFalseFromNonContactIsRefused(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -3211,7 +3247,7 @@ func TestChangeRequestIntegration_PatchCustomerFlagFalseFromNonContactIsRefused(
 // stored flags stay exactly as they were. (A no-op used to be accepted: it
 // would have let a client resend a stamp it was no longer allowed to make.)
 func TestChangeRequestIntegration_PatchCustomerFlagsNeverFromStaffWhateverIsStored(t *testing.T) {
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}
@@ -3461,7 +3497,7 @@ func newCRFlow(t *testing.T) *crFlow {
 // Approval groups: for tests about what a seeded database holds in them.
 func newCRFlowNoIsolation(t *testing.T) *crFlow {
 	t.Helper()
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}

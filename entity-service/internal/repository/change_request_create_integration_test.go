@@ -29,7 +29,6 @@ package repository_test
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -52,7 +51,7 @@ func crCreateType(t domain.ChangeRequestType) *domain.ChangeRequestType { return
 
 func changeRequestCreatePool(t *testing.T) *repository.Scoped {
 	t.Helper()
-	dsn := os.Getenv("CHANGE_REQUEST_TEST_DSN")
+	dsn := changeRequestTestDSN()
 	if dsn == "" {
 		t.Skip("CHANGE_REQUEST_TEST_DSN not set")
 	}

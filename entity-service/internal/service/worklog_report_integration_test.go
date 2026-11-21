@@ -341,7 +341,10 @@ func seedWorklogDailyFixture(ctx context.Context, t *testing.T, pool *pgxpool.Po
 	seenTeam := map[string]bool{}
 	for i, u := range worklogDailyFixture {
 		userID := fmt.Sprintf("00000000-0000-0000-0000-00000000%04d", i+1)
-		teamID := fmt.Sprintf("00000000-0000-0000-0000-0000000%05d", 900+len(seenTeam))
+		// Ids in their own range: 901 is the example team the change-request
+		// fixtures create (and the compose seed ships), and a team row is only
+		// deleted here by key, so sharing the id fails the insert below.
+		teamID := fmt.Sprintf("00000000-0000-0000-0000-0000000%05d", 50900+len(seenTeam))
 
 		isNewTeam := !seenTeam[u.teamKey]
 		if isNewTeam {

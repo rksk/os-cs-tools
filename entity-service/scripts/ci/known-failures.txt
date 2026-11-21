@@ -53,12 +53,6 @@ DeployedProductCreateIntegration
 CaseTypeTransferIntegration_AttachmentsAreAvailableOnTheConvertedTicket
 CallRequestNumberIntegration
 
-# The whole change-request integration family (130 tests). Confirmed cause: the
-# fixtures insert an assignment group and then a team_member row, but
-# team_member.team_id now references team, so the insert violates the foreign
-# key on any database that has not been through these tests before.
-ChangeRequest.*
-
 # Team schedule, worklog and incident-report tests.
 ScheduleIntegration_.*
 RotaGenerateIntegration_.*
