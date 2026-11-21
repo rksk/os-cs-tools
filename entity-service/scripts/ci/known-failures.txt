@@ -21,42 +21,16 @@
 #
 # This list is debt, not a verdict. Do not add a test here to get a PR green:
 # fix it, or say in review why it cannot run on a fresh database. Remove lines
-# as tests are fixed. Found by running the whole suite three times on a fresh
-# PostgreSQL 18 database; the first group failed on all three runs.
-#
-# Why they fail, as observed (causes not yet confirmed per test):
-#   - seed or assert through a role that is neither the superuser nor the
-#     non-superuser application role the workflow provisions (they need a role
-#     that can both insert past row-level security and be subject to it);
-#   - assume reference rows (teams, assignment groups, users) that only the
-#     local compose seed creates;
-#   - the one-off migration-convergence tests need CREATE on the database;
-#   - a few look like genuine test or product defects (an unparseable query
-#     parameter, a worklog report that still counts allocated members).
+# as tests are fixed. Every entry carries its reason in the comment above it.
 
-# Migration-convergence tests: need to create schemas/roles/databases.
-KBManagerMigration.*
-KnowledgeArticleFKMigration.*
-KBArticleHistoryMigration.*
-
-# Case, engagement and deployment fixtures rejected by row-level security.
-CaseFeedbackIntegration_.*
-FeedbackReasonsIntegration
-EngagementTypeIntegration_.*
-ClosedByIntegration_.*
-ReopenReasonIntegration_.*
-ResolvedOnIntegration_Transitions
-EtaSharedOnIntegration_.*
-WorkaroundProvidedOnIntegration_.*
-DeploymentRLSIntegration_.*
-DeployedProductCreateIntegration
+# Stale test: it seeds the legacy case_attachment table, but the attachment
+# list now reads work_item_attachment (migration 0085 onwards), so the converted
+# ticket lists nothing. Needs the fixture and the case_attachment assertions
+# moved to work_item_attachment.
 CaseTypeTransferIntegration_AttachmentsAreAvailableOnTheConvertedTicket
-CallRequestNumberIntegration
 
-# Team schedule, worklog and incident-report tests.
-ScheduleIntegration_.*
-RotaGenerateIntegration_.*
-WorklogIntegration_LeaveFollowsTheTagsTimesheetFlag
-WorklogAllocationsRemoveMembers
+# Flaky when other tests ran first (passes alone on the same database): the
+# drain it triggers works through the shared event outbox, and rows other tests
+# leave pending appear to crowd the incident out of the batch. Not confirmed;
+# the fix is to scope the drain to the test's own rows or clear the leftovers.
 IncidentReportIntegration_.*
-AccountDefaultWatcherEmailsIntegration

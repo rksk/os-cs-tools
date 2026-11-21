@@ -24,6 +24,15 @@ internal/service/TestIntegrationCloudStatus.*
 # compose seed creates (STANDARD_CHANGE_TEST_DSN / _APP_DSN left unset). Gap to
 # close: make the test create its own role row.
 internal/service/TestStandardChangeIntegration
+internal/service/TestChangeRequestStandardChangeIntegration
+
+# Change request tests that need the personas and fixture change requests the
+# local compose seed loads (approval personas, CHG-FIXED-007), or that need a
+# connection subject to row-level security while CHANGE_REQUEST_TEST_DSN is the
+# superuser (the same variable serves the tests that need to seed past it).
+internal/repository/TestChangeRequestSeedIntegration_.*
+internal/repository/TestChangeRequestFlowIntegration_SeedCustomerGroupFixtures
+internal/repository/TestChangeRequestDeploymentRLS_InternalSessionCanUpsertWhatTheSyncWrites
 
 # Classes of skip matched by message.
 #
