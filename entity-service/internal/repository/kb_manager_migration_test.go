@@ -28,7 +28,7 @@
 // about lock_timeout holds a lock on "user" from a second connection for about
 // five seconds:
 //
-//	CASE_STATS_TEST_DSN=postgres://... go test ./internal/repository/ -run 'KBManager|KBLegacyStragglers|MigrationLocking'
+//	MIGRATION_TEST_DSN=postgres://... go test ./internal/repository/ -run 'KBManager|KBLegacyStragglers|MigrationLocking'
 
 package repository_test
 
@@ -45,6 +45,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -383,11 +384,40 @@ func (w *migrationWarnings) expectWarnings(t *testing.T, what string, want ...st
 // kbManagerMigrationTx opens the rolled-back transaction the migration tests
 // work in, with one schema per name, on a connection of its own whose
 // WARNINGs are collected.
+// migrationTestDSN is the connection the migration-convergence tests use:
+// MIGRATION_TEST_DSN when set, else CASE_STATS_TEST_DSN. They build schemas in
+// a rolled-back transaction and run DDL against the real tables (add a foreign
+// key to "user", hand a table to a new role), which takes CREATE on the
+// database and ownership of those tables, so the role of a deployment's
+// application connection cannot run them. Point MIGRATION_TEST_DSN at the role
+// that owns the schema.
+func migrationTestDSN() string {
+	if dsn := os.Getenv("MIGRATION_TEST_DSN"); dsn != "" {
+		return dsn
+	}
+	return os.Getenv("CASE_STATS_TEST_DSN")
+}
+
+// migrationTestPool is caseStatsPool on migrationTestDSN.
+func migrationTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := migrationTestDSN()
+	if dsn == "" {
+		t.Skip("MIGRATION_TEST_DSN / CASE_STATS_TEST_DSN not set")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
 func kbManagerMigrationTx(t *testing.T, schemas ...string) (context.Context, pgx.Tx, *migrationWarnings) {
 	t.Helper()
-	dsn := os.Getenv("CASE_STATS_TEST_DSN")
+	dsn := migrationTestDSN()
 	if dsn == "" {
-		t.Skip("CASE_STATS_TEST_DSN not set")
+		t.Skip("MIGRATION_TEST_DSN / CASE_STATS_TEST_DSN not set")
 	}
 	ctx := context.Background()
 	cfg, err := pgx.ParseConfig(dsn)

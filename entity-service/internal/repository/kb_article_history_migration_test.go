@@ -110,7 +110,7 @@ func TestKBArticleHistoryLegacyFilesAreGone(t *testing.T) {
 // is rolled back, so nothing is left behind and the table in the real schema is
 // never touched.
 func TestKBArticleHistoryMigrationCreatesMissingTable(t *testing.T) {
-	pool := caseStatsPool(t)
+	pool := migrationTestPool(t)
 	seedKBArticleNullFixture(t, pool)
 	ctx := context.Background()
 	migration := readKBHistoryMigration(t)
@@ -199,7 +199,7 @@ func TestKBArticleHistoryMigrationCreatesMissingTable(t *testing.T) {
 // after the migration has run again over it, and still readable through
 // ListKBArticleHistory.
 func TestKBArticleHistoryMigrationKeepsExistingRows(t *testing.T) {
-	pool := caseStatsPool(t)
+	pool := migrationTestPool(t)
 	seedKBArticleNullFixture(t, pool)
 	ctx := context.Background()
 	migration := readKBHistoryMigration(t)

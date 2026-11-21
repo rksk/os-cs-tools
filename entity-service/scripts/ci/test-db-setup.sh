@@ -55,7 +55,10 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user')
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'app_user') \gexec
 SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'app_user') \gexec
 SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', :'app_user') \gexec
-SELECT format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_user') \gexec
+-- UPDATE as well as USAGE, SELECT: setval needs it, and the application
+-- itself calls setval on the deployed-product number sequence when it moves it
+-- past numbers already stored (advanceDeployedProductNumberSeqQuery).
+SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_user') \gexec
 SELECT format('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO %I', :'app_user') \gexec
 SQL
   echo "application role: $(psql "$SUPER_URL" -tAc "SELECT rolname || ' super=' || rolsuper || ' bypassrls=' || rolbypassrls FROM pg_roles WHERE rolname = '${app_user}'")"
@@ -91,11 +94,25 @@ SUPER_VARS=(
   INCIDENT_REPORT_TEST_DSN
   INSTANCE_INGESTION_TEST_DSN
   IT_SERVICE_TEST_DSN
+  MIGRATION_TEST_DSN
   OUTAGE_COMM_TEST_DSN
   OUTAGE_NOTIFY_TEST_DSN
   PAGING_CONTACT_TEST_DSN
   RUNBOOK_TEST_DSN
 )
+# MIGRATION_TEST_DSN: the KB manager, knowledge-article foreign key and KB
+# article history migration tests create schemas and run DDL on the real tables
+# inside a rolled-back transaction (CREATE on the database, ownership of the
+# tables). The application role has neither, and must not: they are DDL tests,
+# not row-level-security tests, so the superuser is the right connection.
+#
+# CASE_STATS_TEST_DSN stays on the application role, although some of its tests
+# once failed there. Those fixtures inserted the case and engagement extension
+# rows through the bare pool, which carries no identity, so row-level security
+# rejected the insert; the fixtures now go through the scoped pool with the
+# system identity, as the rest of the package does, so the stronger application
+# role run stays and no test moves to the superuser to get past a policy.
+#
 # Deliberately NOT set (their tests need a populated deployment, not a fresh
 # schema, and skip via scripts/ci/skip-allowlist.txt): CLOUD_STATUS_TEST_DSN,
 # STANDARD_CHANGE_TEST_DSN, STANDARD_CHANGE_TEST_APP_DSN, PLG_TEST_DATABASE_URL
