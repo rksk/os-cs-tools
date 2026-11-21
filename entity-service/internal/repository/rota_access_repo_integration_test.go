@@ -250,6 +250,11 @@ func TestScheduleIntegration_TeamMemberAddAndRemove(t *testing.T) {
 		t.Fatalf("history rows for the removed turn = %d, want 1", n)
 	}
 
+	// The removal above took them off the team; put them back for the tier check.
+	if added, err := access.AddTeamMember(ctx, schedOutsiderID, schedTeamKey, schedMarkerActor); err != nil || !added {
+		t.Fatalf("re-add after the removal = %v, %v; want added", added, err)
+	}
+
 	// A responder tier keeps them on.
 	mustExec(t, pool, `UPDATE team_member m SET alert_tier = 'T3' FROM team t
 		WHERE t.id = m.team_id AND t.key = $1 AND m.user_id = $2`, schedTeamKey, schedOutsiderID)

@@ -1201,6 +1201,14 @@ func TestWorklogAllocationsRemoveMembers(t *testing.T) {
 			t.Fatalf("seed absence %s: %v", code, err)
 		}
 	}
+	// The fixture puts all six on a rotation turn that Sunday, and the daily
+	// report keeps a person holding a turn whatever allocation they are on
+	// (RotationTurnUserIDs). This test is about the allocation, so the turns
+	// become regular hours.
+	if _, err := pool.Exec(ctx, `UPDATE team_schedule_assignment SET is_rotation = FALSE
+	                              WHERE user_id IN (SELECT id FROM "user" WHERE email LIKE '%@example.com')`); err != nil {
+		t.Fatalf("make the fixture turns regular hours: %v", err)
+	}
 	// Three of the six fixture members, one per allocation kind.
 	absence("00000000-0000-0000-0000-000000000001", "americas", "ALLO_INT") // asha@
 	absence("00000000-0000-0000-0000-000000000003", "atlas", "ALLO_EXT")

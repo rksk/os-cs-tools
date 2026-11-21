@@ -85,7 +85,7 @@ func TestAccountDefaultWatcherEmailsIntegration(t *testing.T) {
 
 	insertProject := func(id, key string, onboardingStatus *string, onboardingOwner *string) {
 		mustExec(`INSERT INTO project (id, created_on, updated_on, created_by, updated_by, key, name, sf_id, account_id, onboarding_status, onboarding_owner_id)
-			VALUES ($1, now(), now(), 't', 't', $2, $2, 'sf-'||$2, $3, $4::onboarding_status_enum, $5)`,
+			VALUES ($1, now(), now(), 't', 't', $2::text, $2::text, 'sf-'||$2::text, $3, $4::onboarding_status_enum, $5)`,
 			id, key, adweAccount, onboardingStatus, onboardingOwner)
 	}
 	inProgress := "IN_PROGRESS"

@@ -56,7 +56,7 @@ func TestScheduleIntegration_WorklogMoveSpansKeepLeaveOnTheMovesTeam(t *testing.
 
 	from, _ := time.Parse("2006-01-02", schedMonday)
 	to, _ := time.Parse("2006-01-02", friday)
-	spans, err := NewWorklogReportRepository(NewScoped(pool)).MoveSpans(ctx, from, to)
+	spans, err := NewWorklogReportRepository(NewScoped(pool)).MoveSpans(WithSystemIdentity(ctx), from, to)
 	if err != nil {
 		t.Fatalf("MoveSpans: %v", err)
 	}

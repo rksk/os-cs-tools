@@ -63,7 +63,7 @@ func TestWorklogIntegration_LeaveFollowsTheTagsTimesheetFlag(t *testing.T) {
 
 	from := time.Date(2031, 3, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2031, 3, 31, 0, 0, 0, 0, time.UTC)
-	rows, err := NewWorklogReportRepository(NewScoped(pool)).Leave(ctx, from, to)
+	rows, err := NewWorklogReportRepository(NewScoped(pool)).Leave(WithSystemIdentity(ctx), from, to)
 	if err != nil {
 		t.Fatalf("Leave: %v", err)
 	}
