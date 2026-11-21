@@ -231,7 +231,7 @@ func TestDeploymentRLSIntegration_IncludeInactive(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDeploymentRLSFixture(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
-	if _, err := pool.Exec(ctx, `UPDATE deployment SET is_active = FALSE WHERE id = $1`, depDeployOne); err != nil {
+	if _, err := repository.NewScoped(pool).Exec(ctx, `UPDATE deployment SET is_active = FALSE WHERE id = $1`, depDeployOne); err != nil {
 		t.Fatalf("seed: deactivate deployment: %v", err)
 	}
 
@@ -368,10 +368,20 @@ func TestDeploymentRLSIntegration_ProductCountExcludesInactiveProducts(t *testin
 	ctx := repository.WithSystemIdentity(context.Background())
 	now := time.Now().UTC()
 
+	// A deployment of its own, in a project, with no active product: the search
+	// leaves out deployments that have no project, so the orphan fixture
+	// deployment cannot carry this check.
+	soleDeploy := "a3000000-0000-0000-0000-000000000004"
+	if _, err := scoped.Exec(ctx, `INSERT INTO deployment (id, created_on, updated_on, created_by, updated_by, number, name, type, is_active, project_id)
+		VALUES ($1, $2, $2, $3, $3, 'DEP-NUM-4', 'dep sole', 'DEVELOPMENT', TRUE, $4)`,
+		soleDeploy, now, depCreatedBy, depProjectOne); err != nil {
+		t.Fatalf("seed deployment: %v", err)
+	}
+
 	inactiveID := "a5000000-0000-0000-0000-00000000009a"
 	if _, err := scoped.Exec(ctx, `INSERT INTO deployed_product (id, created_on, updated_on, created_by, updated_by, number, active, project_id, deployment_id, product_id)
 		VALUES ($1, $2, $2, $3, $3, 'DEPP-INACTIVE', FALSE, $4, $5, $6)`,
-		inactiveID, now, depCreatedBy, depProjectOne, depDeployOrphn, depProductID); err != nil {
+		inactiveID, now, depCreatedBy, depProjectOne, soleDeploy, depProductID); err != nil {
 		t.Fatalf("seed inactive deployed_product: %v", err)
 	}
 	t.Cleanup(func() {
@@ -380,12 +390,12 @@ func TestDeploymentRLSIntegration_ProductCountExcludesInactiveProducts(t *testin
 
 	repo := repository.NewDeploymentRepository(scoped)
 	views, _, err := repo.SearchDeployments(depCtx(repository.SearchScope{Unrestricted: true}),
-		domain.SearchDeploymentsRequest{Pagination: domain.Pagination{Limit: 50}, IDs: []string{depDeployOrphn}})
+		domain.SearchDeploymentsRequest{Pagination: domain.Pagination{Limit: 50}, IDs: []string{soleDeploy}})
 	if err != nil {
 		t.Fatalf("SearchDeployments: %v", err)
 	}
 	if len(views) != 1 {
-		t.Fatalf("want exactly the orphan deployment, got %d rows", len(views))
+		t.Fatalf("want exactly the one deployment, got %d rows", len(views))
 	}
 	if views[0].DeployedProductCount != 0 {
 		t.Errorf("a deployment whose only product is soft-deleted must report productCount 0, got %d", views[0].DeployedProductCount)

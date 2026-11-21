@@ -80,7 +80,7 @@ func seedResolvedOnFixture(t *testing.T, pool *pgxpool.Pool) {
 			resolvedOnID(ty.idSuffix), now, "RO-TEST-000"+ty.idSuffix, "RO-TEST-WSO2-000"+ty.idSuffix, ty.workItemType); err != nil {
 			t.Fatalf("seed work_item %s: %v", ty.workItemType, err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO `+ty.table+` (id) VALUES ($1)`, resolvedOnID(ty.idSuffix)); err != nil {
+		if _, err := scoped.Exec(ctx, `INSERT INTO `+ty.table+` (id) VALUES ($1)`, resolvedOnID(ty.idSuffix)); err != nil {
 			t.Fatalf("seed %s: %v", ty.table, err)
 		}
 	}
@@ -151,7 +151,7 @@ func TestResolvedOnIntegration_Transitions(t *testing.T) {
 				if fromState != "" {
 					fromArg = &fromState
 				}
-				if _, err := pool.Exec(ctx, `UPDATE `+ty.table+` SET state = $2::TEXT::`+stateEnum(ty.table)+`, resolved_on = $3 WHERE id = $1`, id, fromArg, old); err != nil {
+				if _, err := repository.NewScoped(pool).Exec(ctx, `UPDATE `+ty.table+` SET state = $2::TEXT::`+stateEnum(ty.table)+`, resolved_on = $3 WHERE id = $1`, id, fromArg, old); err != nil {
 					t.Fatalf("precondition: %v", err)
 				}
 
@@ -163,7 +163,7 @@ func TestResolvedOnIntegration_Transitions(t *testing.T) {
 				}
 
 				var stored *time.Time
-				if err := pool.QueryRow(ctx, `SELECT resolved_on FROM `+ty.table+` WHERE id = $1`, id).Scan(&stored); err != nil {
+				if err := repository.NewScoped(pool).QueryRow(ctx, `SELECT resolved_on FROM `+ty.table+` WHERE id = $1`, id).Scan(&stored); err != nil {
 					t.Fatalf("read back: %v", err)
 				}
 				switch st.want {

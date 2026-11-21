@@ -56,7 +56,7 @@ func seedReopenReasonFixture(t *testing.T, pool *pgxpool.Pool) {
 		reopenReasonCaseID, now); err != nil {
 		t.Fatalf("seed work_item: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "case" (id, state) VALUES ($1, 'CLOSED')`, reopenReasonCaseID); err != nil {
+	if _, err := scoped.Exec(ctx, `INSERT INTO "case" (id, state) VALUES ($1, 'CLOSED')`, reopenReasonCaseID); err != nil {
 		t.Fatalf("seed case: %v", err)
 	}
 }
@@ -64,7 +64,7 @@ func seedReopenReasonFixture(t *testing.T, pool *pgxpool.Pool) {
 func readReopenReason(t *testing.T, pool *pgxpool.Pool, caseID string) *string {
 	t.Helper()
 	var reason *string
-	if err := pool.QueryRow(context.Background(), `SELECT reopen_reason FROM "case" WHERE id = $1`, caseID).Scan(&reason); err != nil {
+	if err := repository.NewScoped(pool).QueryRow(repository.WithSystemIdentity(context.Background()), `SELECT reopen_reason FROM "case" WHERE id = $1`, caseID).Scan(&reason); err != nil {
 		t.Fatalf("read reopen_reason: %v", err)
 	}
 	return reason
@@ -126,7 +126,7 @@ func TestReopenReasonIntegration_AdminReopenClearsStaleResolvedOn(t *testing.T) 
 	pool := caseStatsPool(t)
 	seedReopenReasonFixture(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
-	if _, err := pool.Exec(ctx, `UPDATE "case" SET resolved_on = NOW() WHERE id = $1`, reopenReasonCaseID); err != nil {
+	if _, err := repository.NewScoped(pool).Exec(ctx, `UPDATE "case" SET resolved_on = NOW() WHERE id = $1`, reopenReasonCaseID); err != nil {
 		t.Fatalf("seed resolved_on: %v", err)
 	}
 	repo := repository.NewCaseRepository(repository.NewScoped(pool))
@@ -136,7 +136,7 @@ func TestReopenReasonIntegration_AdminReopenClearsStaleResolvedOn(t *testing.T) 
 		t.Fatalf("UpdateCase(state=work_in_progress): %v", err)
 	}
 	var resolvedOn *time.Time
-	if err := pool.QueryRow(ctx, `SELECT resolved_on FROM "case" WHERE id = $1`, reopenReasonCaseID).Scan(&resolvedOn); err != nil {
+	if err := repository.NewScoped(pool).QueryRow(ctx, `SELECT resolved_on FROM "case" WHERE id = $1`, reopenReasonCaseID).Scan(&resolvedOn); err != nil {
 		t.Fatalf("read resolved_on: %v", err)
 	}
 	if resolvedOn != nil {
@@ -150,7 +150,7 @@ func TestReopenReasonIntegration_AdminReopenClearsStaleResolvedOn(t *testing.T) 
 	if _, _, _, err := repo.UpdateCase(ctx, domain.UpdateCaseRequest{ID: reopenReasonCaseID, State: &closed}, nil); err != nil {
 		t.Fatalf("UpdateCase(state=closed): %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT resolved_on FROM "case" WHERE id = $1`, reopenReasonCaseID).Scan(&resolvedOn); err != nil {
+	if err := repository.NewScoped(pool).QueryRow(ctx, `SELECT resolved_on FROM "case" WHERE id = $1`, reopenReasonCaseID).Scan(&resolvedOn); err != nil {
 		t.Fatalf("read resolved_on after re-close: %v", err)
 	}
 	if resolvedOn == nil {

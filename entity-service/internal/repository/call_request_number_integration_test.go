@@ -79,7 +79,7 @@ func TestCallRequestNumberIntegration(t *testing.T) {
 	create()
 	create()
 
-	rows, err := pool.Query(ctx, `SELECT number FROM customer_call WHERE work_item_id = $1 ORDER BY number`, crnCaseID)
+	rows, err := scoped.Query(ctx, `SELECT number FROM customer_call WHERE work_item_id = $1 ORDER BY number`, crnCaseID)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

@@ -88,12 +88,12 @@ func seedCaseFeedbackFixture(t *testing.T, pool *pgxpool.Pool) {
 	mustExecScoped(`INSERT INTO work_item (id, created_on, updated_on, created_by, updated_by, number, wso2_id, subject, type)
 		VALUES ($1, $2, $2, 'test', 'test', 'CF-TEST-0001', 'CF-TEST-WSO2-0001', 'Case feedback integration test fixture', 'CASE')`,
 		cfCaseID, now)
-	mustExec(`INSERT INTO "case" (id, state) VALUES ($1, 'CLOSED')`, cfCaseID)
+	mustExecScoped(`INSERT INTO "case" (id, state) VALUES ($1, 'CLOSED')`, cfCaseID)
 
 	mustExecScoped(`INSERT INTO work_item (id, created_on, updated_on, created_by, updated_by, number, wso2_id, subject, type)
 		VALUES ($1, $2, $2, 'test', 'test', 'CF-TEST-0002', 'CF-TEST-WSO2-0002', 'Case feedback integration test fixture (open)', 'CASE')`,
 		cfOpenCaseID, now)
-	mustExec(`INSERT INTO "case" (id, state) VALUES ($1, 'OPEN')`, cfOpenCaseID)
+	mustExecScoped(`INSERT INTO "case" (id, state) VALUES ($1, 'OPEN')`, cfOpenCaseID)
 
 	mustExec(`INSERT INTO work_item_feedback_metric (id, name, datatype, is_active, selected_image, unselected_image, created_on, updated_on, created_by, updated_by)
 		VALUES ($1, 'Very Satisfied - Reasons', 'checkbox', true, '/assets/feedback/verySatisfiedSelected.svg', '/assets/feedback/verySatisfiedUnselected.svg', $2, $2, 'test', 'test')`,

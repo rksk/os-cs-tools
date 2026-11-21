@@ -75,7 +75,7 @@ func seedFeedbackReasons(t *testing.T, pool *pgxpool.Pool) {
 	now := time.Now().UTC()
 	mustExec := func(sql string, args ...any) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+		if _, err := scoped.Exec(ctx, sql, args...); err != nil {
 			t.Fatalf("seed (%.80s): %v", sql, err)
 		}
 	}
