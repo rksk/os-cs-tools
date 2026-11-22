@@ -25,6 +25,10 @@
 name: Entity-service tests
 
 on:
+  # Temporary: lets the fork run this branch without a PR. Remove before PR.
+  push:
+    branches:
+      - ci/entity-service-go-tests
   pull_request:
     paths:
       - "entity-service/**"
