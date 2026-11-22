@@ -55,15 +55,28 @@ export const SETTINGS_CUSTOMER_ADMIN_ROLES: readonly string[] = [
   "customer_admin",
 ];
 
-/** ServiceNow partner role — triggers list view in ProjectHub when >4 projects. */
+/** Legacy-form partner role — triggers list view in ProjectHub when >4 projects. */
 export const SETTINGS_PARTNER_ROLE = "sn_customerservice.partner";
 
-/** ServiceNow partner admin role — same partner UI access as SETTINGS_PARTNER_ROLE. */
+/** Legacy-form partner admin role — same partner UI access as SETTINGS_PARTNER_ROLE. */
 export const SETTINGS_PARTNER_ADMIN_ROLE = "sn_customerservice.partner_admin";
+
+/**
+ * Every spelling of the partner roles entity-service reports: the prefixed
+ * form (legacy) and the plain form the CSM database returns. All grant the same
+ * partner UI access. Matches the roles the backend accepts for partner access.
+ */
+export const SETTINGS_PARTNER_ROLES: readonly string[] = [
+  SETTINGS_PARTNER_ROLE,
+  SETTINGS_PARTNER_ADMIN_ROLE,
+  "partner",
+  "partner_user",
+  "partner_admin",
+];
 
 /** Returns true if the given role list grants partner-level UI access. */
 export function hasPartnerAccess(roles: string[]): boolean {
-  return roles.includes(SETTINGS_PARTNER_ROLE) || roles.includes(SETTINGS_PARTNER_ADMIN_ROLE);
+  return roles.some((r) => SETTINGS_PARTNER_ROLES.includes(r.trim().toLowerCase()));
 }
 
 export const SETTINGS_PAGE_TABS = [
