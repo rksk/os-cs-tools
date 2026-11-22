@@ -447,7 +447,7 @@ func dryRunDetail(stage domain.AutoclosureStage, c repository.AutoclosureCandida
 // The case's existing close notes are kept as they are (the process this
 // replaces never wrote its message there). Only when there are none does the
 // close set the plain-text form of the closure wording, because closing an
-// internal-caller case in dual-write requires non-empty close notes. The
+// internal-caller case requires non-empty close notes. The
 // closure message itself is the customer-visible HTML comment posted after
 // the close.
 //

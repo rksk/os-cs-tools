@@ -32,7 +32,10 @@ var autoclosureMachineAccess = stubAccess{scope: AccessScope{Unrestricted: true}
 
 func closeRequest() domain.UpdateCaseRequest {
 	closed := domain.CaseStateClosed
-	return domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed}
+	code := domain.CaseResolutionCodeAbruptlyClosedDueToNonResponsiveness
+	cause := domain.CaseCauseUnknown
+	notes := "Closed after no response."
+	return domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed, ResolutionCode: &code, Cause: &cause, CloseNotes: &notes}
 }
 
 func TestUpdateCase_AwaitingInfoToClosedIsRefusedForOrdinaryCallers(t *testing.T) {

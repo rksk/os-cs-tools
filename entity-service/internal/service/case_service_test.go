@@ -1830,6 +1830,8 @@ func TestCaseService_UpdateCase_RejectsMalformedFixEtaDate(t *testing.T) {
 // snResolutionStates restriction exactly.
 func TestCaseService_UpdateCase_ResolutionFieldsRequireClosedOrSolutionProposedState(t *testing.T) {
 	closeNotes := "Fixed"
+	resolutionCode := domain.CaseResolutionCodeSolvedByCustomer
+	cause := domain.CaseCauseUnknown
 	open := domain.CaseStateOpen
 	closed := domain.CaseStateClosed
 	solutionProposed := domain.CaseStateSolutionProposed
@@ -1841,8 +1843,8 @@ func TestCaseService_UpdateCase_ResolutionFieldsRequireClosedOrSolutionProposedS
 	}{
 		{name: "no state at all", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, CloseNotes: &closeNotes}, wantErr: true},
 		{name: "state open", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &open, CloseNotes: &closeNotes}, wantErr: true},
-		{name: "state closed", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed, CloseNotes: &closeNotes}, wantErr: false},
-		{name: "state solution_proposed", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &solutionProposed, CloseNotes: &closeNotes}, wantErr: false},
+		{name: "state closed", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed, ResolutionCode: &resolutionCode, Cause: &cause, CloseNotes: &closeNotes}, wantErr: false},
+		{name: "state solution_proposed", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &solutionProposed, ResolutionCode: &resolutionCode, Cause: &cause, CloseNotes: &closeNotes}, wantErr: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1882,6 +1884,16 @@ func TestCaseService_UpdateCase_ResolutionFieldsRequireClosedOrSolutionProposedS
 			}
 		})
 	}
+}
+
+// closeWithResolution is a close request carrying the three resolution fields
+// an internal caller must supply.
+func closeWithResolution() domain.UpdateCaseRequest {
+	closed := domain.CaseStateClosed
+	code := domain.CaseResolutionCodeSolvedByCustomer
+	cause := domain.CaseCauseUnknown
+	notes := "Fixed"
+	return domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed, ResolutionCode: &code, Cause: &cause, CloseNotes: &notes}
 }
 
 // TestCaseService_UpdateCase_RejectsInvalidCause proves an unrecognized
@@ -2419,7 +2431,6 @@ func TestCaseService_UpdateCase_StatusChanged_RecipientsIncludeFreshDefaultsAndD
 // repository as actorID -- never read from the request body itself, which
 // has no such field.
 func TestCaseService_UpdateCase_ResolvesActorIDForClosedByStamp(t *testing.T) {
-	closed := domain.CaseStateClosed
 	// work_in_progress, not open: an agent-tier caller can reach closed from
 	// work_in_progress, not directly from open -- see case_state_transitions.go.
 	priorState := domain.CaseStateWorkInProgress
@@ -2438,7 +2449,7 @@ func TestCaseService_UpdateCase_ResolvesActorIDForClosedByStamp(t *testing.T) {
 	}, nil, alwaysUnrestrictedAccess{}, nil)
 
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
-	if _, err := svc.UpdateCase(ctx, domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed}); err != nil {
+	if _, err := svc.UpdateCase(ctx, closeWithResolution()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.updateCaseActorID == nil || *repo.updateCaseActorID != "closer-user-id" {
@@ -2452,7 +2463,6 @@ func TestCaseService_UpdateCase_ResolvesActorIDForClosedByStamp(t *testing.T) {
 // comment) -- and simply passes a nil actorID through, rather than failing
 // the whole update or guessing at who the actor is.
 func TestCaseService_UpdateCase_LeavesActorIDNilWithoutAToken(t *testing.T) {
-	closed := domain.CaseStateClosed
 	// work_in_progress, not open: see the identical note in
 	// TestCaseService_UpdateCase_ResolvesActorIDForClosedByStamp above.
 	priorState := domain.CaseStateWorkInProgress
@@ -2466,7 +2476,7 @@ func TestCaseService_UpdateCase_LeavesActorIDNilWithoutAToken(t *testing.T) {
 	}
 	svc := NewCaseService(repo, stubUserRepo{}, nil, alwaysUnrestrictedAccess{}, nil)
 
-	if _, err := svc.UpdateCase(context.Background(), domain.UpdateCaseRequest{ID: testDeploymentUUID, State: &closed}); err != nil {
+	if _, err := svc.UpdateCase(context.Background(), closeWithResolution()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.updateCaseActorID != nil {

@@ -2285,12 +2285,11 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		}
 	}
 
-	// Dual-write only: closing (or proposing a solution for) a plain "case"
-	// requires all three resolution fields -- but only for an INTERNAL
-	// caller (WSO2 staff). The mirrored ServiceNow write enforces this too;
-	// enforcing it here keeps the stores from diverging (a Postgres-only
-	// close with no resolution data can never be mirrored). Plain Postgres
-	// mode keeps its current, looser behaviour.
+	// Closing (or proposing a solution for) a plain "case" requires all three
+	// resolution fields -- but only for an INTERNAL caller (WSO2 staff). This
+	// runs on every data source, with no dependency on any write-back
+	// dispatcher: it used to be gated on one, which silently disabled the
+	// requirement on the plain Postgres path.
 	//
 	// Scoped to type == "case" specifically -- found live as a real bug:
 	// closing an engagement/service_request/security_report_analysis/
@@ -2398,7 +2397,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	// growing sn_writeback_failures backlog rather than a loud error here,
 	// since this path is best-effort/async by design (see the "Best-effort
 	// ServiceNow mirror write" comment on the dispatch block below).
-	if s.snWriteback != nil && req.State != nil && (*req.State == domain.CaseStateClosed || *req.State == domain.CaseStateSolutionProposed) {
+	if req.State != nil && (*req.State == domain.CaseStateClosed || *req.State == domain.CaseStateSolutionProposed) {
 		if before == nil || before.Type == nil || *before.Type == "case" {
 			if isInternalCaller {
 				if req.ResolutionCode == nil || req.Cause == nil || req.CloseNotes == nil || strings.TrimSpace(*req.CloseNotes) == "" {
