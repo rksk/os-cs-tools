@@ -25,6 +25,10 @@
 name: Go backend tests
 
 on:
+  # Temporary: lets the fork run this branch without a PR. Remove before PR.
+  push:
+    branches:
+      - ci/bff-backendv2-go-tests
   pull_request:
     paths:
       - "apps/csm-portal/backend/**"
