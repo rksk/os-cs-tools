@@ -1,0 +1,93 @@
+# Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Builds, vets and tests the CSM BFF (apps/csm-portal/backend) and the
+# customer-portal backend-v2 (apps/customer-portal/backend-v2).
+#
+# Both suites are hermetic unit tests (no database, no network). A few tests
+# skip themselves when an environment variable is unset, so a plain
+# `go test ./...` can look green while running less than it should: the
+# check-skips.py step fails the job on any skip not listed in the service's
+# skip-allowlist.txt, and prints the output of every failed test.
+name: Go backend tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/csm-portal/backend/**"
+      - "apps/customer-portal/backend-v2/**"
+      - ".github/workflows/go-backend-tests.yml"
+      - ".github/scripts/go-tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: csm-bff
+            dir: apps/csm-portal/backend
+          - name: cp-backend-v2
+            dir: apps/customer-portal/backend-v2
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: ${{ matrix.dir }}/go.mod
+          cache-dependency-path: ${{ matrix.dir }}/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Tests in known-failures.txt are excluded (-skip). The list is debt; do
+      # not add to it to get a PR green. It is empty today, in which case no
+      # -skip flag is passed.
+      #
+      # Packages run in parallel (no -p 1): the suites share no state.
+      - name: Test
+        env:
+          SCRIPTS: ${{ github.workspace }}/.github/scripts/go-tests
+          SERVICE: ${{ matrix.name }}
+        run: |
+          rc=0
+          exclude=$(grep -Ev '^[[:space:]]*(#|$)' "$SCRIPTS/$SERVICE/known-failures.txt" | paste -sd'|' - || true)
+          skip_args=()
+          if [ -n "$exclude" ]; then skip_args=(-skip "^Test(${exclude})\$"); fi
+          go test -json -count=1 "${skip_args[@]}" ./... > "$RUNNER_TEMP/go-test.json" || rc=$?
+          python3 "$SCRIPTS/check-skips.py" "$RUNNER_TEMP/go-test.json" \
+            "$SCRIPTS/$SERVICE/skip-allowlist.txt" "$(go list -m)" || rc=$?
+          exit "$rc"

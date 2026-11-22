@@ -1,0 +1,11 @@
+# Tests allowed to skip in CI (go-backend-tests workflow, csm-bff job). One
+# regular expression per line, fullmatch against "<package path>/<Test>[/<subtest>]"
+# relative to the module root. Anything that skips and is not listed here fails
+# the job: see ../check-skips.py. Every entry needs a reason above it.
+
+# Live checks against a deployed entity-service (LIVE_ENTITY_SERVICE_TEST_URL,
+# _JWT and _ACCOUNT_ID). They need a reachable service and a real token, so
+# they cannot run in CI; never point them at a shared environment from CI.
+internal/handler/TestLive_GetABTTeamList
+internal/handler/TestLive_GetEscalationsByAccount
+internal/handler/TestLive_GetCustomerHealthDetail

@@ -1,0 +1,9 @@
+# Tests allowed to skip in CI (go-backend-tests workflow, cp-backend-v2 job).
+# One regular expression per line, fullmatch against
+# "<package path>/<Test>[/<subtest>]" relative to the module root. Anything that
+# skips and is not listed here fails the job: see ../check-skips.py. Every entry
+# needs a reason above it.
+
+# A case in a table test that is not applicable to the legacy route path; the
+# test skips it by design (the skip is in the test body).
+cmd/server/TestContactRouteGating/off:_project-only_admin/resend
