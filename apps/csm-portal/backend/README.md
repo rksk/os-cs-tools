@@ -468,7 +468,7 @@ differ.
 | Variable | Required | Default | Description | Example |
 |---|---|---|---|---|
 | `CUSTOMER_ENTITY_SCOPES` | No | none | Comma list of OAuth2 scopes for the entity-service (also reused by the embedded PLG module) | `entity.read,entity.write` |
-| `CUSTOMER_ENTITY_DATA_SOURCE` | No | the legacy external-system value (see notes) | Which data source the paired entity-service runs (its own `DATA_SOURCE`): `postgres` or the legacy external-system value that `.env.example` shows. Case-insensitive; any other value is fatal | `postgres` |
+| `CUSTOMER_ENTITY_DATA_SOURCE` | No | `postgres` | Which data source the paired entity-service runs (its own `DATA_SOURCE`): `postgres` or the legacy external-system value that `.env.example` shows. Case-insensitive; any other value is fatal | `postgres` |
 | `UPDATES_SCOPES` | No | none | Comma list of OAuth2 scopes for the updates service | `updates.read` |
 | `SCIM_SCOPES` | No | none | Comma list of OAuth2 scopes for the SCIM service | `scim.read` |
 | `ENGINEERING_ENTITY_BASE_URL` | No | unset | Base URL of the engineering entity service. When set, `POST /cases/{id}/github-issues` files issues through it instead of the entity-service, and `GET /health/dependencies` checks it. Must be `https` (a path is allowed; userinfo, query and fragment are not), else startup fails | `https://engineering.example.com/v1` |
@@ -490,11 +490,11 @@ differ.
 
 Notes:
 
-- `CUSTOMER_ENTITY_DATA_SOURCE` defaults to the legacy external-system value (the data source
-  deployments used before PostgreSQL). It only matters for two things today: team search merges the
+- `CUSTOMER_ENTITY_DATA_SOURCE` defaults to `postgres`, the only data source the platform runs on.
+  It only matters for two things today: team search merges the
   entity-service's `team` table only for `postgres`, and the combination of `postgres` with a
   non-empty `CSM_ANNOUNCEMENT_EXCLUDED_PROJECT_KEYS` is rejected at startup (the Postgres project
-  search cannot honor the exclusion). **When running against PostgreSQL, set it to `postgres`.**
+  search cannot honor the exclusion). The legacy external-system value is still accepted but is retired.
 - `UPDATES_BASE_URL`, `SCIM_BASE_URL` and `CUSTOMER_ENTITY_BASE_URL` are not scheme-checked; the
   optional services above are, and must be `https`.
 - When `ENGINEERING_ENTITY_BASE_URL` is set, the issue's repository comes from the case's product via

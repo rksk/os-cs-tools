@@ -1426,6 +1426,10 @@ func loadAnnouncementExcludedProjectKeys() []string {
 const (
 	customerEntityDataSourcePostgres   = "postgres"
 	customerEntityDataSourceServiceNow = "servicenow"
+
+	// defaultCustomerEntityDataSource is used when CUSTOMER_ENTITY_DATA_SOURCE
+	// is unset or empty.
+	defaultCustomerEntityDataSource = customerEntityDataSourcePostgres
 )
 
 // validateCustomerEntityDataSource is the pure check behind
@@ -1441,9 +1445,9 @@ func validateCustomerEntityDataSource(v string) error {
 
 // loadCustomerEntityDataSource resolves which data source the paired
 // entity-service instance is configured with, from CUSTOMER_ENTITY_DATA_SOURCE
-// ("postgres" or "servicenow"). Defaults to "servicenow" when unset — the
-// data source every existing deployment has always effectively used, since
-// nothing here read this before now.
+// ("postgres" or the retired legacy value). Defaults to "postgres" when unset: the
+// platform runs only on the PostgreSQL data source, so an unset variable must
+// not silently select the retired one.
 //
 // This exists purely so checkAnnouncementDataSourceCompatibility (see below)
 // can catch a specific, otherwise-silent misconfiguration at startup:
@@ -1457,7 +1461,7 @@ func validateCustomerEntityDataSource(v string) error {
 // unconditionally. Exits the process on an unrecognized value, same as any
 // other malformed required config in this file.
 func loadCustomerEntityDataSource() string {
-	v := strings.ToLower(strings.TrimSpace(envOrDefault("CUSTOMER_ENTITY_DATA_SOURCE", customerEntityDataSourceServiceNow)))
+	v := strings.ToLower(strings.TrimSpace(envOrDefault("CUSTOMER_ENTITY_DATA_SOURCE", defaultCustomerEntityDataSource)))
 	if err := validateCustomerEntityDataSource(v); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)

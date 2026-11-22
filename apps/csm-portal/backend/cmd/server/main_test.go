@@ -90,6 +90,39 @@ func TestValidateCustomerEntityDataSource(t *testing.T) {
 	}
 }
 
+// TestLoadCustomerEntityDataSourceDefault pins the default: an unset or empty
+// CUSTOMER_ENTITY_DATA_SOURCE resolves to "postgres", and an explicit value
+// still wins (case-insensitive, whitespace trimmed).
+func TestLoadCustomerEntityDataSourceDefault(t *testing.T) {
+	if defaultCustomerEntityDataSource != "postgres" {
+		t.Fatalf("defaultCustomerEntityDataSource = %q, want %q", defaultCustomerEntityDataSource, "postgres")
+	}
+	tests := []struct {
+		name  string
+		value string
+		set   bool
+		want  string
+	}{
+		{name: "unset", set: false, want: "postgres"},
+		{name: "empty", set: true, value: "", want: "postgres"},
+		{name: "explicit postgres", set: true, value: " Postgres ", want: "postgres"},
+		{name: "explicit legacy value", set: true, value: "servicenow", want: "servicenow"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("CUSTOMER_ENTITY_DATA_SOURCE", tt.value)
+			} else {
+				t.Setenv("CUSTOMER_ENTITY_DATA_SOURCE", "")
+				os.Unsetenv("CUSTOMER_ENTITY_DATA_SOURCE")
+			}
+			if got := loadCustomerEntityDataSource(); got != tt.want {
+				t.Fatalf("loadCustomerEntityDataSource() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCheckAnnouncementDataSourceCompatibility covers the pure check behind
 // validateAnnouncementDataSourceCompatibility: entity-service's Postgres-
 // backed project search rejects a non-empty excludeProjectKeys outright, so
@@ -143,7 +176,8 @@ func TestStartupRejectsPostgresWithExcludedProjectKeys(t *testing.T) {
 	}{
 		{name: "servicenow with keys starts fine", dataSource: "servicenow", excludedProjectKeys: "Apexia,Veridian", wantExitNonZero: false},
 		{name: "postgres with no keys starts fine", dataSource: "postgres", excludedProjectKeys: "", wantExitNonZero: false},
-		{name: "default data source (unset) with keys starts fine", dataSource: "", excludedProjectKeys: "Apexia", wantExitNonZero: false},
+		{name: "default data source (unset) with no keys starts fine", dataSource: "", excludedProjectKeys: "", wantExitNonZero: false},
+		{name: "default data source (unset) is postgres, so keys rejected", dataSource: "", excludedProjectKeys: "Apexia", wantExitNonZero: true},
 		{name: "postgres with keys rejected", dataSource: "postgres", excludedProjectKeys: "Apexia,Veridian", wantExitNonZero: true},
 		{name: "unrecognized data source rejected", dataSource: "mysql", excludedProjectKeys: "", wantExitNonZero: true},
 	}
