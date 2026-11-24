@@ -595,9 +595,8 @@ entity-service's CLAUDE.md, "Incident auto-close".
 
 `internal/acp.Run`, registered as **`acp_closure`** (default `0 4 * * 1-5`, 09:30 Colombo on
 weekdays; TZ=UTC caveat as above), is the Account Closure Process, moved here from
-`integrations/acp-closure-service` (still in the repo until this task runs in production; it now
-refuses to start unless it is a log-only dry run, so the two can never both run for real, and its
-rules are frozen: change them here). **Off
+the former standalone `integrations/acp-closure-service` (since removed from the repo; this is the
+only copy and the one that runs: change the rules here). **Off
 unless `ACP_ENABLED=true`**: it emails customers and suspends their projects, so it is never on by
 accident, and while it is off no `ACP_*` setting is read, so a deployment without them still starts.
 When it is on, a missing `ACP_SALES_ENTITY_*` setting stops startup.

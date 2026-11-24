@@ -19,7 +19,7 @@
 // internal/acp/salesentity for sales-entity-service). Both send a real
 // client secret on their token request and a bearer token on every API
 // call, so both need the same guards. It came over with ACP from
-// integrations/acp-closure-service and is kept apart from this component's
+// the former standalone acp-closure-service and is kept apart from this component's
 // own internal/httpsec, whose functions have a different shape.
 package httpsec
 

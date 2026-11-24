@@ -8,9 +8,8 @@ review history live in the component's `CLAUDE.md` ("ACP closure"); the code is
 in `internal/acp/`. The other sub-crons are covered in
 [sub-crons.md](sub-crons.md).
 
-**Status:** `acp_closure` replaces `integrations/acp-closure-service`, which is
-frozen (it refuses to start unless it is a log-only dry run) and is deleted once
-this task runs in production. Rule changes go to `internal/acp` only. The task
+**Status:** `acp_closure` replaces the former standalone `integrations/acp-closure-service`,
+which has been removed from the repo. Rule changes go to `internal/acp` only. The task
 is off unless `ACP_ENABLED=true` and is a dry run unless `ACP_DRY_RUN=false`.
 
 ## 1. A run at a glance

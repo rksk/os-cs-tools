@@ -15,7 +15,7 @@
 // under the License.
 
 // Package acp is the acp_closure sub-cron: the Account Closure Process,
-// moved here from integrations/acp-closure-service. One run evaluates every
+// moved here from the former standalone acp-closure-service. One run evaluates every
 // open project, sends the end-date and invoice notices that are due and
 // suspends the projects that reached day 0. The rules live in the
 // subpackages (closure, sweep, recipients, ...), which came over unchanged;

@@ -107,7 +107,7 @@ type Customer struct {
 	IsPartner               *bool         `json:"isPartner"`
 	// PrimaryPartnerAccountID is the account's primary partner, if any. The
 	// ACP reopen check reads it: a primary partner gives an invoice the
-	// 60-day grace period, as in acp-closure-service.
+	// 60-day grace period, as in the ACP closure rules (operations/csm-scheduled-tasks/internal/acp).
 	PrimaryPartnerAccountID *string `json:"primaryPartnerAccountId"`
 }
 

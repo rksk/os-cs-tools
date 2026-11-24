@@ -56,7 +56,6 @@ jobs:
               'App/Security Advisory Patches Portal':        'apps/security-advisory-patches-portal/',
               'App/Today I Learned':                         'apps/today-i-learned/',
               'Entity Service':                              'entity-service/',
-              'Int/ACP Closure Service':                     'integrations/acp-closure-service/',
               'Int/CSM AI Integration Service':              'integrations/csm-ai-integration-service/',
               'Int/CSM Integration Service':                 'integrations/csm-integration-service/',
               'Int/CSM Mail Paging Service':                 'integrations/csm-mail-paging-service/',

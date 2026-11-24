@@ -21,7 +21,6 @@ cs-tools/
 │   └── today-i-learned/                   # Today I Learned (Go backend for the feed in One WSO2)
 ├── entity-service/          # Shared entity service (the CSM platform's system of record)
 ├── integrations/
-│   ├── acp-closure-service/                     # Go CLI: Account Closure Process, Phase 1
 │   ├── csm-flow-service/                        # ServiceNow discovery notes only — service code lives elsewhere
 │   ├── csm-integration-service/                 # Go M2M service for third-party account/project search
 │   ├── csm-notification-service/                # Go worker: email/Chat/voice notifications, SLA + paging engines
@@ -132,18 +131,6 @@ A Go REST service that manages customer entity data backed by PostgreSQL. Provid
 | Database | PostgreSQL 15+ |
 
 See the [Entity Service README](./entity-service/README.md) for full setup and usage documentation.
-
-### ACP Closure Service (`integrations/acp-closure-service/`)
-
-A Go run-to-completion CLI implementing Phase 1 of the Account Closure Process (ACP) — subscription end-date closure. Unlike every other Go component in this repo, it is not an HTTP server: it performs one full sweep over open projects and exits, with a Choreo Task component's cron owning the schedule.
-
-| Layer | Technology |
-|-------|------------|
-| Language | Go |
-| Shape | Run-to-completion CLI (Choreo Task) |
-| Upstream | CSM Integration Service (OAuth2 client credentials) |
-
-See the [ACP Closure Service README](./integrations/acp-closure-service/README.md) for full setup and usage documentation.
 
 ### Customer Service Integration (`integrations/customer-service/`)
 
