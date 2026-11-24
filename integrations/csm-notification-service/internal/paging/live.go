@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package paging
 
 import (
@@ -83,3 +82,6 @@ func (l *LiveEngine) RunTicker(ctx context.Context, interval time.Duration) {
 		}
 	}
 }
+
+// LadderConfig is the ladder configuration this engine runs with.
+func (e *Engine) LadderConfig() LadderConfig { return e.cfg.Ladder }

@@ -952,7 +952,7 @@ func main() {
 	dispatcher = dispatcher.DeferSpecialOpsPage()
 	// smePager is the SRE engine when it runs with sme.enabled; settled into
 	// the dispatcher once the escalation block below is done.
-	var smePager *paging.Engine
+	var smePager *paging.LiveEngine
 
 	mainConsumers := startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter)
 	dlqConsumers := startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil)
@@ -1049,18 +1049,33 @@ func main() {
 		// env-derived value, so an existing deployment behaves exactly as it
 		// did -- see loadEscalationConfig.
 		escalationCfg, cfgErr := loadEscalationConfig(escalationChannel)
+		var (
+			baseEscalationCfg paging.Config
+			caseAlertMode     = caseAlertSourceOff
+			caseAlertEntity   caseAlertSettingsReader
+			caseAlertStartup  caseAlertStart
+			caseAlertResult   caseAlertStartResult
+			caseAlertRooms    = newCaseAlertRooms()
+			liveEngines       = map[paging.Ladder]*paging.LiveEngine{}
+		)
 		if cfgErr == nil {
 			// What is saved on the Team Schedule's Alert Settings tab, for
 			// every ladder, over the file's (unset PAGING_CONFIG_SOURCE is db);
 			// off asks nobody.
-			if mode := caseAlertSettingsMode(os.Getenv("PAGING_CONFIG_SOURCE")); mode != caseAlertSourceOff {
-				escalationCfg = applyCaseAlertSettings(ctx, mode, escalationCfg, caseAlertSettingsEntity(), os.Setenv, caseAlertStartFor(redisClient))
+			// The saved rooms' URLs are kept in caseAlertRooms, not the
+			// process environment, so a refresh can replace them.
+			baseEscalationCfg = escalationCfg
+			caseAlertMode = caseAlertSettingsMode(os.Getenv("PAGING_CONFIG_SOURCE"))
+			if caseAlertMode != caseAlertSourceOff {
+				caseAlertEntity = caseAlertSettingsEntity()
+				caseAlertStartup = caseAlertStartFor(redisClient)
+				escalationCfg, caseAlertResult = applyCaseAlertSettingsAt(ctx, caseAlertMode, escalationCfg, caseAlertEntity, caseAlertRooms.set, caseAlertStartup)
 			}
 		}
 		creCfg, creRunning := escalationCfg.For(paging.LadderKeyCRE)
 		sreCfg, sreRunning := escalationCfg.For(paging.LadderKeySRE)
 		if cfgErr == nil {
-			applyIncidentRoutes(sreCfg, googleChatClient, incidentRoutes)
+			applyIncidentRoutes(sreCfg, googleChatClient, incidentRoutes, caseAlertRooms.get)
 		}
 		// Routing setup has ended either way (a config that failed to load
 		// applies no mapping, so an incident resolves to no SRE team and its
@@ -1145,87 +1160,94 @@ func main() {
 			// should opt into it knowingly rather than inherit it on upgrade.
 			// INCIDENT_ESCALATION_TEST_CALL_TO rings every roster recipient on
 			// one number, fixed, so a rehearsal never reaches a real phone.
-			var escalationResolver paging.Resolver = paging.NewRosterResolver(roster).
-				WithTestCallTo(os.Getenv("INCIDENT_ESCALATION_TEST_CALL_TO"))
-			if os.Getenv("INCIDENT_ESCALATION_RESOLVER") == "team-schedule" {
-				if escalationNotes == nil {
-					slog.Error("INCIDENT_ESCALATION_RESOLVER=team-schedule needs CUSTOMER_ENTITY_BASE_URL; " +
-						"falling back to the configured roster")
-				} else {
-					// The rota holds no phone numbers. INCIDENT_ESCALATION_PHONES
-					// (e-mail -> E.164) is a fallback behind the CSM profile
-					// number (ProfilePhoneResolver, below); every call goes to
-					// INCIDENT_ESCALATION_TEST_CALL_TO when it is set. A
-					// chat-only ladder needs neither.
-					phones, perr := paging.ParsePhoneBook(os.Getenv("INCIDENT_ESCALATION_PHONES"), os.Getenv("INCIDENT_ESCALATION_TEST_CALL_TO"))
-					if perr != nil {
-						// Not logging perr: the decode error can quote numbers.
-						slog.Error("invalid INCIDENT_ESCALATION_PHONES; escalation calls will have no numbers")
+			// makeResolver builds who-each-rung-reaches from the two ladders' team
+			// settings. The refresh builds a new one when saved settings change
+			// (teams, heads, alert duty and rules are read from the settings here).
+			makeResolver := func(creCfg, sreCfg paging.LadderConfig) paging.Resolver {
+				var escalationResolver paging.Resolver = paging.NewRosterResolver(roster).
+					WithTestCallTo(os.Getenv("INCIDENT_ESCALATION_TEST_CALL_TO"))
+				if os.Getenv("INCIDENT_ESCALATION_RESOLVER") == "team-schedule" {
+					if escalationNotes == nil {
+						slog.Error("INCIDENT_ESCALATION_RESOLVER=team-schedule needs CUSTOMER_ENTITY_BASE_URL; " +
+							"falling back to the configured roster")
+					} else {
+						// The rota holds no phone numbers. INCIDENT_ESCALATION_PHONES
+						// (e-mail -> E.164) is a fallback behind the CSM profile
+						// number (ProfilePhoneResolver, below); every call goes to
+						// INCIDENT_ESCALATION_TEST_CALL_TO when it is set. A
+						// chat-only ladder needs neither.
+						phones, perr := paging.ParsePhoneBook(os.Getenv("INCIDENT_ESCALATION_PHONES"), os.Getenv("INCIDENT_ESCALATION_TEST_CALL_TO"))
+						if perr != nil {
+							// Not logging perr: the decode error can quote numbers.
+							slog.Error("invalid INCIDENT_ESCALATION_PHONES; escalation calls will have no numbers")
+						}
+						escalationResolver = paging.NewTeamScheduleResolver(
+							escalationNotes, resolverTeams(creCfg, sreCfg), creCfg.Rules).
+							// The heads are two named people, not a team lookup.
+							WithHeads(creCfg.Heads).
+							// How the nominated rungs are read: which tiers exist,
+							// and how many nominees a rung takes per team.
+							WithAlertDuty(creCfg.AlertTiers(), creCfg.AlertDuty.PerTeam).
+							// Who has gone longest without a call, for the evening
+							// pairing's second call.
+							WithCallHistory(paging.NewStore(redisClient)).
+							// The rota holds no numbers; see ParsePhoneBook above.
+							WithPhoneBook(phones)
+						slog.Info("incident escalation resolves rungs from the Team Schedule (CRE and SRE ladders)")
 					}
-					escalationResolver = paging.NewTeamScheduleResolver(
-						escalationNotes, resolverTeams(creCfg, sreCfg), creCfg.Rules).
-						// The heads are two named people, not a team lookup.
-						WithHeads(creCfg.Heads).
-						// How the nominated rungs are read: which tiers exist,
-						// and how many nominees a rung takes per team.
-						WithAlertDuty(creCfg.AlertTiers(), creCfg.AlertDuty.PerTeam).
-						// Who has gone longest without a call, for the evening
-						// pairing's second call.
-						WithCallHistory(paging.NewStore(redisClient)).
-						// The rota holds no numbers; see ParsePhoneBook above.
-						WithPhoneBook(phones)
-					slog.Info("incident escalation resolves rungs from the Team Schedule (CRE and SRE ladders)")
 				}
-			}
 
-			// Phone numbers. The Team Schedule says who, never how to reach
-			// them, and a call plan drops anyone without a number. Each
-			// person keeps their mobile on their own CSM Portal profile,
-			// which the portal stores in CSM ("user".phone) as well as on
-			// their Asgardeo user. entity-service gives the number to call
-			// for a whole rung in one request: the profile number, else the
-			// paging-only number a lead or admin stored. A valid CSM profile
-			// number wins over a number named in paging-alert.yaml (the heads),
-			// which is a fallback. Only INCIDENT_ESCALATION_TEST_CALL_TO is
-			// never replaced.
-			//
-			// Asgardeo, through the SCIM operations service and the OAuth2 app
-			// the onboarding flow uses, is only the fallback for people CSM
-			// has no number for, until "user".phone has been filled from
-			// Asgardeo. PAGING_PHONE_SCIM_FALLBACK=false turns it off (the
-			// onboarding flow keeps its own use of SCIM).
-			if creCfg.PhoneSource() == paging.PhoneSourceProfile {
-				var profiles paging.PhoneLookup
-				scimURL := strings.TrimSpace(os.Getenv("SCIM_BASE_URL"))
-				switch {
-				case strings.TrimSpace(os.Getenv("PAGING_PHONE_SCIM_FALLBACK")) == "false":
-					slog.Info("incident escalation: PAGING_PHONE_SCIM_FALLBACK is false; recipients' numbers come from CSM only " +
-						"(and paging-alert.yaml)")
-				case scimURL == "":
-					slog.Warn("incident escalation: SCIM_BASE_URL is not set; recipients' numbers come from CSM only " +
-						"(and paging-alert.yaml)")
-				default:
-					profiles = scim.NewClient(scim.Config{
-						BaseURL:      scimURL,
-						TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
-						ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
-						ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
-						Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
-					})
-					slog.Info("incident escalation falls back to recipients' Asgardeo profiles for numbers CSM does not have")
+				// Phone numbers. The Team Schedule says who, never how to reach
+				// them, and a call plan drops anyone without a number. Each
+				// person keeps their mobile on their own CSM Portal profile,
+				// which the portal stores in CSM ("user".phone) as well as on
+				// their Asgardeo user. entity-service gives the number to call
+				// for a whole rung in one request: the profile number, else the
+				// paging-only number a lead or admin stored. A valid CSM profile
+				// number wins over a number named in paging-alert.yaml (the heads),
+				// which is a fallback. Only INCIDENT_ESCALATION_TEST_CALL_TO is
+				// never replaced.
+				//
+				// Asgardeo, through the SCIM operations service and the OAuth2 app
+				// the onboarding flow uses, is only the fallback for people CSM
+				// has no number for, until "user".phone has been filled from
+				// Asgardeo. PAGING_PHONE_SCIM_FALLBACK=false turns it off (the
+				// onboarding flow keeps its own use of SCIM).
+				if creCfg.PhoneSource() == paging.PhoneSourceProfile {
+					var profiles paging.PhoneLookup
+					scimURL := strings.TrimSpace(os.Getenv("SCIM_BASE_URL"))
+					switch {
+					case strings.TrimSpace(os.Getenv("PAGING_PHONE_SCIM_FALLBACK")) == "false":
+						slog.Info("incident escalation: PAGING_PHONE_SCIM_FALLBACK is false; recipients' numbers come from CSM only " +
+							"(and paging-alert.yaml)")
+					case scimURL == "":
+						slog.Warn("incident escalation: SCIM_BASE_URL is not set; recipients' numbers come from CSM only " +
+							"(and paging-alert.yaml)")
+					default:
+						profiles = scim.NewClient(scim.Config{
+							BaseURL:      scimURL,
+							TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
+							ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
+							ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
+							Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
+						})
+						slog.Info("incident escalation falls back to recipients' Asgardeo profiles for numbers CSM does not have")
+					}
+					// Assigned only when present: a nil *EntityClient in the
+					// interface would not compare equal to nil.
+					var pagingContacts paging.PagingContactLookup
+					if escalationNotes != nil {
+						pagingContacts = escalationNotes
+						slog.Info("incident escalation reads recipients' numbers from CSM (profile, else paging number)")
+					}
+					if profiles != nil || pagingContacts != nil {
+						escalationResolver = paging.NewProfilePhoneResolver(escalationResolver, profiles).
+							WithPagingContacts(pagingContacts)
+					}
 				}
-				// Assigned only when present: a nil *EntityClient in the
-				// interface would not compare equal to nil.
-				var pagingContacts paging.PagingContactLookup
-				if escalationNotes != nil {
-					pagingContacts = escalationNotes
-					slog.Info("incident escalation reads recipients' numbers from CSM (profile, else paging number)")
-				}
-				if profiles != nil || pagingContacts != nil {
-					escalationResolver = paging.NewProfilePhoneResolver(escalationResolver, profiles).
-						WithPagingContacts(pagingContacts)
-				}
+				return escalationResolver
 			}
+			escalationResolver := makeResolver(creCfg, sreCfg)
 
 			// One engine per ladder. They share the resolver, the Redis and
 			// the Twilio account, and nothing else: each has its own channel,
@@ -1241,32 +1263,21 @@ func main() {
 				callOutcomes = paging.NewCallOutcomeWatcher(ctx, twilioClient)
 			}
 
-			ladders := []struct {
-				kind    paging.Ladder
-				name    string
-				cfg     paging.LadderConfig
-				running bool
-				group   string
-			}{
-				{paging.LadderCRE, "escalation", creCfg, creRunning,
-					envOrDefault("INCIDENT_ESCALATION_CONSUMER_GROUP", "csm-notification-service-escalation")},
-				{paging.LadderSRE, "escalation-sre", sreCfg, sreRunning,
-					envOrDefault("INCIDENT_ESCALATION_SRE_CONSUMER_GROUP", "csm-notification-service-escalation-sre")},
+			// With no file, both ladders take INCIDENT_ESCALATION_CHANNEL;
+			// with one, each ladder's own channel wins.
+			ladderChannel := func(lcfg paging.LadderConfig) paging.Channel {
+				if lcfg.Channel == "" {
+					return escalationChannel
+				}
+				return lcfg.Channel
 			}
-			for _, l := range ladders {
-				if !l.running {
-					slog.Warn("incident call escalation ladder is disabled by configuration", "ladder", l.name)
-					continue
-				}
-				// With no file, both ladders take INCIDENT_ESCALATION_CHANNEL;
-				// with one, each ladder's own channel wins.
-				channel := l.cfg.Channel
-				if channel == "" {
-					channel = escalationChannel
-				}
+			// buildEngine is one ladder's engine for escCfg; startup builds it and
+			// a refresh builds a new one to swap in (paging.LiveEngine).
+			buildEngine := func(escCfg paging.Config, kind paging.Ladder, lcfg paging.LadderConfig, resolver paging.Resolver, getenv func(string) string) *paging.Engine {
+				channel := ladderChannel(lcfg)
 				escalationEngine := paging.NewEngine(
 					paging.DefaultPolicy,
-					escalationResolver,
+					resolver,
 					twilioClient,
 					googleChatClient,
 					// The ladder builds its own incident link. recipientlinks
@@ -1295,19 +1306,57 @@ func main() {
 						UseSSML: os.Getenv("INCIDENT_ESCALATION_SSML") == "true",
 						Channel: channel,
 						// Which incidents get a ladder, and what one may spend.
-						Ladder: l.cfg,
-						Kind:   l.kind,
+						Ladder: lcfg,
+						Kind:   kind,
 						// The Special Ops page; only the SRE engine places
 						// it, and it is off unless the file turns it on.
-						SME: escalationCfg.SME,
+						SME: escCfg.SME,
 						// An incident's paging replies under its card, in the spaces INCIDENT_CHAT_SPACES and INCIDENT_CHAT_FANOUT give it.
 						IncidentChatFanout: incidentChatFanout,
 						IncidentRoutes:     incidentRoutes,
+						// Where a saved room's URL is looked up: not the process environment.
+						Getenv: getenv,
 						// Which ladders a record climbs is DefaultRouting, in
 						// code -- not configurable (see paging.Config).
 					},
 				)
 				escalationEngine.WithCallOutcomeWatcher(callOutcomes)
+
+				// The rung email (cre.email): one email per rung, L1 to L4.
+				// It follows the service's email switches, not
+				// CALL_SENDING_ENABLED, so silencing the phones leaves it on
+				// and a debug run redirects it like every other email.
+				if kind == paging.LadderCRE && lcfg.Email.Enabled {
+					escalationEngine.WithRungEmail(emailClient, paging.RungEmailSending{
+						Enabled:         emailSendingEnabled,
+						DebugMode:       emailDebugMode,
+						DebugRecipients: emailDebugRecipients,
+						SLADurations:    slaDurations,
+					})
+				}
+				return escalationEngine
+			}
+
+			ladders := []struct {
+				kind    paging.Ladder
+				name    string
+				cfg     paging.LadderConfig
+				running bool
+				group   string
+			}{
+				{paging.LadderCRE, "escalation", creCfg, creRunning,
+					envOrDefault("INCIDENT_ESCALATION_CONSUMER_GROUP", "csm-notification-service-escalation")},
+				{paging.LadderSRE, "escalation-sre", sreCfg, sreRunning,
+					envOrDefault("INCIDENT_ESCALATION_SRE_CONSUMER_GROUP", "csm-notification-service-escalation-sre")},
+			}
+			for _, l := range ladders {
+				if !l.running {
+					slog.Warn("incident call escalation ladder is disabled by configuration", "ladder", l.name)
+					continue
+				}
+				channel := ladderChannel(l.cfg)
+				escalationEngine := paging.NewLiveEngine(buildEngine(escalationCfg, l.kind, l.cfg, escalationResolver, caseAlertRooms.get))
+				liveEngines[l.kind] = escalationEngine
 
 				if l.kind == paging.LadderSRE && escalationCfg.SME.Enabled {
 					// The SME page runs on the dispatcher's sre-events
@@ -1316,17 +1365,8 @@ func main() {
 					smePager = escalationEngine
 				}
 
-				// The rung email (cre.email): one email per rung, L1 to L4.
-				// It follows the service's email switches, not
-				// CALL_SENDING_ENABLED, so silencing the phones leaves it on
-				// and a debug run redirects it like every other email.
+				// The rung email (cre.email) is wired in buildEngine.
 				if l.kind == paging.LadderCRE && l.cfg.Email.Enabled {
-					escalationEngine.WithRungEmail(emailClient, paging.RungEmailSending{
-						Enabled:         emailSendingEnabled,
-						DebugMode:       emailDebugMode,
-						DebugRecipients: emailDebugRecipients,
-						SLADurations:    slaDurations,
-					})
 					slog.Info("case paging: rung emails are on for the CRE ladder",
 						"teamLists", len(l.cfg.Email.TeamLists), "emailSendingEnabled", emailSendingEnabled,
 						"emailDebugMode", emailDebugMode, "responseSLAFrom", map[bool]string{true: "sla-duration-policy", false: "published defaults"}[slaDurations != nil])
@@ -1382,6 +1422,53 @@ func main() {
 					slog.Info("case paging: incident.special_ops_alert pages the SME through the SRE engine",
 						"channel", string(escalationCfg.SME.Channel))
 				}
+			}
+
+			// Saved Case Alerts settings, re-read while running: a save on the
+			// Alert Settings tab reaches the ladders without a restart. Off asks
+			// nobody; so does a start with no ladder running.
+			if interval := caseAlertRefreshInterval(os.Getenv("PAGING_CONFIG_REFRESH")); caseAlertMode != caseAlertSourceOff &&
+				caseAlertEntity != nil && len(liveEngines) > 0 && interval > 0 {
+				live := &caseAlertLive{
+					mode: caseAlertMode, base: baseEscalationCfg, entity: caseAlertEntity,
+					snapshots: caseAlertStartup.snapshots, interval: interval,
+					rebuild: func(cfg paging.Config, getenv func(string) string) (func(), error) {
+						creNow, creOn := cfg.For(paging.LadderKeyCRE)
+						sreNow, sreOn := cfg.For(paging.LadderKeySRE)
+						engines := map[paging.Ladder]*paging.Engine{}
+						for _, l := range ladders {
+							if _, started := liveEngines[l.kind]; !started {
+								continue
+							}
+							if (l.kind == paging.LadderCRE && !creOn) || (l.kind == paging.LadderSRE && !sreOn) {
+								return nil, fmt.Errorf("it would turn off the %s ladder, which is running; that takes a restart", l.name)
+							}
+						}
+						// The same check a start makes: a team-schedule resolver with no
+						// teams resolves almost nobody.
+						if usingTeamSchedule && len(creNow.Teams.ABTs) == 0 && creNow.Teams.ABTType == "" {
+							return nil, errors.New("teams.abtType or teams.abts is needed with the team-schedule resolver")
+						}
+						resolver := makeResolver(creNow, sreNow)
+						for _, l := range ladders {
+							if _, started := liveEngines[l.kind]; !started {
+								continue
+							}
+							lc := creNow
+							if l.kind == paging.LadderSRE {
+								lc = sreNow
+							}
+							engines[l.kind] = buildEngine(cfg, l.kind, lc, resolver, getenv)
+						}
+						return func() {
+							for kind, e := range engines {
+								liveEngines[kind].Swap(e)
+							}
+						}, nil
+					},
+				}
+				live.startFrom(escalationCfg, caseAlertRooms.snapshot(), caseAlertResult)
+				go live.run(ctx)
 			}
 
 			// dispatch.handleIncidentCreated's own single, immediate call to
@@ -1976,9 +2063,9 @@ func resolverTeams(cre, sre paging.LadderConfig) paging.TeamKeys {
 // assignment group (paging.BuildIncidentRoutes): the mapping wins over
 // INCIDENT_CHAT_SPACES, and a group with no room goes to the shared SRE room.
 // Logs counts only, never a URL.
-func applyIncidentRoutes(sre paging.LadderConfig, chat *notifications.GoogleChatClient, routes *notifications.IncidentRoutes) {
+func applyIncidentRoutes(sre paging.LadderConfig, chat *notifications.GoogleChatClient, routes *notifications.IncidentRoutes, getenv func(string) string) {
 	table := paging.BuildIncidentRoutes(sre, func(c paging.Chat) (string, bool) {
-		return paging.ChatWebhookURL(c, chat, os.Getenv)
+		return paging.ChatWebhookURL(c, chat, getenv)
 	})
 	chat.SetIncidentRouteSpaces(table.Spaces)
 	routes.Set(table.Fanout)

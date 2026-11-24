@@ -122,12 +122,36 @@ func caseAlertWait(raw string) time.Duration {
 // as it is -- never the defaults, which turn paging off. setenv puts a saved
 // room's URL where the engine reads webhooks from (db mode only).
 func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config, entity caseAlertSettingsReader, setenv func(string, string) error, start caseAlertStart) paging.Config {
+	out, _ := applyCaseAlertSettingsAt(ctx, mode, cfg, entity, setenv, start)
+	return out
+}
+
+// caseAlertStartResult is what a start learned besides the configuration: the
+// revision it settled on, for the refresh loop to continue from.
+type caseAlertStartResult struct {
+	// Settled is true when the settings were read from entity-service itself
+	// (not the kept copy, and not given up on) and dealt with: applied,
+	// compared (shadow) or refused. Revision is then theirs. Otherwise the
+	// refresh loop has to read them in full.
+	Settled  bool
+	Revision int64
+	// Applied is true when the settings are what the returned configuration
+	// runs with (db mode, not refused).
+	Applied bool
+	// Fingerprint identifies the settings read, for the refresh loop.
+	Fingerprint string
+}
+
+// applyCaseAlertSettingsAt is applyCaseAlertSettings, also saying which
+// revision it settled on.
+func applyCaseAlertSettingsAt(ctx context.Context, mode string, cfg paging.Config, entity caseAlertSettingsReader, setenv func(string, string) error, start caseAlertStart) (paging.Config, caseAlertStartResult) {
+	var res caseAlertStartResult
 	if mode == caseAlertSourceOff {
-		return cfg
+		return cfg, res
 	}
 	if entity == nil {
 		slog.Warn("PAGING_CONFIG_SOURCE needs CUSTOMER_ENTITY_BASE_URL; the file and env vars are used", "mode", mode)
-		return cfg
+		return cfg, res
 	}
 	wait := time.Duration(0)
 	if mode == caseAlertSourceDB {
@@ -145,19 +169,26 @@ func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config,
 		}
 		if !fromSnapshot {
 			slog.Warn("could not read the Case Alerts settings; the file and env vars are used", "mode", mode, "err", err)
-			return cfg
+			return cfg, res
 		}
+	}
+	res.Settled, res.Revision = !fromSnapshot, saved.Revision
+	if res.Settled {
+		res.Fingerprint = caseAlertFingerprint(saved)
 	}
 
 	merged, env, changes, mergeErr := paging.MergeCaseAlertSettings(cfg, saved)
 	summary := map[string]any{"rooms": len(saved.Rooms), "routes": len(saved.Routes), "values": len(saved.Values), "changes": changes}
+	// getenv is how the running report sees the saved rooms' variables: they
+	// are in env, not (when setenv is not os.Setenv) the process environment.
+	getenv := overlayGetenv(env)
 	report := func(applied string, running paging.Config, savedKeys map[string]map[string]bool) {
 		if fromSnapshot {
 			// entity-service could not be read; there is nobody to tell.
 			return
 		}
 		if applied != caseAlertSourceOff {
-			summary["running"] = paging.RunningCaseAlertValues(running, savedKeys)
+			summary["running"] = paging.RunningCaseAlertValuesEnv(running, savedKeys, getenv)
 		}
 		reportCtx, cancel := context.WithTimeout(ctx, caseAlertReadTimeout)
 		defer cancel()
@@ -170,7 +201,7 @@ func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config,
 		slog.Error("the saved Case Alerts settings would not pass the file's checks; the file and env vars are used",
 			"mode", mode, "revision", saved.Revision, "err", mergeErr)
 		report(caseAlertSourceOff, cfg, nil)
-		return cfg
+		return cfg, res
 	}
 
 	if mode == caseAlertSourceShadow {
@@ -180,7 +211,7 @@ func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config,
 		slog.Info("case alerts shadow: compared the saved settings with the file; the file's are used",
 			"revision", saved.Revision, "differences", len(changes))
 		report(caseAlertSourceShadow, cfg, nil)
-		return cfg
+		return cfg, res
 	}
 
 	names := make([]string, 0, len(env))
@@ -188,7 +219,8 @@ func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config,
 		if err := setenv(name, url); err != nil {
 			slog.Error("could not put a saved Case Alerts room in the environment; the file and env vars are used", "variable", name)
 			report(caseAlertSourceOff, cfg, nil)
-			return cfg
+			res.Settled = false
+			return cfg, res
 		}
 		names = append(names, name)
 	}
@@ -202,7 +234,20 @@ func applyCaseAlertSettings(ctx context.Context, mode string, cfg paging.Config,
 	if !fromSnapshot && start.snapshots != nil {
 		saveCaseAlertSnapshot(ctx, start.snapshots, saved)
 	}
-	return merged
+	res.Applied = true
+	return merged, res
+}
+
+// overlayGetenv looks a variable up in env first, then in the process
+// environment. The saved rooms' webhook URLs live in env, so they are never
+// written to the process environment.
+func overlayGetenv(env map[string]string) func(string) string {
+	return func(name string) string {
+		if v, ok := env[name]; ok {
+			return v
+		}
+		return os.Getenv(name)
+	}
 }
 
 // readCaseAlertSettings reads the saved settings, trying again for up to wait

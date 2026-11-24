@@ -553,6 +553,19 @@ ticker, with Redis as its only durable state — the same `REDIS_URL`/
   start loaded, kept in Redis under `incident:escalation:case-alerts:last-loaded`
   without webhook URLs (so rooms come from the file), and only then to the
   file. A fallback start does not report.
+  **Live refresh (`cmd/server/case_alert_live.go`).** In `db` and `shadow` the settings are
+  re-read every `PAGING_CONFIG_REFRESH` (default 30s, jittered, `0`/`off` disables, min 5s): one
+  GET each, since entity-service has no revision-only call; a refresh whose content
+  (fingerprint, not revision alone) equals the last seen does nothing. A change goes through
+  `MergeCaseAlertSettings` (the start's own validation) plus the start's team-schedule check, then
+  new engines are built for every running ladder and swapped in together, atomically
+  (`paging.LiveEngine`). Any failure (read, validation, build) keeps the last good
+  configuration, logs at error, and reports the running revision with the refusal. `shadow`
+  logs differences per refresh and keeps the file's. `off` never refreshes. Saved rooms'
+  URLs are no longer written with `os.Setenv`: they travel as `EngineConfig.Getenv`. A
+  ladder running keeps its rung plan (timing, who, when) in its stored state, so that is
+  unchanged by a swap; what is read at each tick (rooms, channel, safety, on-leave) uses
+  the configuration current at that tick.
 - **`notifier.go` - which channel a rung reaches people on.** The ladder's
   timing, routing and cancellation are channel-agnostic; only the last hop
   differs. `INCIDENT_ESCALATION_CHANNEL` picks `call` (the specification's
