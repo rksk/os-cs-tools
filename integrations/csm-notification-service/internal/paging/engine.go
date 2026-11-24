@@ -136,6 +136,18 @@ type EngineConfig struct {
 	// card uses too (cmd/server builds one and gives it to both); nil holds
 	// none.
 	IncidentRoutes *notifications.IncidentRoutes
+	// Getenv looks up the variables the file names for chat webhooks
+	// (chat.webhookUrlEnv). Nil is os.Getenv. The saved Case Alerts rooms are
+	// given through it, so a refresh never has to write the process environment.
+	Getenv func(string) string
+}
+
+// env is the lookup chat webhook variables go through.
+func (c EngineConfig) env() func(string) string {
+	if c.Getenv != nil {
+		return c.Getenv
+	}
+	return os.Getenv
 }
 
 // Engine runs the incident call-escalation ladder.
@@ -228,7 +240,7 @@ func NewEngine(policies map[string]PriorityPolicy, resolver Resolver, calls *not
 	if notes != nil {
 		e.notes = notes
 	}
-	e.notifiers, e.missingChannels = buildNotifiers(cfg.Channel, cfg.Ladder.Chat, cfg.UseSSML, calls, chat, links, defaultChatProduct)
+	e.notifiers, e.missingChannels = buildNotifiers(cfg.Channel, cfg.Ladder.Chat, cfg.UseSSML, calls, chat, links, defaultChatProduct, cfg.env())
 	// Logged here rather than per attempt: this is a deployment mistake, it
 	// cannot change while the process runs, and one line at startup is
 	// actionable where one line per rung is noise. place() still reports the
@@ -248,7 +260,7 @@ func NewEngine(policies map[string]PriorityPolicy, resolver Resolver, calls *not
 	}
 	if cfg.Kind == LadderSRE && cfg.SME.Enabled {
 		var missing []Channel
-		e.smeNotifiers, missing = buildNotifiers(cfg.SME.Channel, cfg.SME.Chat, cfg.UseSSML, calls, chat, links, defaultChatProduct)
+		e.smeNotifiers, missing = buildNotifiers(cfg.SME.Channel, cfg.SME.Chat, cfg.UseSSML, calls, chat, links, defaultChatProduct, cfg.env())
 		for _, ch := range missing {
 			slog.Error("escalation: the SME page is configured for a channel with no client; nothing will be sent over it",
 				"missingChannel", string(ch), "configuredChannel", string(cfg.SME.Channel))
@@ -256,7 +268,7 @@ func NewEngine(policies map[string]PriorityPolicy, resolver Resolver, calls *not
 		if len(cfg.SME.TeamChats) > 0 {
 			e.smeTeamNotifiers = map[string][]notifier{}
 			for team, c := range cfg.SME.TeamChats {
-				e.smeTeamNotifiers[teamKeyFor(team)], _ = buildNotifiers(cfg.SME.Channel, c, cfg.UseSSML, calls, chat, links, defaultChatProduct)
+				e.smeTeamNotifiers[teamKeyFor(team)], _ = buildNotifiers(cfg.SME.Channel, c, cfg.UseSSML, calls, chat, links, defaultChatProduct, cfg.env())
 			}
 		}
 	}
@@ -285,7 +297,7 @@ func (e *Engine) buildTeamChats(cfg EngineConfig, calls *notifications.TwilioCli
 	if len(cfg.Ladder.TeamChats) > 0 {
 		e.teamNotifiers = map[string][]notifier{}
 		for team, c := range cfg.Ladder.TeamChats {
-			e.teamNotifiers[teamKeyFor(team)], _ = buildNotifiers(cfg.Channel, c, cfg.UseSSML, calls, chat, links, defaultChatProduct)
+			e.teamNotifiers[teamKeyFor(team)], _ = buildNotifiers(cfg.Channel, c, cfg.UseSSML, calls, chat, links, defaultChatProduct, cfg.env())
 		}
 		slog.Info("escalation: SRE teams with a Chat space of their own (sre.teamChats); every other incident uses sre.chat",
 			"teams", sortedTeamChatKeys(cfg.Ladder.TeamChats))
@@ -297,12 +309,12 @@ func (e *Engine) buildTeamChats(cfg EngineConfig, calls *notifications.TwilioCli
 	if cfg.SME.Enabled && cfg.SME.UnansweredChat {
 		e.smeRooms = map[string]chatRoom{}
 		for team, c := range cfg.SME.TeamChats {
-			if client, room := ladderChat(c, chat, defaultChatProduct, os.Getenv); client != nil {
+			if client, room := ladderChat(c, chat, defaultChatProduct, cfg.env()); client != nil {
 				e.smeRooms[teamKeyFor(team)] = chatRoom{chat: client, room: room}
 			}
 		}
 		// A team with no space of its own closes in the shared one.
-		if client, room := ladderChat(cfg.SME.Chat, chat, defaultChatProduct, os.Getenv); client != nil {
+		if client, room := ladderChat(cfg.SME.Chat, chat, defaultChatProduct, cfg.env()); client != nil {
 			e.smeSharedRoom = &chatRoom{chat: client, room: room}
 		}
 	}
@@ -311,11 +323,11 @@ func (e *Engine) buildTeamChats(cfg EngineConfig, calls *notifications.TwilioCli
 	}
 	e.teamRooms = map[string]chatRoom{}
 	for team, c := range cfg.Ladder.TeamChats {
-		if client, room := ladderChat(c, chat, defaultChatProduct, os.Getenv); client != nil {
+		if client, room := ladderChat(c, chat, defaultChatProduct, cfg.env()); client != nil {
 			e.teamRooms[teamKeyFor(team)] = chatRoom{chat: client, room: room}
 		}
 	}
-	if client, room := ladderChat(cfg.Ladder.Chat, chat, defaultChatProduct, os.Getenv); client != nil {
+	if client, room := ladderChat(cfg.Ladder.Chat, chat, defaultChatProduct, cfg.env()); client != nil {
 		e.sharedRoom = &chatRoom{chat: client, room: room}
 	} else if len(e.teamRooms) == 0 {
 		slog.Error("escalation: sre.unansweredChat or sre.smeHandoffChat is on but no Google Chat space is configured; nothing will be posted")
@@ -709,7 +721,7 @@ func withoutChat(notifiers []notifier) []notifier {
 
 // buildNotifiers wires one notifier per channel selected, and names every
 // selected channel that has no client to serve it.
-func buildNotifiers(channel Channel, chatCfg Chat, useSSML bool, calls *notifications.TwilioClient, chat *notifications.GoogleChatClient, links PortalLinks, defaultChatProduct string) ([]notifier, []Channel) {
+func buildNotifiers(channel Channel, chatCfg Chat, useSSML bool, calls *notifications.TwilioClient, chat *notifications.GoogleChatClient, links PortalLinks, defaultChatProduct string, getenv func(string) string) ([]notifier, []Channel) {
 	var out []notifier
 	var missing []Channel
 	// ChannelLog needs no client and so can never be half-configured — there
@@ -733,7 +745,7 @@ func buildNotifiers(channel Channel, chatCfg Chat, useSSML bool, calls *notifica
 		// since a deployment may have a webhook for the ladder and no
 		// GOOGLE_CHAT_SPACES at all.
 		var room string
-		chat, room = ladderChat(chatCfg, chat, defaultChatProduct, os.Getenv)
+		chat, room = ladderChat(chatCfg, chat, defaultChatProduct, getenv)
 		if chat == nil {
 			missing = append(missing, ChannelChat)
 		} else {

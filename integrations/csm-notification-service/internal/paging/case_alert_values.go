@@ -654,6 +654,12 @@ func creChainTiming(policies map[string]PriorityPolicy) map[string][][]int {
 // Heads carry a name and an email, never a phone number. fileOnly is what
 // only the file sets (fileOnlyCaseAlertValues).
 func RunningCaseAlertValues(cfg Config, saved map[string]map[string]bool) map[string]any {
+	return RunningCaseAlertValuesEnv(cfg, saved, os.Getenv)
+}
+
+// RunningCaseAlertValuesEnv is RunningCaseAlertValues with the variables a
+// chat section names looked up through getenv.
+func RunningCaseAlertValuesEnv(cfg Config, saved map[string]map[string]bool, getenv func(string) string) map[string]any {
 	fileOnly := map[string]any{}
 	for _, ladder := range caseAlertBoth {
 		fileOnly[ladder] = fileOnlyCaseAlertValues(cfg, ladder, *ladderFor(&cfg, ladder))
@@ -696,7 +702,7 @@ func RunningCaseAlertValues(cfg Config, saved map[string]map[string]bool) map[st
 		}
 		ladders[ladder] = out
 	}
-	return map[string]any{"ladders": ladders, "fileOnly": fileOnly, "channels": EffectiveChannels(cfg), "groups": CaseAlertGroupRouting(cfg)}
+	return map[string]any{"ladders": ladders, "fileOnly": fileOnly, "channels": EffectiveChannels(cfg), "groups": CaseAlertGroupRoutingEnv(cfg, getenv)}
 }
 
 // GroupRouting is how one ladder sends an assignment group to a team as the
@@ -723,9 +729,9 @@ type GroupRouting struct {
 // chatConfigured reports whether a chat section can be posted to: its
 // variable holds a URL, or (with no variable) it names an audience, whose
 // GOOGLE_CHAT_SPACES entry is not checked here.
-func chatConfigured(c Chat) bool {
+func chatConfigured(c Chat, getenv func(string) string) bool {
 	if name := strings.TrimSpace(c.WebhookURLEnv); name != "" {
-		return strings.TrimSpace(os.Getenv(name)) != ""
+		return strings.TrimSpace(getenv(name)) != ""
 	}
 	return strings.TrimSpace(c.Audience) != ""
 }
@@ -733,6 +739,12 @@ func chatConfigured(c Chat) bool {
 // CaseAlertGroupRouting reports GroupRouting for the CRE and SRE ladders.
 // Only SRE has default groups and teamless rooms.
 func CaseAlertGroupRouting(cfg Config) map[string]GroupRouting {
+	return CaseAlertGroupRoutingEnv(cfg, os.Getenv)
+}
+
+// CaseAlertGroupRoutingEnv is CaseAlertGroupRouting with the variables a
+// chat section names looked up through getenv.
+func CaseAlertGroupRoutingEnv(cfg Config, getenv func(string) string) map[string]GroupRouting {
 	out := map[string]GroupRouting{}
 	for _, ladder := range caseAlertBoth {
 		l := ladderFor(&cfg, ladder)
@@ -760,7 +772,7 @@ func CaseAlertGroupRouting(cfg Config) map[string]GroupRouting {
 				}
 			}
 			sort.Strings(g.GroupRooms)
-			shared := chatConfigured(l.Chat)
+			shared := chatConfigured(l.Chat, getenv)
 			g.SharedRoom = &shared
 		}
 		out[ladder] = g
