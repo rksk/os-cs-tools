@@ -219,10 +219,10 @@ Other tables are added in their own migration when wanted. The Salesforce ingest
 
 - **Off unless `CSM_AUDIT_LOG_ENABLED=true`** (default false): the route is not registered and answers 404. Turning it on does not audit any table.
 - **Steps, in order:** create the coming partitions (`CSM_AUDIT_LOG_MONTHS_AHEAD`, default 3), reconcile triggers, delete expired partitions, delete expired catch-all rows, check health. Every step runs even if an earlier one fails. The SQL functions take an advisory lock, so a repeated or concurrent call is harmless.
-- **200 means the request was handled, not that all is well.** The body lists `partitionsDeleted`, `defaultRowsDeleted`, `healthProblems`, `repairedTriggers` (were missing or disabled, so the history had a gap), `unresolvedTriggers` (need a person) and `stepErrors` (a step that could not run, with no database detail; the full error is in this service's log). The scheduled task turns any problem into a failure and mails it. A 500 means only that the request was cancelled.
+- **200 means the request was handled, not that all is well.** The body lists `partitionsDeleted`, `defaultRowsDeleted`, `healthProblems`, `repairedTriggers` (were missing, disabled or different from their registration, so the history had a gap), `unresolvedTriggers` (need a person) and `stepErrors` (a step that could not run, with no database detail; the full error is in this service's log). The scheduled task turns any problem into a failure and mails it. A 500 means only that the request was cancelled.
 - **Reconcile runs twice**, with repair on and then off. What the second call still lists is unresolved. A table that cannot be repaired logs a WARNING and does not stop the others.
 - **Locks are bounded.** The partition functions and a repairing `audit_reconcile` set a 2s `lock_timeout` first, so it covers the wait for the advisory lock too. A timeout is a step error, and the next weekly run tries again.
-- **Health** (`audit_partition_health(p_months_ahead)`) reports rows in the catch-all partition and any of the next `CSM_AUDIT_LOG_MONTHS_AHEAD` months with no monthly partition, checked month by month, so a missed month is reported on the next run. Data past retention is not reported: a failed deletion is already a step error, and a second alert would cost more than the storage it protects. `SELECT count(*) FROM audit_partition_health()` (2 months ahead) works for a monitoring role even if the scheduled task is down.
+- **Health** (`audit_partition_health(p_months_ahead)`) reports rows in the catch-all partition, and the current month and any of the next `CSM_AUDIT_LOG_MONTHS_AHEAD` months with no monthly partition, checked month by month, so a missed month is reported on the next run. Data past retention is not reported: a failed deletion is already a step error, and a second alert would cost more than the storage it protects. `SELECT count(*) FROM audit_partition_health()` (2 months ahead) works for a monitoring role even if the scheduled task is down.
 
 ### Retention: 18 months, set in configuration
 
@@ -235,7 +235,7 @@ Other tables are added in their own migration when wanted. The Salesforce ingest
 
 ### Operating it
 
-- **Grants.** The application role needs `EXECUTE` on `audit_create_partitions(int)`, `audit_partition_health(int)`, `audit_reconcile(boolean)`, `audit_delete_expired_partitions(int, text)` and `audit_delete_expired_default_rows(int, text)`, and nothing on the audit tables. The functions are `SECURITY DEFINER` and revoked from `PUBLIC`. The role must not own the audit tables, or it could drop the trigger or insert rows. Without the grants the daily run fails and mails every day. Re-running `0295` drops a function whose name or signature changed, and its grant goes with it.
+- **Grants.** The application role needs `EXECUTE` on `audit_create_partitions(int)`, `audit_partition_health(int)`, `audit_reconcile(boolean)`, `audit_delete_expired_partitions(int, text)` and `audit_delete_expired_default_rows(int, text)`, and nothing on the audit tables. The functions are `SECURITY DEFINER` and revoked from `PUBLIC`, as is the trigger function `audit_log_row_change()` (a trigger needs no grant to run). The role must not own the audit tables, or it could drop the trigger or insert rows. Without the grants the daily run fails and mails every day. Re-running `0295` drops a function whose name or signature changed, and its grant goes with it.
 - **Who may read the log.** It holds old and new field values, so `0295` revokes everything on `csm_audit_log` and `audit_config` from `PUBLIC` and grants `SELECT` on `csm_audit_log` only to the login-less role `csm_audit_reader`. It creates that role only when the migration role has `CREATEROLE`; otherwise it prints a notice and nobody but the owner can read. In prod a DBA runs this, adding only named people, never the application role or `PUBLIC`:
 
   ```sql
@@ -270,6 +270,9 @@ Other tables are added in their own migration when wanted. The Salesforce ingest
   ```sql
   BEGIN;
   SET LOCAL lock_timeout = '5s';
+  -- Block audit writes first, so the count below stays true until COMMIT.
+  LOCK TABLE csm_audit_log IN SHARE MODE;
+  CREATE TEMP TABLE audit_rows_before ON COMMIT DROP AS SELECT count(*) AS n FROM csm_audit_log;
   ALTER TABLE csm_audit_log DETACH PARTITION csm_audit_log_default;
   ALTER TABLE csm_audit_log_default RENAME TO csm_audit_log_default_old;
   CREATE TABLE csm_audit_log_default PARTITION OF csm_audit_log DEFAULT;
@@ -283,16 +286,16 @@ Other tables are added in their own migration when wanted. The Salesforce ingest
       FOR EACH STATEMENT EXECUTE FUNCTION audit_log_reject_change();
   INSERT INTO csm_audit_log SELECT * FROM csm_audit_log_default_old;
   -- Verify: this must return true, else ROLLBACK (everything above is undone).
-  SELECT count(*) = <rows_before> AS all_rows_moved FROM csm_audit_log;
+  SELECT count(*) = (SELECT n FROM audit_rows_before) AS all_rows_moved FROM csm_audit_log;
   DROP TABLE csm_audit_log_default_old;
   COMMIT;
   ```
 
-  Take `<rows_before>` from `SELECT count(*) FROM csm_audit_log` just before `BEGIN`. `audit_create_partitions` covers only the current and coming months, so a past month with rows in the catch-all needs its own `CREATE TABLE … PARTITION OF` as above. Rows whose month still has no partition land in the new catch-all.
+  The lock holds audit writes (and the business writes behind them) until `COMMIT`, which is why the lock timeout is short; if it times out, run it again. `audit_create_partitions` covers only the current and coming months, so a past month with rows in the catch-all needs its own `CREATE TABLE … PARTITION OF` as above. Rows whose month still has no partition land in the new catch-all.
 
 ### Rules for new code
 
-- `register_audit` refuses a key column that is also excluded or masked: the record id is built from the key columns and stored in clear. A one-column key is the plain value (`42`); a composite key is a JSON array (`["acme","prod"]`), so two keys never share an id.
+- `register_audit` refuses a key column that is also excluded or masked, or that is binary (`bytea`, which is left out of the fields but would still go into the record id): the record id is built from the key columns and stored in clear. It also refuses a column name with a comma, which the trigger's comma-separated lists would split. A key is the primary key's key columns only, not its `INCLUDE` columns. A one-column key is the plain value (`42`); a composite key is a JSON array (`["acme","prod"]`), so two keys never share an id.
 - `exclude_from_audit` on a registered table also drops its trigger, as `unregister_audit` does.
 - Every partition carries its own `csm_audit_log_no_truncate` guard, because a statement trigger on the parent does not reach them. `audit_create_partitions` adds it to each new month.
 - Everything lives in the schema the migration runs in (`current_schema()`), so the audit log works in `public` or in a `DB_SCHEMA`. The `SECURITY DEFINER` functions are installed through `DO` blocks that fill the schema into their search path and table names (`__SCHEMA__` / `__SCHEMA_LIT__`). A new function that touches the audit tables must be added the same way, never with `public` written in. Inside `format()` pass the schema as an argument (`%I`), never inside the format string. Their search path ends with `pg_temp`, so a caller's temp table cannot stand in for `audit_config`.
@@ -5677,7 +5680,7 @@ page.
 
 ## Change requests
 
-Tests: `entity-service/docs/change-request-tests.md` maps change request scenarios to Go and Playwright tests, lists Vitest coverage, and says how to list and run them.
+Tests: `entity-service/docs/specs/change-request-tests.md` maps change request scenarios to Go and Playwright tests, lists Vitest coverage, and says how to list and run them.
 
 `change_request` (migration 0043) is a shared-PK extension of `work_item`,
 same pattern as `"case"` (`change_request.id` IS `work_item.id`). `SearchChangeRequests`,
@@ -13080,6 +13083,12 @@ differs.
 
 Tests: `deprecated_product_usage_report_service_test.go` (unit),
 `deprecated_product_usage_report_integration_test.go` (`ENTITY_TEST_DATABASE_URL`).
+
+**Change the two report queries together.** `listDeprecatedUsageSQL` is the EOL report's query
+(`eol_product_usage_report_repo.go`) with only the version predicate changed (`current_support_status = 'DEPRECATED'`
+instead of the EOL date). The rules for customers who have left (deleted account, inactive or closed project, NULL read
+as active), the Primary Production filter, the one-row-per-project-and-version rule and the grouping are the same in
+both. A change to any of them belongs in both repositories (and their integration tests) in the same change.
 
 ## Salesforce resync (`POST /salesforce/resync/preview`, `/apply`)
 

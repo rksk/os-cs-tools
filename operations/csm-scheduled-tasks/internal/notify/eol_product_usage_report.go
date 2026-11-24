@@ -1,3 +1,19 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package notify
 
 import (
@@ -179,7 +195,7 @@ func eolUsageLink(portalBaseURL, kind, id, text string) string {
 		return escapeHTML(text)
 	}
 	href := strings.TrimRight(portalBaseURL, "/") + "/customers/" + kind + "/" + url.PathEscape(id)
-	return fmt.Sprintf(`<a href="%s" target="_blank" style="color:#ff7300;">%s</a>`, escapeHTML(href), escapeHTML(text))
+	return fmt.Sprintf(`<a href="%s" target="_blank" style="color:#0B1633;">%s</a>`, escapeHTML(href), escapeHTML(text))
 }
 
 // eolUsageMailto is the person's email as a mailto link, blank when there is

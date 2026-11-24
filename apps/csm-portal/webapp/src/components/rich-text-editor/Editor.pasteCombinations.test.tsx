@@ -692,11 +692,13 @@ describe("image paste", () => {
         "keep",
       );
       const html = m.html();
-      expect(html).not.toMatch(/<img/);
+      // A base64 picture is uploaded when the editor has an uploader (a local preview), else it is its alt text.
+      const imgTags = html.match(/<img[^>]*>/g) ?? [];
+      for (const tag of imgTags) expect(tag).toContain('src="blob:');
       expect(html).not.toContain("data:image");
       expect(html).not.toContain("javascript:");
       expect(html).toMatch(/<a href="https:\/\/x.com\/?"[^>]*>badge<\/a>/);
-      expect(html).toContain("inline");
+      if (imgTags.length === 0) expect(html).toContain("inline");
       expect(html).toMatch(/<a href="https:\/\/i.com\/noalt.png"[^>]*>https:\/\/i.com\/noalt.png<\/a>/);
     });
     it("Remove Formatting drops the image and keeps the text", async () => {
@@ -849,16 +851,18 @@ describe.each(CONFIGS)("[%s] Keep Formatting of an image copied out of an editor
   it("an older draft's data: image stays an image only when the editor payload of the clipboard holds that exact src", async () => {
     expect((await keep(IN_APP(PNG), withImages(PNG))).m.html()).toContain(`src="${PNG}"`);
     cleanup();
+    // Not ours: the pasted HTML's base64 picture is uploaded (it becomes a local preview), never embedded.
     const foreign = (await keep(IN_APP(PNG), false)).m.html();
-    expect(foreign).not.toContain("<img");
     expect(foreign).not.toContain("data:image");
+    expect(foreign).toContain('src="blob:');
   });
 
   it("a forged editor marker does not make a data: image ours (empty, malformed, or another image's payload)", async () => {
     for (const forged of [true, "not json", withImages("data:image/png;base64,BBBB"), withImages("/0b9f3c1e-aaaa-4bbb-8ccc-1234567890ab")]) {
       const out = (await keep(IN_APP(PNG), forged)).m.html();
-      expect(out, String(forged)).not.toContain("<img");
+      // Treated as foreign: uploaded and shown as its local preview, never kept as a base64 image.
       expect(out, String(forged)).not.toContain("data:image");
+      expect(out, String(forged)).toContain('src="blob:');
       cleanup();
     }
   });

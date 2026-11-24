@@ -222,7 +222,7 @@ describe("CaseDetailsContent", () => {
     renderContent({
       data: {
         ...mockCaseDetails,
-        status: { id: "2", label: "Work In Progress" },
+        status: { id: "2", label: "In Progress" },
       },
     });
     expect(screen.getByRole("tab", { name: /^calls/i })).toBeInTheDocument();

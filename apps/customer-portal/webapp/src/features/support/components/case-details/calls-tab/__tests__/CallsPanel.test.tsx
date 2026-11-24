@@ -137,7 +137,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(screen.getByTestId("calls-list-skeleton")).toBeInTheDocument();
   });
@@ -171,7 +171,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     const [, , stateKeys] = vi.mocked(useGetCallRequests).mock.calls[0];
@@ -213,7 +213,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     expect(lastStateKeys()).toBeUndefined();
@@ -237,7 +237,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     fireEvent.mouseDown(screen.getByRole("combobox"));
@@ -255,7 +255,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     vi.mocked(useGetCallRequests).mockReturnValue({
@@ -282,7 +282,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     expect(screen.getByRole("combobox")).toHaveAttribute("aria-disabled", "true");
@@ -294,7 +294,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     fireEvent.mouseDown(screen.getByRole("combobox"));
@@ -323,7 +323,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -345,7 +345,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(
       screen.getByText(/Error loading call requests/i),
@@ -386,10 +386,12 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(screen.getByText(/Call Request/i)).toBeInTheDocument();
-    expect(screen.getByText(/Pending on WSO2/i)).toBeInTheDocument();
+    // A call request pending on WSO2 is shown to the customer as In Progress.
+    expect(screen.getAllByText(/In Progress/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Pending on WSO2/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Test notes/i)).toBeInTheDocument();
   });
 
@@ -408,7 +410,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(
       screen.getByText(/No call requests found for this case/i),
@@ -444,7 +446,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     fireEvent.click(screen.getByRole("button", { name: /Cancel/i }));
@@ -504,7 +506,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(screen.getByRole("button", { name: /Approve/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Reject/i })).toBeInTheDocument();
@@ -544,7 +546,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     fireEvent.click(screen.getByRole("button", { name: /^Reject$/i }));
 
@@ -604,7 +606,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
     expect(screen.getByText(/Approve Call Request/i)).toBeInTheDocument();
@@ -654,7 +656,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
 
@@ -716,7 +718,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     // ListPagination renders an MUI TablePagination ("1-10 of 25" + prev/next).
@@ -749,7 +751,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
     expect(
       screen.getByRole("region", { name: /time zone required/i }),
@@ -785,7 +787,7 @@ describe("CallsPanel", () => {
       <CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />,
     );
     expect(
@@ -816,7 +818,7 @@ describe("CallsPanel", () => {
     renderWithProviders(<CallsPanel
         projectId={mockProjectId}
         caseId={mockCaseId}
-        caseStatusLabel="Work In Progress"
+        caseStatusLabel="In Progress"
       />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Request Call$/ }));
@@ -862,7 +864,7 @@ describe("CallsPanel", () => {
       renderWithProviders(<CallsPanel
           projectId={mockProjectId}
           caseId={mockCaseId}
-          caseStatusLabel="Work In Progress"
+          caseStatusLabel="In Progress"
           caseSeverityId="14"
         />);
 
@@ -926,7 +928,7 @@ describe("CallsPanel", () => {
       renderWithProviders(<CallsPanel
           projectId={mockProjectId}
           caseId={mockCaseId}
-          caseStatusLabel="Work In Progress"
+          caseStatusLabel="In Progress"
           caseSeverityId="14"
         />);
 

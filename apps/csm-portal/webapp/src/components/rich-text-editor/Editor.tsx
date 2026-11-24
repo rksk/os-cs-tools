@@ -72,6 +72,11 @@ import {
 } from "@components/rich-text-editor/markdownPaste";
 import { $insertPastedNodes } from "@components/rich-text-editor/insertPastedNodes";
 import { $caretOnRootIntoBlock } from "@components/rich-text-editor/splitLineBreakLines";
+import {
+  dropDataImagesMatchingFiles,
+  uploadPastedDataImages,
+  type ClipboardImageFile,
+} from "@components/rich-text-editor/pastedDataImages";
 import PasteFormatDialog from "@components/rich-text-editor/PasteFormatDialog";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
@@ -666,10 +671,13 @@ const PasteNormalizationPlugin = ({
   lineBreaks = false,
   markdownPaste = false,
   limitImages = false,
+  onImageUpload,
   onPasteError,
 }: {
   /** Upload mode: images kept from an in-app copy count against the inline image limits. */
   limitImages?: boolean;
+  /** Stores a picture the pasted HTML carries as base64 (see pastedDataImages). */
+  onImageUpload?: ImageUploadHandler;
   onPasteError?: (reason: ImagePasteRefusal) => void;
   /**
    * `markdownPaste` mode: pasted text that looks like Markdown gets a "Paste as
@@ -686,6 +694,8 @@ const PasteNormalizationPlugin = ({
     variant: "html" | "markdown";
     /** The clipboard also carried the picture file (stored by ClipboardImagePlugin). */
     hasImageFile: boolean;
+    /** The picture files ClipboardImagePlugin stores from this clipboard (none when it skips them). */
+    imageFiles: ClipboardImageFile[];
     /**
      * The image `src`s of the clipboard's `application/x-lexical-editor` payload (empty when it
      * has none or it is malformed). Any page can set that type, so only these exact sources are
@@ -734,6 +744,13 @@ const PasteNormalizationPlugin = ({
           event.preventDefault();
           return true;
         }
+        const imageFiles: ClipboardImageFile[] = hasImageFile
+          ? Array.from(clipboardData.items ?? []).flatMap((item) => {
+              if (!item.type.startsWith("image/")) return [];
+              const file = item.getAsFile();
+              return file ? [{ type: file.type, size: file.size }] : [];
+            })
+          : [];
 
         // Markdown source (VS Code, a chat's copy button) arrives as text/plain,
         // with no HTML or only a flat code-view one. Rendered HTML (a Word list, a
@@ -748,7 +765,7 @@ const PasteNormalizationPlugin = ({
         ) {
           event.preventDefault();
           holdSelection();
-          setPendingPaste({ html, text, variant: "markdown", hasImageFile, appImageSrcs });
+          setPendingPaste({ html, text, variant: "markdown", hasImageFile, imageFiles, appImageSrcs });
           return true;
         }
 
@@ -777,7 +794,7 @@ const PasteNormalizationPlugin = ({
         if (htmlHasContent) {
           event.preventDefault();
           holdSelection();
-          setPendingPaste({ html, text, variant: "html", hasImageFile, appImageSrcs });
+          setPendingPaste({ html, text, variant: "html", hasImageFile, imageFiles, appImageSrcs });
           return true;
         }
 
@@ -837,9 +854,34 @@ const PasteNormalizationPlugin = ({
       // is its alt text (image insertion is off, nothing is embedded as base64).
       let room = limitImages ? inlineImagesInEditor(editor) : null;
       const result: { refused: ImagePasteRefusal | null } = { refused: null };
+      // A picture the pasted HTML carries as base64 (Word, Docs, Gmail, text beside a
+      // screenshot) is uploaded like a pasted picture file, never embedded. One that is also
+      // on the clipboard as a file is stored from that file: only its HTML copy is dropped.
+      // The pictures taken here are kept below; the rest follow the rules after.
+      const uploaded = new Set<Element>();
+      if (limitImages && room) {
+        dropDataImagesMatchingFiles(dom, pendingPaste.imageFiles);
+        // An image of this app (its src in the clipboard's editor payload) follows the
+        // in-app rules below, not the upload.
+        const isOurs = (img: Element) => isAppImageSrc(img.getAttribute("src") ?? "", pendingPaste.appImageSrcs);
+        const dataImages = Array.from(dom.querySelectorAll("img")).filter(
+          (img) => /^data:/i.test((img.getAttribute("src") ?? "").trim()) && !isOurs(img),
+        );
+        room = uploadPastedDataImages(
+          dom,
+          room,
+          onImageUpload,
+          (reason) => {
+            result.refused ??= reason;
+          },
+          isOurs,
+        );
+        for (const img of dataImages) if (img.isConnected) uploaded.add(img);
+      }
       imagesToLinks(dom, {
         dropAll: pendingPaste.hasImageFile,
         decide: (img) => {
+          if (uploaded.has(img)) return "keep";
           const src = img.getAttribute("src") ?? "";
           if (!isAppImageSrc(src, pendingPaste.appImageSrcs)) return undefined;
           if (/^data:/i.test(src.trim()) && !limitImages) {
@@ -876,7 +918,7 @@ const PasteNormalizationPlugin = ({
       { tag: PASTE_TAG },
     );
     setPendingPaste(null);
-  }, [editor, pendingPaste, lineBreaks, limitImages, onPasteError]);
+  }, [editor, pendingPaste, lineBreaks, limitImages, onImageUpload, onPasteError]);
 
   /**
    * "Remove Formatting" -- discards all structure and treats the paste
@@ -1322,6 +1364,7 @@ const Editor = ({
             lineBreaks={lineBreakMode}
             markdownPaste={markdownPaste}
             limitImages={Boolean(onImageUpload)}
+            onImageUpload={onImageUpload}
             onPasteError={onImageRefused}
           />
           <LinkPlugin />
