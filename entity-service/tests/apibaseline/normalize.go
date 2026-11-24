@@ -30,8 +30,9 @@ var (
 	reToken  = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
 	// Numeric fields derived from the clock or from elapsed time. Everything
 	// else that is an integer is kept, so counts and totals are compared.
-	reTimeKey = regexp.MustCompile(`(?i)(elapsed|percent|remaining|timeleft|minutes|seconds|hours|days|age|duration|ttl|epoch|timestamp|latency)`)
-	reSecret  = regexp.MustCompile(`(?i)^(token|secret|secretkey|apikey|consumptionsecret|password|signature)$`)
+	reTimeKey      = regexp.MustCompile(`(?i)(elapsed|percent|remaining|timeleft|minutes|seconds|hours|days|age|duration|ttl|epoch|timestamp|latency)`)
+	reDurationText = regexp.MustCompile(`^\d+ (Second|Minute|Hour|Day|Week|Month)s?( \d+ (Second|Minute|Hour|Day|Week|Month)s?)*$`)
+	reSecret       = regexp.MustCompile(`(?i)^(token|secret|secretkey|apikey|consumptionsecret|password|signature)$`)
 )
 
 // seedAliases gives the fixed seed rows readable names in results.
@@ -72,6 +73,11 @@ func (c *Ctx) norm(key string, v any) any {
 	case string:
 		if reSecret.MatchString(key) && t != "" {
 			return "<redacted>"
+		}
+		// Elapsed and remaining durations rendered as text ("1 Day 23 Hours")
+		// move with the clock and round across unit boundaries.
+		if reTimeKey.MatchString(key) && reDurationText.MatchString(t) {
+			return "<duration>"
 		}
 		return c.normString(t)
 	case json.Number:
