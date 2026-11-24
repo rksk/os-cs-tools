@@ -62,6 +62,20 @@ type IncidentRoutes struct {
 	sreTeams func(group string) []string
 }
 
+// Replace swaps the whole route table under one lock, so a reader sees the
+// old table or the new one, never a mix. fanout is as Set takes it.
+func (r *IncidentRoutes) Replace(fanout map[string][]string, teamless []string, known func(string) bool, sreTeams func(string) []string) {
+	m := make(map[string][]string, len(fanout))
+	for group, targets := range fanout {
+		if key := strings.ToLower(strings.TrimSpace(group)); key != "" && len(targets) > 0 {
+			m[key] = targets
+		}
+	}
+	r.mu.Lock()
+	r.fanout, r.teamless, r.knownSRETeam, r.sreTeams = m, slices.Clone(teamless), known, sreTeams
+	r.mu.Unlock()
+}
+
 // SetSRETeams sets how an assignment group resolves to its SRE team keys
 // (paging.SRETeamsForGroup over the merged SRE ladder configuration).
 func (r *IncidentRoutes) SetSRETeams(teams func(group string) []string) {

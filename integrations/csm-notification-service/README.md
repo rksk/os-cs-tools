@@ -142,7 +142,8 @@ csm-notification-service/
 │   ├── main.go                  # Wiring: config, clients, consumers, engines, health server
 │   ├── sre_topic.go             # Shared operations-topic (sre-events) consumer planning
 │   ├── case_alert_settings.go   # PAGING_CONFIG_SOURCE: load ladder settings from the entity service at start
-│   └── case_alert_live.go       # PAGING_CONFIG_REFRESH: re-read them while running and swap the ladders
+│   ├── case_alert_live.go       # PAGING_CONFIG_REFRESH: re-read them while running
+│   └── case_alert_swap.go       # builds and swaps the ladders and incident card routing together
 ├── internal/
 │   ├── apierror/                # Typed upstream error
 │   ├── chataudience/            # Which Chat audiences an SLA breach resolves to
@@ -439,7 +440,7 @@ Requires Redis. The ladder starts only if escalation is enabled, a resolver can 
 | `INCIDENT_ESCALATION_DLQ_CONSUMER_GROUP` | `<CRE group>-dlq` | CRE ladder DLQ group (the SRE one is `<SRE group>-dlq`). | |
 | `INCIDENT_ESCALATION_CONSUMER_COUNT`, `INCIDENT_ESCALATION_DLQ_CONSUMER_COUNT` | `1`, `1` | Instances per ladder. | |
 | `INCIDENT_ESCALATION_TICK_INTERVAL` | `5s` | Ladder scheduler tick. | `5s` |
-| `PAGING_CONFIG_SOURCE` | `db` | `db` uses ladder settings saved in the entity service (Team Schedule alert settings) over the file's; `off` uses file and env only; `shadow` reads them, logs differences and keeps the file's. Unknown values act as `off`. Read at start and then re-read every `PAGING_CONFIG_REFRESH`: a saved change reaches the ladders without a restart (see below). Needs `CUSTOMER_ENTITY_BASE_URL`. | `off` |
+| `PAGING_CONFIG_SOURCE` | `db` | `db` uses ladder settings saved in the entity service (Team Schedule alert settings) over the file's; `off` uses file and env only; `shadow` reads them, logs differences and keeps the file's. Unknown values act as `off`. Read at start and then re-read every `PAGING_CONFIG_REFRESH`: a saved change reaches the ladders and the incident card routing without a restart (both change in one step, or neither does). Needs `CUSTOMER_ENTITY_BASE_URL`. | `off` |
 | `PAGING_CONFIG_WAIT` | `2m` | How long a `db` start retries the entity service (`0` tries once). On failure it uses the last settings stored in Redis, else the file's. | `30s` |
 | `PAGING_CONFIG_REFRESH` | `30s` | How often the saved case alert settings are re-read while running (plus up to 20% jitter). `0` or `off` turns the refresh off, so settings are read at start only; a value under `5s` is `5s`. Ignored when `PAGING_CONFIG_SOURCE=off`. | `30s` |
 | `PAGING_PHONE_SCIM_FALLBACK` | on | `false` stops asking the identity-admin service for numbers the entity service lacks. | `false` |

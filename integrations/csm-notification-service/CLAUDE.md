@@ -558,8 +558,12 @@ ticker, with Redis as its only durable state — the same `REDIS_URL`/
   GET each, since entity-service has no revision-only call; a refresh whose content
   (fingerprint, not revision alone) equals the last seen does nothing. A change goes through
   `MergeCaseAlertSettings` (the start's own validation) plus the start's team-schedule check, then
-  new engines are built for every running ladder and swapped in together, atomically
-  (`paging.LiveEngine`). Any failure (read, validation, build) keeps the last good
+  new engines are built for every running ladder, and the incident card routing (the chat
+  client's routed spaces and the group `IncidentRoutes`, from `paging.BuildIncidentRoutes`)
+  is built from the same configuration and lookup; both are applied in one commit step
+  (`caseAlertSwap.prepare`; engines via `paging.LiveEngine`, routes via
+  `IncidentRoutes.Replace`). The card path only takes read locks: no I/O. If either cannot
+  be built nothing changes. Any failure (read, validation, build) keeps the last good
   configuration, logs at error, and reports the running revision with the refusal. `shadow`
   logs differences per refresh and keeps the file's. `off` never refreshes. Saved rooms'
   URLs are no longer written with `os.Setenv`: they travel as `EngineConfig.Getenv`. A

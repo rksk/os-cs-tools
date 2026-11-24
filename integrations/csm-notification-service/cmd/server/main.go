@@ -1429,43 +1429,17 @@ func main() {
 			// nobody; so does a start with no ladder running.
 			if interval := caseAlertRefreshInterval(os.Getenv("PAGING_CONFIG_REFRESH")); caseAlertMode != caseAlertSourceOff &&
 				caseAlertEntity != nil && len(liveEngines) > 0 && interval > 0 {
+				var swapLadders []caseAlertSwapLadder
+				for _, l := range ladders {
+					swapLadders = append(swapLadders, caseAlertSwapLadder{kind: l.kind, name: l.name})
+				}
 				live := &caseAlertLive{
 					mode: caseAlertMode, base: baseEscalationCfg, entity: caseAlertEntity,
 					snapshots: caseAlertStartup.snapshots, interval: interval,
-					rebuild: func(cfg paging.Config, getenv func(string) string) (func(), error) {
-						creNow, creOn := cfg.For(paging.LadderKeyCRE)
-						sreNow, sreOn := cfg.For(paging.LadderKeySRE)
-						engines := map[paging.Ladder]*paging.Engine{}
-						for _, l := range ladders {
-							if _, started := liveEngines[l.kind]; !started {
-								continue
-							}
-							if (l.kind == paging.LadderCRE && !creOn) || (l.kind == paging.LadderSRE && !sreOn) {
-								return nil, fmt.Errorf("it would turn off the %s ladder, which is running; that takes a restart", l.name)
-							}
-						}
-						// The same check a start makes: a team-schedule resolver with no
-						// teams resolves almost nobody.
-						if usingTeamSchedule && len(creNow.Teams.ABTs) == 0 && creNow.Teams.ABTType == "" {
-							return nil, errors.New("teams.abtType or teams.abts is needed with the team-schedule resolver")
-						}
-						resolver := makeResolver(creNow, sreNow)
-						for _, l := range ladders {
-							if _, started := liveEngines[l.kind]; !started {
-								continue
-							}
-							lc := creNow
-							if l.kind == paging.LadderSRE {
-								lc = sreNow
-							}
-							engines[l.kind] = buildEngine(cfg, l.kind, lc, resolver, getenv)
-						}
-						return func() {
-							for kind, e := range engines {
-								liveEngines[kind].Swap(e)
-							}
-						}, nil
-					},
+					rebuild: caseAlertSwap{
+						ladders: swapLadders, live: liveEngines, usingTeamSchedule: usingTeamSchedule,
+						chat: googleChatClient, routes: incidentRoutes, makeResolver: makeResolver, buildEngine: buildEngine,
+					}.prepare,
 				}
 				live.startFrom(escalationCfg, caseAlertRooms.snapshot(), caseAlertResult)
 				go live.run(ctx)
@@ -2064,20 +2038,38 @@ func resolverTeams(cre, sre paging.LadderConfig) paging.TeamKeys {
 // INCIDENT_CHAT_SPACES, and a group with no room goes to the shared SRE room.
 // Logs counts only, never a URL.
 func applyIncidentRoutes(sre paging.LadderConfig, chat *notifications.GoogleChatClient, routes *notifications.IncidentRoutes, getenv func(string) string) {
+	apply, err := prepareIncidentRoutes(sre, chat, routes, getenv)
+	if err != nil {
+		slog.Error("incident cards: the Alert Settings group mapping could not be applied", "err", err)
+		return
+	}
+	apply()
+}
+
+// prepareIncidentRoutes builds the incident route table for sre without
+// touching what runs; the returned apply puts it in place (the chat client's
+// routed spaces, then the group routes in one swap). A refresh calls apply in
+// the same step that swaps the ladders' engines, so the two change together.
+// Both targets are read under their own locks by the card path: no I/O.
+func prepareIncidentRoutes(sre paging.LadderConfig, chat *notifications.GoogleChatClient, routes *notifications.IncidentRoutes, getenv func(string) string) (func(), error) {
+	if chat == nil || routes == nil {
+		return nil, errors.New("there is no chat client or route table to apply them to")
+	}
 	table := paging.BuildIncidentRoutes(sre, func(c paging.Chat) (string, bool) {
 		return paging.ChatWebhookURL(c, chat, getenv)
 	})
-	chat.SetIncidentRouteSpaces(table.Spaces)
-	routes.Set(table.Fanout)
-	routes.SetTeamless(table.Teamless)
-	routes.SetKnownSRETeam(func(group string) bool { return paging.KnownSRETeam(sre, group) })
-	routes.SetSRETeams(func(group string) []string { return paging.SRETeamsForGroup(sre, group) })
 	_, fallback := table.Spaces[notifications.IncidentFallbackAudience]
-	slog.Info("incident cards follow the Alert Settings group mapping",
-		"mappedGroups", table.Mapped, "defaultGroupsFannedOut", len(table.Fanout), "sharedSRERoom", fallback)
-	if !fallback {
-		slog.Warn("incident cards: the SRE ladder has no shared room (sre.chat), so an incident whose group maps to no team room still gets no card")
-	}
+	return func() {
+		chat.SetIncidentRouteSpaces(table.Spaces)
+		routes.Replace(table.Fanout, table.Teamless,
+			func(group string) bool { return paging.KnownSRETeam(sre, group) },
+			func(group string) []string { return paging.SRETeamsForGroup(sre, group) })
+		slog.Info("incident cards follow the Alert Settings group mapping",
+			"mappedGroups", table.Mapped, "defaultGroupsFannedOut", len(table.Fanout), "sharedSRERoom", fallback)
+		if !fallback {
+			slog.Warn("incident cards: the SRE ladder has no shared room (sre.chat), so an incident whose group maps to no team room still gets no card")
+		}
+	}, nil
 }
 
 // acpReactivationCC reads ACP_REACTIVATION_CC, the CC list of the "Back to
